@@ -1,0 +1,28 @@
+/vendor
+/node_modules
+/public/hot
+/public/storage
+/public/app
+/storage/*.key
+/storage/pail
+/bootstrap/cache/*.php
+/.phpunit.cache
+/.idea
+/.vscode
+.env
+.env.*
+!.env.example
+!.env.testing.example
+Homestead.json
+Homestead.yaml
+auth.json
+npm-debug.log
+yarn-error.log
+
+# Frontend (resources/frontend)
+resources/frontend/node_modules
+resources/frontend/dist
+
+# Tauri desktop shell
+tauri-inventory-app/node_modules
+tauri-inventory-app/src-tauri/target

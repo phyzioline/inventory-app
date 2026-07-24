@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phyzioline — غير متصل</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f8fbff;
+      color: #36415A;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 8px 40px rgba(2, 118, 127, 0.12);
+      padding: 3rem 2.5rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .icon {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, #02767F, #04b8c4);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.5rem;
+      font-size: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      color: #36415A;
+    }
+
+    p {
+      color: #6c757d;
+      line-height: 1.6;
+      margin-bottom: 1.5rem;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffc107;
+      border-radius: 50px;
+      padding: 0.4rem 1rem;
+      font-size: 0.85rem;
+      margin-bottom: 2rem;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 0.75rem 2rem;
+      border-radius: 50px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      font-size: 1rem;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover { opacity: 0.85; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #02767F, #04b8c4);
+      color: #fff;
+      margin-bottom: 1rem;
+      width: 100%;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #e9ecef;
+      margin: 1.5rem 0;
+    }
+
+    .sync-status {
+      font-size: 0.8rem;
+      color: #6c757d;
+    }
+
+    .sync-status span {
+      color: #04b8c4;
+      font-weight: 600;
+    }
+
+    #retry-btn { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="icon">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+      <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.56 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>
+    </svg>
+  </div>
+
+  <div class="badge">⚠ أنت غير متصل بالإنترنت</div>
+
+  <h1>لا يوجد اتصال بالإنترنت</h1>
+  <p>
+    يعمل Phyzioline بشكل رئيسي عبر الإنترنت.
+    تحقق من اتصالك وحاول مرة أخرى.
+    <br><br>
+    أي بيانات أدخلتها مؤخراً ستُزامن تلقائياً عند عودة الاتصال.
+  </p>
+
+  <button class="btn btn-primary" onclick="retryConnection()">
+    🔄 إعادة الاتصال
+  </button>
+
+  <hr class="divider">
+
+  <p class="sync-status">
+    آخر مزامنة: <span id="last-sync">غير محدد</span>
+  </p>
+  <p class="sync-status" style="margin-top:0.5rem;">
+    عمليات معلّقة للمزامنة: <span id="pending-count">0</span>
+  </p>
+</div>
+
+<script>
+  // Show last sync time from localStorage
+  var lastSync = localStorage.getItem('phy_last_sync');
+  if (lastSync) {
+    var d = new Date(parseInt(lastSync));
+    document.getElementById('last-sync').textContent =
+      d.toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' });
+  }
+
+  // Show pending offline queue count from IndexedDB
+  (function () {
+    var req = indexedDB.open('phyzioline-offline', 2);
+    req.onsuccess = function (e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('queue')) return;
+      var tx = db.transaction('queue', 'readonly');
+      var count = tx.objectStore('queue').count();
+      count.onsuccess = function () {
+        document.getElementById('pending-count').textContent = count.result;
+      };
+    };
+  })();
+
+  function retryConnection() {
+    // Try to reach the server; if successful, navigate back to the live app
+    fetch('https://phyzioline.com/api/health', { method: 'HEAD', cache: 'no-store' })
+      .then(function () {
+        window.location.href = 'https://phyzioline.com/erp';
+      })
+      .catch(function () {
+        var btn = document.querySelector('.btn-primary');
+        btn.textContent = '❌ لا يزال غير متصل. حاول مجدداً...';
+        setTimeout(function () { btn.textContent = '🔄 إعادة الاتصال'; }, 3000);
+      });
+  }
+
+  // Auto-retry every 15 seconds
+  setInterval(function () {
+    fetch('https://phyzioline.com/api/health', { method: 'HEAD', cache: 'no-store' })
+      .then(function () { window.location.href = 'https://phyzioline.com/erp'; })
+      .catch(function () {});
+  }, 15000);
+</script>
+
+</body>
+</html>

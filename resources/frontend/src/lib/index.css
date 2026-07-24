@@ -1,0 +1,257 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/cairo/400.css';
+@import '@fontsource/cairo/600.css';
+@import '@fontsource/cairo/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 173 80% 40%;
+    --primary-foreground: 222 47% 6%;
+
+    --secondary: 222 47% 12%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 222 30% 14%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 173 80% 40%;
+    --accent-foreground: 222 47% 6%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 6%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 222 47% 6%;
+
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 173 80% 40%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 222 47% 5%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 173 80% 40%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 222 47% 10%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 222 30% 12%;
+    --sidebar-ring: 173 80% 40%;
+
+    /* Custom ERP tokens */
+    --gradient-primary: linear-gradient(135deg, hsl(173 80% 40%), hsl(199 89% 48%));
+    --gradient-card: linear-gradient(180deg, hsl(222 47% 10%), hsl(222 47% 8%));
+    --gradient-sidebar: linear-gradient(180deg, hsl(222 47% 6%), hsl(222 47% 4%));
+
+    --shadow-glow: 0 0 20px hsl(173 80% 40% / 0.15);
+    --shadow-card: 0 4px 24px hsl(222 47% 0% / 0.4);
+    --shadow-elevated: 0 8px 32px hsl(222 47% 0% / 0.5);
+
+    /* Chart colors */
+    --chart-1: 173 80% 40%;
+    --chart-2: 199 89% 48%;
+    --chart-3: 142 76% 36%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 280 65% 60%;
+  }
+
+  .light {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 188 78% 41%; /* Vibrant Teal #17a2b8 */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 188 78% 95%;
+    --secondary-foreground: 188 78% 20%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 188 78% 95%;
+    --accent-foreground: 188 78% 20%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 47% 11%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 210 40% 90%;
+    --input: 210 40% 90%;
+    --ring: 188 78% 41%;
+
+    --sidebar-background: 188 78% 41%; /* Teal Sidebar */
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 188 78% 41%;
+    --sidebar-accent: 188 78% 35%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 188 78% 35%;
+    --sidebar-ring: 0 0% 100%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(188 78% 41%), hsl(199 89% 48%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 40% 98%));
+    --gradient-sidebar: linear-gradient(180deg, hsl(188 78% 41%) 0%, hsl(188 78% 33%) 100%);
+
+    --shadow-glow: 0 0 20px hsl(188 78% 41% / 0.15);
+    --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.05);
+    --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  html[dir="rtl"] {
+    font-family: 'Cairo', 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-card/80 backdrop-blur-xl border border-border/50;
+  }
+
+  .gradient-text {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glow-border {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .stat-card {
+    @apply glass-card rounded-xl p-5 transition-all duration-300;
+  }
+
+  .stat-card:hover {
+    @apply border-primary/30;
+    box-shadow: var(--shadow-glow);
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200;
+    color: hsl(var(--sidebar-foreground) / 0.7);
+  }
+
+  .nav-item:hover {
+    @apply bg-sidebar-accent;
+    color: hsl(var(--sidebar-foreground));
+  }
+
+  .nav-item.active {
+    background: hsl(var(--sidebar-primary) / 0.15);
+    color: hsl(var(--sidebar-foreground));
+    border-inline-start: 2px solid hsl(var(--sidebar-foreground));
+    font-weight: 600;
+  }
+
+  .data-table {
+    @apply w-full text-base;
+  }
+
+  .data-table th {
+    @apply text-left font-medium text-muted-foreground px-5 py-4 border-b border-border text-sm;
+  }
+
+  .data-table td {
+    @apply px-5 py-4 border-b border-border/50;
+  }
+
+  .data-table tr:hover td {
+    @apply bg-muted/30;
+  }
+
+  .badge-status {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply bg-success/10 text-success;
+  }
+
+  .badge-warning {
+    @apply bg-warning/10 text-warning;
+  }
+
+  .badge-destructive {
+    @apply bg-destructive/10 text-destructive;
+  }
+
+  .badge-info {
+    @apply bg-info/10 text-info;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
