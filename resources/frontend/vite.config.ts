@@ -22,6 +22,9 @@ function inventoryReverbEnv(mode: string) {
     VITE_REVERB_HOST: resolveEnvRef(env.VITE_REVERB_HOST, env.REVERB_HOST) || "localhost",
     VITE_REVERB_PORT: resolveEnvRef(env.VITE_REVERB_PORT, env.REVERB_PORT) || "443",
     VITE_REVERB_SCHEME: resolveEnvRef(env.VITE_REVERB_SCHEME, env.REVERB_SCHEME) || "https",
+    // Reverb is proxied behind nginx on a sub-path (e.g. /reverb) rather than
+    // the domain root — empty string is fine when it IS served from the root.
+    VITE_REVERB_PATH: resolveEnvRef(env.VITE_REVERB_PATH, env.REVERB_PATH),
   };
 }
 
@@ -37,6 +40,7 @@ export default defineConfig(({ mode }) => {
     "import.meta.env.VITE_REVERB_HOST": JSON.stringify(reverb.VITE_REVERB_HOST),
     "import.meta.env.VITE_REVERB_PORT": JSON.stringify(reverb.VITE_REVERB_PORT),
     "import.meta.env.VITE_REVERB_SCHEME": JSON.stringify(reverb.VITE_REVERB_SCHEME),
+    "import.meta.env.VITE_REVERB_PATH": JSON.stringify(reverb.VITE_REVERB_PATH),
   },
   // Build into public/app/ (not public/ root) so the SPA's index.html never collides
   // with Laravel's own public/index.php front controller. A single Laravel web route
