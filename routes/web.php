@@ -22,3 +22,8 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::middleware('web')->group(base_path('routes/api.php'));
+
+// Bare domain → SPA. The React app is a HashRouter (see tauri.conf.json /
+// resources/frontend), so this single static entry point is enough — no
+// catch-all route needed for client-side sub-routes.
+Route::redirect('/', '/app/');
