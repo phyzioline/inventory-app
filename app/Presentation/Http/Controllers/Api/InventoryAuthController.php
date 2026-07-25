@@ -2,6 +2,8 @@
 
 namespace App\Presentation\Http\Controllers\Api;
 
+use App\Domain\Models\Subscription;
+use App\Domain\Models\SubscriptionPlan;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -37,6 +39,7 @@ class InventoryAuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'is_super_admin' => $user->is_super_admin,
             ],
         ]);
     }
@@ -64,6 +67,7 @@ class InventoryAuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'is_super_admin' => $user->is_super_admin,
             ],
         ]);
     }
@@ -81,6 +85,16 @@ class InventoryAuthController extends Controller
             'email' => $data['email'],
             'password' => Hash::make($data['password']),
         ]);
+
+        $freePlan = SubscriptionPlan::query()->where('plan_code', 'free')->first();
+        if ($freePlan) {
+            Subscription::create([
+                'user_id' => $user->id,
+                'plan_id' => $freePlan->id,
+                'status' => 'active',
+                'starts_at' => now(),
+            ]);
+        }
 
         Auth::login($user, true);
         $request->session()->regenerate();

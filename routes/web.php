@@ -23,6 +23,11 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware('web')->group(base_path('routes/api.php'));
 
+// Paymob payment webhook — deliberately OUTSIDE the group above: Paymob calls
+// this server-to-server with no session cookie, verified by HMAC instead of
+// CSRF (see bootstrap/app.php's validateCsrfTokens except list).
+Route::post('webhooks/paymob', \App\Presentation\Http\Controllers\Api\PaymobWebhookController::class);
+
 // Bare domain → SPA. The React app is a HashRouter (see tauri.conf.json /
 // resources/frontend), so this single static entry point is enough — no
 // catch-all route needed for client-side sub-routes.

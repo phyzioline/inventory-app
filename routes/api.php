@@ -1,6 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Presentation\Http\Controllers\Api\Admin\AdminDashboardController;
+use App\Presentation\Http\Controllers\Api\Admin\AdminSubscriptionController;
 use App\Presentation\Http\Controllers\Api\ASINController;
 use App\Presentation\Http\Controllers\Api\AsnTransferController;
 use App\Presentation\Http\Controllers\Api\BarcodeReturnController;
@@ -39,6 +41,7 @@ use App\Presentation\Http\Controllers\Api\RemovalController;
 use App\Presentation\Http\Controllers\Api\ReturnController;
 use App\Presentation\Http\Controllers\Api\SettlementController;
 use App\Presentation\Http\Controllers\Api\SkuController;
+use App\Presentation\Http\Controllers\Api\SubscriptionController;
 use App\Presentation\Http\Controllers\Api\SupplierController;
 use App\Presentation\Http\Controllers\Api\TransferController;
 use App\Presentation\Http\Controllers\Api\TreasuryPanelController;
@@ -76,7 +79,8 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('channels/metrics', [ChannelController::class, 'metrics']);
         Route::get('channels/slug/{slug}', [ChannelController::class, 'getBySlug']);
         Route::post('channels/sync-locations', [ChannelController::class, 'syncLocations']);
-        Route::apiResource('channels', ChannelController::class);
+        Route::post('channels', [ChannelController::class, 'store'])->middleware('check.subscription.limit:channels');
+        Route::apiResource('channels', ChannelController::class)->except(['store']);
 
         // ── Channel SKU Import ────────────────────────────────────────
         Route::prefix('channels/{channelId}/import')->group(function () {
@@ -92,7 +96,8 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('warehouses/all-inventory', [InventoryLocationController::class, 'allInventory']);
         Route::get('warehouses/summary', [InventoryLocationController::class, 'summary']);
         Route::get('warehouses/{id}/inventory', [InventoryLocationController::class, 'inventory']);
-        Route::apiResource('warehouses', InventoryLocationController::class);
+        Route::post('warehouses', [InventoryLocationController::class, 'store'])->middleware('check.subscription.limit:warehouses');
+        Route::apiResource('warehouses', InventoryLocationController::class)->except(['store']);
 
         Route::get('transactions/sku-tracker', [InventoryTransactionController::class, 'skuTracker']);
         Route::post('transactions/transfer', [InventoryTransactionController::class, 'transfer']);
@@ -240,6 +245,20 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
 
         // ── Admin Tools ──────────────────────────────────────────────
         Route::post('admin/regenerate-master-products', [MasterProductController::class, 'regenerateFromOrphans']);
+
+        // ── Super-admin: cross-tenant oversight (see App\Http\Middleware\EnsureSuperAdmin) ──
+        Route::prefix('admin')->middleware(['super.admin'])->group(function (): void {
+            Route::get('overview', [AdminDashboardController::class, 'overview']);
+            Route::get('subscriptions', [AdminSubscriptionController::class, 'index']);
+        });
+
+        // ── Subscription (tenant self-service) ──────────────────────────
+        Route::prefix('subscription')->group(function (): void {
+            Route::get('plans', [SubscriptionController::class, 'plans']);
+            Route::get('current', [SubscriptionController::class, 'current']);
+            Route::post('upgrade', [SubscriptionController::class, 'upgrade']);
+            Route::post('cancel', [SubscriptionController::class, 'cancel']);
+        });
     });
 });
 

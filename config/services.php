@@ -52,4 +52,23 @@ return [
         'smart_import_local' => env('GEMINI_SMART_IMPORT_LOCAL', true),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Paymob (subscription checkout)
+    |--------------------------------------------------------------------------
+    |
+    | Own merchant account for this app — do NOT reuse the monolith's Paymob
+    | credentials. See App\Infrastructure\External\PaymobCheckoutClient and
+    | App\Presentation\Http\Controllers\Api\PaymobWebhookController.
+    |
+    */
+    'paymob' => [
+        'secret_key' => env('PAYMOB_SECRET_KEY'),
+        'public_key' => env('PAYMOB_PUBLIC_KEY'),
+        'integration_id' => env('PAYMOB_INTEGRATION_ID'),
+        'hmac_secret' => env('PAYMOB_HMAC_SECRET'),
+        'notification_url' => env('PAYMOB_NOTIFICATION_URL'),
+        'return_url' => env('PAYMOB_RETURN_URL'),
+    ],
+
 ];

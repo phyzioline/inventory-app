@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\CheckSubscriptionLimit;
+use App\Http\Middleware\EnsureSuperAdmin;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -22,11 +24,19 @@ return Application::configure(basePath: dirname(__DIR__))
                 : array_values(array_filter(array_map('trim', explode(',', (string) $trustedProxies))))
         );
 
-        // No CSRF exemptions: this app has no inbound webhook receivers (its
-        // only webhook traffic is outbound, to the monolith's CRM receiver —
-        // see App\Infrastructure\External\MonolithCrmWebhookClient). Every
-        // POST/PUT/PATCH/DELETE from the Inventory SPA goes through the `web`
-        // group and must carry a CSRF token, same as the source monolith.
+        // Every POST/PUT/PATCH/DELETE from the Inventory SPA goes through the
+        // `web` group and must carry a CSRF token. The one exception is Paymob's
+        // server-to-server payment webhook (App\Presentation\Http\Controllers\
+        // Api\PaymobWebhookController), which is verified by HMAC instead — see
+        // routes/web.php.
+        $middleware->validateCsrfTokens(except: [
+            'webhooks/paymob',
+        ]);
+
+        $middleware->alias([
+            'super.admin' => EnsureSuperAdmin::class,
+            'check.subscription.limit' => CheckSubscriptionLimit::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

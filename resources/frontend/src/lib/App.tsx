@@ -9,6 +9,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import AdminProtectedRoute from "@/components/AdminProtectedRoute";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { InventoryRealtimeBridge } from "@/components/InventoryRealtimeBridge";
 
@@ -82,6 +83,11 @@ const ProfitEngine = lazy(() => import("./pages/ProfitEngine"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Customers = lazy(() => import("./pages/Customers"));
+const Subscription = lazy(() => import("./pages/Subscription"));
+
+// Admin (super-admin only)
+const AdminOverview = lazy(() => import("./pages/admin/AdminOverview"));
+const AdminSubscriptions = lazy(() => import("./pages/admin/AdminSubscriptions"));
 
 function RouteFallback() {
   return (
@@ -212,8 +218,21 @@ const App = () => (
                   {/* ── Reports & Settings ─────────────────── */}
                   <Route path="/reports" element={<Reports />} />
                   <Route path="/settings" element={<Settings />} />
+                  <Route path="/settings/subscription" element={<Subscription />} />
                   <Route path="/customers" element={<Customers />} />
                 </Route>
+
+                {/* ── Admin (super-admin only, separate guard from tenant routes) ── */}
+                <Route path="/admin" element={
+                  <AdminProtectedRoute>
+                    <AdminOverview />
+                  </AdminProtectedRoute>
+                } />
+                <Route path="/admin/subscriptions" element={
+                  <AdminProtectedRoute>
+                    <AdminSubscriptions />
+                  </AdminProtectedRoute>
+                } />
 
                 {/* 404 */}
                 <Route path="*" element={<NotFound />} />

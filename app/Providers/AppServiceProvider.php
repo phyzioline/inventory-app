@@ -38,7 +38,9 @@ use App\Presentation\Console\Commands\ReconcileSettlementReturnsCommand;
 use App\Presentation\Console\Commands\ReconcileSettlementsCommand;
 use App\Presentation\Console\Commands\RepairImportSkuDrift;
 use App\Presentation\Console\Commands\RollbackMarketplaceImportStockCommand;
+use App\Presentation\Console\Commands\GrantSuperAdmin;
 use App\Presentation\Console\Commands\SyncSkuCostsFromMasterProductsCommand;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -81,8 +83,13 @@ class AppServiceProvider extends ServiceProvider
         MasterProduct::observe(MasterProductIdentifierObserver::class);
         Sku::observe(SkuChannelListingObserver::class);
 
+        // Single super-admin bypass — see database/migrations/*_add_is_super_admin_to_users_table.php.
+        // Never mass-assignable (not in User::$fillable); only set via the admin:grant-super command.
+        Gate::before(fn ($user, string $ability) => $user->is_super_admin ? true : null);
+
         if ($this->app->runningInConsole()) {
             $this->commands([
+                GrantSuperAdmin::class,
                 FixOrphanInventoryProducts::class,
                 ConsolidateSupplierIdentityCommand::class,
                 FixOrphanSettlementsCommand::class,
