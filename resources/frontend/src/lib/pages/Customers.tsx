@@ -405,6 +405,7 @@ export default function CustomersPage() {
     if (!account) return [];
     const invoices: any[] = Array.isArray(account.invoices) ? account.invoices : [];
     const receipts: any[] = Array.isArray(account.receipts) ? account.receipts : [];
+    const returns: any[] = Array.isArray(account.returns) ? account.returns : [];
 
     type Entry = {
       key: string;
@@ -412,7 +413,7 @@ export default function CustomersPage() {
       description: string;
       debit: number;
       credit: number;
-      source: 'invoice' | 'order_payment' | 'receipt';
+      source: 'invoice' | 'order_payment' | 'receipt' | 'return';
       source_id: string;
       items?: any[];
     };
@@ -464,11 +465,23 @@ export default function CustomersPage() {
       });
     }
 
+    for (const ret of returns) {
+      entries.push({
+        key: `ret-${ret.id}`,
+        date: ret.date ?? '',
+        description: (isAr ? 'مرتجع - ' : 'Return #') + ret.id,
+        debit: 0,
+        credit: Number(ret.amount ?? 0),
+        source: 'return',
+        source_id: String(ret.id),
+      });
+    }
+
     entries.sort((a, b) => {
       if (a.date < b.date) return -1;
       if (a.date > b.date) return 1;
-      const order = { invoice: 0, order_payment: 1, receipt: 2 };
-      return (order[a.source] ?? 3) - (order[b.source] ?? 3);
+      const order = { invoice: 0, order_payment: 1, receipt: 2, return: 3 };
+      return (order[a.source] ?? 4) - (order[b.source] ?? 4);
     });
 
     let running = 0;
@@ -874,7 +887,11 @@ export default function CustomersPage() {
                           <TableCell>{inv.date}</TableCell>
                           <TableCell className="text-end">{Number(inv.total).toLocaleString()}</TableCell>
                           <TableCell className="text-end">{Number(inv.paid ?? 0).toLocaleString()}</TableCell>
-                          <TableCell className="text-end">{Number(inv.remaining).toLocaleString()}</TableCell>
+                          <TableCell className={`text-end tabular-nums ${Number(inv.remaining) < -0.005 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}`}>
+                            {Number(inv.remaining) < -0.005
+                              ? `(${isAr ? 'دائن' : 'credit'}) ${Math.abs(Number(inv.remaining)).toLocaleString()}`
+                              : Number(inv.remaining).toLocaleString()}
+                          </TableCell>
                           <TableCell>{inv.status}</TableCell>
                         </TableRow>
                       ))}
@@ -950,12 +967,13 @@ export default function CustomersPage() {
                         const hasItems = Array.isArray(row.items) && row.items.length > 0;
                         const isInvoice = row.source === 'invoice';
                         const isReceipt = row.source === 'receipt';
+                        const isReturn = row.source === 'return';
                         const rows = [];
 
                         rows.push(
                           <TableRow key={row.key} className={isInvoice ? 'font-medium bg-muted/20' : undefined}>
                             <TableCell className="text-center text-muted-foreground text-xs">{row.seq}</TableCell>
-                            <TableCell className={isInvoice ? 'text-primary' : isReceipt ? 'text-emerald-700 dark:text-emerald-400' : ''}>
+                            <TableCell className={isInvoice ? 'text-primary' : isReceipt ? 'text-emerald-700 dark:text-emerald-400' : isReturn ? 'text-amber-700 dark:text-amber-400' : ''}>
                               {row.description}
                             </TableCell>
                             <TableCell className="text-end tabular-nums">{row.debit > 0 ? Number(row.debit).toLocaleString() : ''}</TableCell>

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Application\Services\PurchaseImportService;
 use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\PurchaseReturn;
@@ -15,6 +16,17 @@ use App\Domain\Models\Wms\SkuInventory;
 
 class PurchaseReturnController extends Controller
 {
+    public function __construct(private PurchaseImportService $purchaseImportService) {}
+
+    /**
+     * A credit_note return reduces what we owe the vendor; cash/bank_transfer
+     * returns are handled entirely via the treasury Receipt instead.
+     */
+    private function creditNoteAmount(string $refundMethod, float $grandTotal): float
+    {
+        return $refundMethod === 'credit_note' ? $grandTotal : 0.0;
+    }
+
     public function index(Request $request)
     {
         $query = PurchaseReturn::with(['batch', 'vendor', 'supplier', 'location'])
@@ -141,8 +153,16 @@ class PurchaseReturnController extends Controller
                 'grand_total' => round($subtotal, 2),
             ]);
 
-            // If supplier refund is cash/bank, register as receipt (incoming).
             $method = (string) ($return->refund_method ?? 'credit_note');
+            if ($return->vendor_id) {
+                $this->purchaseImportService->adjustVendorPayableBalance(
+                    (int) $return->vendor_id,
+                    -$this->creditNoteAmount($method, round($subtotal, 2))
+                );
+            }
+            $return->update(['balance_synced_at' => now()]);
+
+            // If supplier refund is cash/bank, register as receipt (incoming).
             if (in_array($method, ['cash', 'bank_transfer'], true) && $subtotal > 0.00001) {
                 Receipt::create([
                     'type' => 'supplier_refund',
@@ -192,6 +212,9 @@ class PurchaseReturnController extends Controller
         /** @var PurchaseBatch $batch */
         $batch = $return->batch ?? PurchaseBatch::with(['items'])->findOrFail((int) $return->purchase_batch_id);
         $locationId = (int) ($return->location_id ?? $batch->location_id ?? 0);
+        $oldGrandTotal = (float) $return->grand_total;
+        $oldRefundMethod = (string) ($return->refund_method ?? 'credit_note');
+        $vendorId = $return->vendor_id ? (int) $return->vendor_id : null;
 
         DB::beginTransaction();
         try {
@@ -301,6 +324,14 @@ class PurchaseReturnController extends Controller
 
             $return->refresh();
             $this->syncSupplierRefundReceipt($return, $batch, (float) $return->grand_total);
+
+            if ($vendorId) {
+                $newRefundMethod = (string) ($return->refund_method ?? 'credit_note');
+                $oldCredit = $this->creditNoteAmount($oldRefundMethod, $oldGrandTotal);
+                $newCredit = $this->creditNoteAmount($newRefundMethod, (float) $return->grand_total);
+                $this->purchaseImportService->adjustVendorPayableBalance($vendorId, $oldCredit - $newCredit);
+                $return->update(['balance_synced_at' => now()]);
+            }
 
             DB::commit();
 

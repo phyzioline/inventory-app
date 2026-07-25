@@ -9,7 +9,11 @@ export const apiClient = axios.create({
         'X-Requested-With': 'XMLHttpRequest',
     },
     withCredentials: true, // Important for session cookies
-    withXSRFToken: true // Laravel 11+ CSRF handling
+    withXSRFToken: true, // Laravel 11+ CSRF handling
+    // Without this, a hung/slow backend request leaves the UI stuck on a
+    // loading spinner forever instead of surfacing an error state. File
+    // uploads opt out explicitly via `api.upload`'s own timeoutMs.
+    timeout: 30000,
 });
 
 // Response interceptor: detect non-JSON responses (e.g. HTML login redirect)

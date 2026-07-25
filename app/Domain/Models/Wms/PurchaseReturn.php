@@ -14,7 +14,7 @@ class PurchaseReturn extends Model
     protected $fillable = [
         'user_id', 'purchase_batch_id', 'vendor_id', 'supplier_id', 'location_id',
         'return_number', 'return_date', 'reason', 'refund_method',
-        'subtotal', 'tax_amount', 'grand_total', 'currency', 'notes',
+        'subtotal', 'tax_amount', 'grand_total', 'currency', 'notes', 'balance_synced_at',
     ];
 
     protected $casts = [
@@ -22,6 +22,7 @@ class PurchaseReturn extends Model
         'subtotal' => 'decimal:2',
         'tax_amount' => 'decimal:2',
         'grand_total' => 'decimal:2',
+        'balance_synced_at' => 'datetime',
     ];
 
     public function batch(): BelongsTo

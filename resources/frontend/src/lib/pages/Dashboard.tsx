@@ -131,6 +131,7 @@ export default function Dashboard() {
   const {
     data: dashboardMetrics,
     isPending: dashboardMetricsPending,
+    isError: dashboardMetricsError,
   } = useQuery({
     queryKey: ['dashboard-metrics', startDate, endDate],
     queryFn: () => api.get('/reports/dashboard-metrics', {
@@ -485,10 +486,16 @@ export default function Dashboard() {
           value={
             dashboardMetricsPending
               ? (isAr ? 'جاري التحميل…' : 'Loading…')
-              : `${totalSalesInPeriod.toLocaleString()} EGP`
+              : dashboardMetricsError
+                ? (isAr ? 'غير متاح' : 'N/A')
+                : `${totalSalesInPeriod.toLocaleString()} EGP`
           }
-          change={isAr ? `${periodOrderCount} طلب` : `${periodOrderCount} orders`}
-          changeType="positive"
+          change={
+            dashboardMetricsError
+              ? (isAr ? 'تعذر تحميل البيانات' : 'Could not load data')
+              : (isAr ? `${periodOrderCount} طلب` : `${periodOrderCount} orders`)
+          }
+          changeType={dashboardMetricsError ? 'neutral' : 'positive'}
           icon={DollarSign}
           delay={0}
         />
@@ -540,7 +547,7 @@ export default function Dashboard() {
           <SalesChart data={salesChartData} />
         </div>
         <div>
-          <SalesChannelsStatus channels={salesChannels as any[]} />
+          <SalesChannelsStatus channels={salesChannels as any[]} isError={dashboardMetricsError} />
         </div>
       </div>
 

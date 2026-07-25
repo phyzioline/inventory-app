@@ -143,6 +143,16 @@ class InventoryReturn extends Model
                 }
                 $remainingQty -= $qtyToProcess;
             }
+
+            if ((float) ($this->refund_amount ?? 0) <= 0.0) {
+                $credit = $this->resolveCustomerCreditAmount();
+                if ($credit > 0.0) {
+                    $this->refund_amount = $credit;
+                    $order->remaining_amount = round((float) ($order->remaining_amount ?? 0) - $credit, 2);
+                    $order->save();
+                }
+            }
+
             $this->update(['status' => 'completed', 'return_status' => 'restocked', 'inventory_status' => 'restocked', 'last_update_date' => now()]);
             DB::commit();
 
@@ -152,6 +162,42 @@ class InventoryReturn extends Model
 
             return false;
         }
+    }
+
+    /**
+     * Value owed back to the customer for the returned quantity (full line value,
+     * regardless of disposition — unlike calculateLoss(), which reports the
+     * seller's P&L loss, not what the customer is owed).
+     */
+    public function resolveCustomerCreditAmount(): float
+    {
+        $order = $this->inventoryOrder;
+        if (! $order) {
+            return 0.0;
+        }
+        $lineTotal = 0.0;
+        $remainingQty = max(1, (int) ($this->return_quantity ?? 1));
+        $orderItems = $order->items ?? collect();
+        if (! empty($this->sku_code)) {
+            $orderItems = $orderItems->filter(function ($item) {
+                return ($item->sku?->sku ?? null) === $this->sku_code || ($item->sku_code ?? null) === $this->sku_code;
+            });
+        }
+        foreach ($orderItems as $item) {
+            if ($remainingQty <= 0) {
+                break;
+            }
+            $itemQty = (int) ($item->quantity ?? 0);
+            if ($itemQty <= 0) {
+                continue;
+            }
+            $qty = min($remainingQty, $itemQty);
+            $unit = (float) ($item->unit_price ?? 0);
+            $lineTotal += $qty * $unit;
+            $remainingQty -= $qty;
+        }
+
+        return $lineTotal > 0 ? round($lineTotal, 2) : 0.0;
     }
 
     public function calculateLoss(): float

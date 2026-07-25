@@ -10,9 +10,10 @@ interface SalesChannelStatusProps {
     profit: number;
     returns: number;
   }>;
+  isError?: boolean;
 }
 
-export function SalesChannelsStatus({ channels }: SalesChannelStatusProps) {
+export function SalesChannelsStatus({ channels, isError = false }: SalesChannelStatusProps) {
   const { language } = useLanguage();
   const isAr = language === 'ar';
 
@@ -72,7 +73,11 @@ export function SalesChannelsStatus({ channels }: SalesChannelStatusProps) {
           </motion.div>
         ))}
         {channels.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{isAr ? 'لا توجد قنوات بيع للفترة المحددة.' : 'No sales channels for selected period.'}</p>
+          <p className="text-xs text-muted-foreground">
+            {isError
+              ? (isAr ? 'تعذر تحميل بيانات القنوات — حاول تحديث الصفحة.' : 'Could not load channel data — try refreshing.')
+              : (isAr ? 'لا توجد قنوات بيع للفترة المحددة.' : 'No sales channels for selected period.')}
+          </p>
         ) : null}
       </div>
     </motion.div>

@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use App\Application\Services\ReceiptApplicationService;
 use App\Domain\Models\Wms\Customer;
 use App\Domain\Models\Wms\InventoryOrder;
+use App\Domain\Models\Wms\InventoryReturn;
 use App\Domain\Models\Wms\Receipt;
 use App\Infrastructure\External\MonolithCrmWebhookClient;
 
@@ -212,10 +213,10 @@ class CustomerController extends Controller
                 COALESCE(ord.paid_sum, 0) AS paid_sum,
                 COALESCE(ord.remaining_sum, 0) AS remaining_sum,
                 COALESCE(rec.receipts_total, 0) AS receipts_total,
-                GREATEST(0, COALESCE(ord.remaining_sum, 0) - COALESCE(rec.orphan_receipts, 0)) AS outstanding,
+                (COALESCE(ord.remaining_sum, 0) - COALESCE(rec.orphan_receipts, 0)) AS outstanding,
                 GREATEST(0,
                     COALESCE(ord.total_sales, 0)
-                    - GREATEST(0, COALESCE(ord.remaining_sum, 0) - COALESCE(rec.orphan_receipts, 0))
+                    - (COALESCE(ord.remaining_sum, 0) - COALESCE(rec.orphan_receipts, 0))
                 ) AS total_received
             FROM customers c
             LEFT JOIN (
@@ -224,10 +225,13 @@ class CustomerController extends Controller
                     SUM(resolved.total_amount) AS total_sales,
                     COUNT(*) AS invoice_count,
                     SUM(COALESCE(resolved.paid_amount, 0)) AS paid_sum,
-                    SUM(GREATEST(0, resolved.total_amount - COALESCE(resolved.paid_amount, 0))) AS remaining_sum
+                    -- Negative here means a credit balance owed back to the customer
+                    -- (e.g. a return worth more than what was left owed on that order).
+                    SUM(resolved.total_amount - COALESCE(resolved.paid_amount, 0) - COALESCE(ret.return_total, 0)) AS remaining_sum
                 FROM (
                     SELECT
                         io.customer_id AS customer_id,
+                        io.id AS order_id,
                         io.total_amount,
                         io.paid_amount
                     FROM inventory_orders io
@@ -240,6 +244,7 @@ class CustomerController extends Controller
 
                     SELECT
                         c2.id AS customer_id,
+                        io.id AS order_id,
                         io.total_amount,
                         io.paid_amount
                     FROM inventory_orders io
@@ -254,6 +259,12 @@ class CustomerController extends Controller
                       AND TRIM(COALESCE(io.customer_name, '')) <> ''
                       {$orderDateClause}
                 ) resolved
+                LEFT JOIN (
+                    SELECT inventory_order_id, SUM(refund_amount) AS return_total
+                    FROM inventory_returns
+                    WHERE status = 'completed'
+                    GROUP BY inventory_order_id
+                ) ret ON ret.inventory_order_id = resolved.order_id
                 GROUP BY resolved.customer_id
             ) ord ON ord.customer_id = c.id
             LEFT JOIN (
@@ -523,11 +534,17 @@ class CustomerController extends Controller
                 'date' => optional($order->order_date)->toDateString(),
                 'total' => $total,
                 'paid' => round($paid, 2),
-                'remaining' => round(max(0.0, $remaining), 2),
+                'remaining' => round($remaining, 2),
                 'status' => $order->status,
                 'items' => $lineItems,
             ];
         })->values();
+
+        $returns = InventoryReturn::whereIn('inventory_order_id', $orders->pluck('id'))
+            ->where('status', 'completed')
+            ->where('refund_amount', '>', 0)
+            ->orderBy('return_date')
+            ->get();
 
         $receiptRows = $receipts->map(function ($receipt) {
             return [
@@ -543,7 +560,9 @@ class CustomerController extends Controller
 
         $totalSales = round((float) $invoiceRows->sum('total'), 2);
         // Base outstanding/collected reflect order paid_amount (e.g. cash sales).
-        $outstanding = round(max(0.0, (float) $invoiceRows->sum('remaining')), 2);
+        // Negative means the customer overpaid or returned goods worth more than
+        // what's left owed — a credit balance owed back to them, not zero.
+        $outstanding = round((float) $invoiceRows->sum('remaining'), 2);
 
         // Extra customer receipts (not linked to an inventory order) should reduce outstanding.
         // This is the "on-account" collection the UI records from the customer list.
@@ -555,7 +574,7 @@ class CustomerController extends Controller
             $orphanReceiptsTotal += (float) $receipt->amount;
         }
 
-        $outstandingAfterReceipts = round(max(0.0, $outstanding - $orphanReceiptsTotal), 2);
+        $outstandingAfterReceipts = round($outstanding - $orphanReceiptsTotal, 2);
         $totalReceived = round(max(0.0, $totalSales - $outstandingAfterReceipts), 2);
 
         $ledgerRows = collect();
@@ -610,6 +629,18 @@ class CustomerController extends Controller
                 '_sort' => ($rcp['date'] ?? '0000-00-00').'-C-'.$rcp['id'],
             ]);
         }
+        foreach ($returns as $return) {
+            $returnDate = optional($return->return_date)->toDateString();
+            $ledgerRows->push([
+                'date' => $returnDate,
+                'description' => 'مرتجع - Return #'.$return->id,
+                'debit' => 0.0,
+                'credit' => (float) $return->refund_amount,
+                'source' => 'return',
+                'source_id' => $return->id,
+                '_sort' => ($returnDate ?? '0000-00-00').'-D-'.$return->id,
+            ]);
+        }
 
         $running = 0.0;
         $ledger = $ledgerRows
@@ -651,6 +682,12 @@ class CustomerController extends Controller
             ],
             'invoices' => $invoiceRows,
             'receipts' => $receiptRows,
+            'returns' => $returns->map(fn ($r) => [
+                'id' => $r->id,
+                'date' => optional($r->return_date)->toDateString(),
+                'amount' => (float) $r->refund_amount,
+                'inventory_order_id' => $r->inventory_order_id,
+            ])->values(),
             'ledger' => $ledger,
         ]);
     }

@@ -545,10 +545,21 @@ class ProfitEngineService
     }
 
     /**
-     * ABS sum of negative settlement lines tied to an order (fees) when list-price revenue is used.
+     * ABS sum of negative settlement lines (fees) tied to a batch of orders, keyed for lookup —
+     * one query for the whole order collection instead of one per order. Each settlement item is
+     * attributed to exactly one order (by inventory_order_id when it matches one of ours, else
+     * platform_order_id) so summing both maps per order can't double-count a row.
+     *
+     * @return array{by_order_id: array<int, float>, by_platform_id: array<string, float>}
      */
-    private function settlementNegativeFeesForOrder(int $inventoryOrderId, ?string $platformOrderId, array $filters): float
+    private function settlementNegativeFeesForOrders(array $inventoryOrderIds, array $platformOrderIds, array $filters): array
     {
+        $byOrderId = [];
+        $byPlatformId = [];
+        if ($inventoryOrderIds === [] && $platformOrderIds === []) {
+            return ['by_order_id' => $byOrderId, 'by_platform_id' => $byPlatformId];
+        }
+
         $settlementIdsSub = Settlement::query()->select('id');
         if (! empty($filters['channel'])) {
             $channelIds = ChannelQuery::idsMatchingFilter((string) $filters['channel']);
@@ -559,17 +570,30 @@ class ProfitEngineService
             }
         }
 
-        $q = SettlementItem::query()
+        $orderIdSet = array_flip($inventoryOrderIds);
+
+        $rows = SettlementItem::query()
             ->whereIn('settlement_id', $settlementIdsSub)
             ->where('amount', '<', 0)
-            ->where(function ($w) use ($inventoryOrderId, $platformOrderId) {
-                $w->where('inventory_order_id', $inventoryOrderId);
-                if ($platformOrderId !== null && trim((string) $platformOrderId) !== '') {
-                    $w->orWhere('platform_order_id', $platformOrderId);
+            ->where(function ($w) use ($inventoryOrderIds, $platformOrderIds) {
+                $w->whereIn('inventory_order_id', $inventoryOrderIds);
+                if ($platformOrderIds !== []) {
+                    $w->orWhereIn('platform_order_id', $platformOrderIds);
                 }
-            });
+            })
+            ->get(['inventory_order_id', 'platform_order_id', 'amount']);
 
-        return (float) $q->sum(DB::raw('ABS(amount)'));
+        foreach ($rows as $row) {
+            $abs = abs((float) $row->amount);
+            $orderId = $row->inventory_order_id ? (int) $row->inventory_order_id : null;
+            if ($orderId !== null && isset($orderIdSet[$orderId])) {
+                $byOrderId[$orderId] = ($byOrderId[$orderId] ?? 0.0) + $abs;
+            } elseif ($row->platform_order_id) {
+                $byPlatformId[$row->platform_order_id] = ($byPlatformId[$row->platform_order_id] ?? 0.0) + $abs;
+            }
+        }
+
+        return ['by_order_id' => $byOrderId, 'by_platform_id' => $byPlatformId];
     }
 
     /**
@@ -863,6 +887,16 @@ class ProfitEngineService
         $platformNetMap = $this->settlementPlatformOrderNetMap($filters);
         $platformSkuNetMap = $this->settlementPlatformOrderSkuNetMap($filters);
 
+        $orderIds = $ordersCollection->pluck('id')->all();
+        $refundsByOrderId = InventoryReturn::whereIn('inventory_order_id', $orderIds)
+            ->whereNotNull('refund_amount')
+            ->selectRaw('inventory_order_id, SUM(refund_amount) as total')
+            ->groupBy('inventory_order_id')
+            ->pluck('total', 'inventory_order_id');
+
+        $platformOrderIds = $ordersCollection->pluck('platform_order_id')->filter()->unique()->values()->all();
+        $negativeFees = $this->settlementNegativeFeesForOrders($orderIds, $platformOrderIds, $filters);
+
         $displayRevenue = 0.0;
         $totalCogs = 0.0;
         $totalRefunds = 0.0;
@@ -891,9 +925,7 @@ class ProfitEngineService
                 }
             }
 
-            $orderRefunds = (float) InventoryReturn::where('inventory_order_id', $order->id)
-                ->whereNotNull('refund_amount')
-                ->sum('refund_amount');
+            $orderRefunds = (float) ($refundsByOrderId[$order->id] ?? 0.0);
 
             $orderNet = $this->lookupOrderSettlementNet($order->platform_order_id, $platformNetMap);
 
@@ -901,7 +933,8 @@ class ProfitEngineService
                 $displayRevenue += $orderNet;
                 $orderProfitSum += $orderNet - $orderCogs - $orderRefunds;
             } else {
-                $feeDeductions = $this->settlementNegativeFeesForOrder((int) $order->id, $order->platform_order_id, $filters);
+                $feeDeductions = ($negativeFees['by_order_id'][(int) $order->id] ?? 0.0)
+                    + ($negativeFees['by_platform_id'][$order->platform_order_id] ?? 0.0);
                 $displayRevenue += $listSum;
                 $orderProfitSum += $listSum - $orderCogs - $orderRefunds - $feeDeductions;
             }
