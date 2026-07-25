@@ -12,7 +12,7 @@ class Channel extends Model
     use HasFactory, IsIsolatedByUser;
 
     protected $fillable = [
-        'name', 'type', 'slug', 'is_active', 'credentials',
+        'name', 'type', 'slug', 'is_active', 'credentials', 'merchant_identifier', 'account_label',
     ];
 
     protected static function newFactory(): ChannelFactory
