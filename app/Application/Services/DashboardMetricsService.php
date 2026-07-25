@@ -227,7 +227,7 @@ final class DashboardMetricsService
             ->leftJoin('skus as s', 's.offer_id', '=', 'o.id')
             ->leftJoin('sku_inventory as si', 'si.sku_id', '=', 's.id')
             ->where('mp.user_id', $userId)
-            ->groupBy('mp.id', 'mp.internal_name', 'mp.specifications')
+            ->groupBy('mp.id')
             ->selectRaw('mp.id, mp.internal_name, mp.specifications, COALESCE(SUM(si.quantity), 0) as total_qty, MIN(s.sku) as sku')
             ->havingRaw("(COALESCE(mp.specifications->>'min_stock', '0'))::numeric > 0")
             ->havingRaw("COALESCE(SUM(si.quantity), 0) < (COALESCE(mp.specifications->>'min_stock', '0'))::numeric")
