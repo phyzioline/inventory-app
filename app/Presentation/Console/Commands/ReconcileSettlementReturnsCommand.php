@@ -2,38 +2,43 @@
 
 namespace App\Presentation\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Application\Services\SettlementService;
 use App\Domain\Models\Wms\SettlementItem;
+use App\Presentation\Console\Commands\Concerns\RequiresTenantUser;
+use Illuminate\Console\Command;
 
 class ReconcileSettlementReturnsCommand extends Command
 {
+    use RequiresTenantUser;
+
     protected $signature = 'inventory:reconcile-settlement-returns
+                            {--user= : Inventory user_id (tenant) — required}
+                            {--user-id= : Alias for --user (deprecated)}
                             {--order= : Single inventory order id (inventory_orders.id)}
-                            {--user-id= : Limit to orders owned by this user (inventory_orders.user_id)}
                             {--dry-run : Print counts without voiding phantom settlement returns}';
 
     protected $description = 'Void settlement-generated inventory returns that are not backed by a qualifying product-refund line.';
 
     public function handle(SettlementService $settlementService): int
     {
+        $userId = $this->requireTenantUser();
+        if ($userId <= 0) {
+            return self::FAILURE;
+        }
+
         $dryRun = (bool) $this->option('dry-run');
         $orderOpt = $this->option('order');
-        $userIdOpt = $this->option('user-id');
 
         if ($orderOpt !== null && $orderOpt !== '' && (int) $orderOpt > 0) {
             $ids = collect([(int) $orderOpt]);
         } else {
+            // SettlementItem has no user scope — filter via tenant-owned orders only.
             $q = SettlementItem::query()
                 ->where('reconciliation_status', 'matched')
-                ->whereNotNull('inventory_order_id');
-
-            if ($userIdOpt !== null && $userIdOpt !== '' && (int) $userIdOpt > 0) {
-                $userId = (int) $userIdOpt;
-                $q->whereHas('inventoryOrder', function ($rel) use ($userId) {
+                ->whereNotNull('inventory_order_id')
+                ->whereHas('inventoryOrder', function ($rel) use ($userId) {
                     $rel->where('user_id', $userId);
                 });
-            }
 
             $ids = $q->distinct()->pluck('inventory_order_id')->filter()->unique()->values();
         }
@@ -45,7 +50,7 @@ class ReconcileSettlementReturnsCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->info("Orders to reconcile returns: {$total}".($dryRun ? ' (dry run)' : ''));
+        $this->info("Orders to reconcile returns (user={$userId}): {$total}".($dryRun ? ' (dry run)' : ''));
 
         $totals = ['kept' => 0, 'voided' => 0, 'skipped_fba_sheet' => 0, 'skipped_completed' => 0];
 

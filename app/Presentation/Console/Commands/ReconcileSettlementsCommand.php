@@ -2,14 +2,18 @@
 
 namespace App\Presentation\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Application\Services\SettlementService;
 use App\Domain\Models\Wms\Settlement;
 use App\Domain\Models\Wms\SettlementItem;
+use App\Presentation\Console\Commands\Concerns\RequiresTenantUser;
+use Illuminate\Console\Command;
 
 class ReconcileSettlementsCommand extends Command
 {
+    use RequiresTenantUser;
+
     protected $signature = 'inventory:reconcile-settlements
+                            {--user= : Inventory user_id (tenant) — required}
                             {--settlement= : Single settlement id (settlements.id)}
                             {--channel-id= : Limit to a channel id}
                             {--from= : Start date (Y-m-d) filter on settlements.start_date}
@@ -21,6 +25,11 @@ class ReconcileSettlementsCommand extends Command
 
     public function handle(SettlementService $settlementService): int
     {
+        $userId = $this->requireTenantUser();
+        if ($userId <= 0) {
+            return self::FAILURE;
+        }
+
         $dryRun = (bool) $this->option('dry-run');
         $onlyUnmatched = (bool) $this->option('only-unmatched');
 
@@ -29,6 +38,7 @@ class ReconcileSettlementsCommand extends Command
         $fromOpt = $this->option('from');
         $toOpt = $this->option('to');
 
+        // Auth login scopes Settlement via IsIsolatedByUser to this tenant only.
         $q = Settlement::query()->orderBy('id');
 
         if ($settlementOpt !== null && $settlementOpt !== '' && (int) $settlementOpt > 0) {
@@ -63,7 +73,7 @@ class ReconcileSettlementsCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->info("Settlements to reconcile: {$total}".($dryRun ? ' (dry run)' : ''));
+        $this->info("Settlements to reconcile (user={$userId}): {$total}".($dryRun ? ' (dry run)' : ''));
 
         $n = 0;
         $totalMatched = 0;

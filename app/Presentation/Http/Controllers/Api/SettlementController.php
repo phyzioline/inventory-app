@@ -293,43 +293,47 @@ class SettlementController extends Controller
         $file = $request->file('file');
 
         try {
-            $stats = $this->service->importAmazonSettlement(
-                $request->channel_id,
-                $file->getRealPath()
-            );
+            $payload = DB::transaction(function () use ($request, $file) {
+                $stats = $this->service->importAmazonSettlement(
+                    $request->channel_id,
+                    $file->getRealPath()
+                );
 
-            $matchedOrders = 0;
-            $reconciliation = null;
-            if (! empty($stats['settlement_id'])) {
-                $settlementId = (int) $stats['settlement_id'];
-                $settlement = Settlement::find($settlementId);
-                if (! $settlement && Auth::check()) {
-                    // Fallback for older rows (or edge-cases) where user_id was null,
-                    // causing tenant isolation to hide the settlement.
-                    $settlement = Settlement::withoutGlobalScopes()->find($settlementId);
-                    if ($settlement && empty($settlement->user_id)) {
-                        $settlement->user_id = Auth::id();
-                        $settlement->save();
+                $matchedOrders = 0;
+                $reconciliation = null;
+                if (! empty($stats['settlement_id'])) {
+                    $settlementId = (int) $stats['settlement_id'];
+                    $settlement = Settlement::find($settlementId);
+                    if (! $settlement && Auth::check()) {
+                        // Fallback for older rows (or edge-cases) where user_id was null,
+                        // causing tenant isolation to hide the settlement.
+                        $settlement = Settlement::withoutGlobalScopes()->find($settlementId);
+                        if ($settlement && empty($settlement->user_id)) {
+                            $settlement->user_id = Auth::id();
+                            $settlement->save();
+                        }
+                    }
+                    if ($settlement) {
+                        $matchedOrders = $this->service->reconcile($settlement);
+                        $this->upsertSettlementReceipt($settlement);
+                        $reconciliation = $this->service->buildReconciliationSummary($settlement->fresh());
                     }
                 }
-                if ($settlement) {
-                    $matchedOrders = $this->service->reconcile($settlement);
-                    $this->upsertSettlementReceipt($settlement);
-                    $reconciliation = $this->service->buildReconciliationSummary($settlement->fresh());
-                }
-            }
 
-            return response()->json([
-                'message' => 'Settlement imported successfully',
-                'stats' => $stats,
-                'new_lines' => (int) ($stats['new_lines'] ?? 0),
-                'updated_lines' => (int) ($stats['updated_lines'] ?? 0),
-                'skipped_duplicates' => (int) ($stats['skipped_duplicates'] ?? 0),
-                'matched_orders' => $matchedOrders,
-                'reconciliation' => $reconciliation ?? null,
-                'summary_message_ar' => $reconciliation['summary_message_ar'] ?? null,
-                'summary_message_en' => $reconciliation['summary_message_en'] ?? null,
-            ]);
+                return [
+                    'message' => 'Settlement imported successfully',
+                    'stats' => $stats,
+                    'new_lines' => (int) ($stats['new_lines'] ?? 0),
+                    'updated_lines' => (int) ($stats['updated_lines'] ?? 0),
+                    'skipped_duplicates' => (int) ($stats['skipped_duplicates'] ?? 0),
+                    'matched_orders' => $matchedOrders,
+                    'reconciliation' => $reconciliation ?? null,
+                    'summary_message_ar' => $reconciliation['summary_message_ar'] ?? null,
+                    'summary_message_en' => $reconciliation['summary_message_en'] ?? null,
+                ];
+            });
+
+            return response()->json($payload);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Import failed: '.$e->getMessage()], 500);
         }
@@ -343,16 +347,20 @@ class SettlementController extends Controller
         $settlement = Settlement::findOrFail($id);
 
         try {
-            $matched = $this->service->reconcile($settlement);
-            $this->upsertSettlementReceipt($settlement);
+            $payload = DB::transaction(function () use ($settlement) {
+                $matched = $this->service->reconcile($settlement);
+                $this->upsertSettlementReceipt($settlement);
 
-            $summary = $this->service->buildReconciliationSummary($settlement->fresh());
+                $summary = $this->service->buildReconciliationSummary($settlement->fresh());
 
-            return response()->json(array_merge([
-                'message' => 'Settlement reconciliation complete',
-                'matched_orders' => $matched,
-                'status' => $settlement->status,
-            ], $summary));
+                return array_merge([
+                    'message' => 'Settlement reconciliation complete',
+                    'matched_orders' => $matched,
+                    'status' => $settlement->status,
+                ], $summary);
+            });
+
+            return response()->json($payload);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Reconciliation failed: '.$e->getMessage()], 500);
         }

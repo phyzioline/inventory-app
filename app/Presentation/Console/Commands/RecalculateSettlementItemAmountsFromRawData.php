@@ -2,23 +2,32 @@
 
 namespace App\Presentation\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Application\Services\SettlementService;
 use App\Domain\Models\Wms\Settlement;
 use App\Domain\Models\Wms\SettlementItem;
+use App\Presentation\Console\Commands\Concerns\RequiresTenantUser;
+use Illuminate\Console\Command;
 
 class RecalculateSettlementItemAmountsFromRawData extends Command
 {
+    use RequiresTenantUser;
+
     protected $signature = 'inventory:settlements-recalculate-amounts-from-raw
+                            {--user= : Inventory user_id (tenant) — required}
+                            {--user-id= : Alias for --user (deprecated)}
                             {--dry-run : List counts only; do not write to the database}
                             {--chunk=500 : Chunk size when scanning settlement_items}
-                            {--user-id= : Limit to settlements owned by this user_id (optional, multi-tenant)}
                             {--reconcile : After updates, run reconcile() on each affected settlement}';
 
     protected $description = 'Backfill settlement_items.amount and fee_amount from stored CSV/TSV raw_data using current import rules (EG Seller Central net rows).';
 
     public function handle(SettlementService $settlementService): int
     {
+        $userId = $this->requireTenantUser();
+        if ($userId <= 0) {
+            return self::FAILURE;
+        }
+
         $dryRun = (bool) $this->option('dry-run');
         $chunk = max(50, (int) $this->option('chunk'));
         $reconcile = (bool) $this->option('reconcile');
@@ -28,14 +37,11 @@ class RecalculateSettlementItemAmountsFromRawData extends Command
         $skipped = 0;
         $affectedSettlementIds = [];
 
-        $query = SettlementItem::query()->whereNotNull('raw_data');
-        $userIdOpt = $this->option('user-id');
-        if ($userIdOpt !== null && $userIdOpt !== '' && (int) $userIdOpt > 0) {
-            $userId = (int) $userIdOpt;
-            $query->whereHas('settlement', function ($q) use ($userId) {
+        $query = SettlementItem::query()
+            ->whereNotNull('raw_data')
+            ->whereHas('settlement', function ($q) use ($userId) {
                 $q->where('user_id', $userId);
             });
-        }
 
         $query
             ->orderBy('id')

@@ -2,15 +2,19 @@
 
 namespace App\Presentation\Console\Commands;
 
-use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\Settlement;
 use App\Domain\Models\Wms\SettlementItem;
+use App\Presentation\Console\Commands\Concerns\RequiresTenantUser;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 class FixOrphanSettlementsCommand extends Command
 {
+    use RequiresTenantUser;
+
     protected $signature = 'inventory:fix-orphan-settlements
+                            {--user= : Inventory user_id (tenant) — required; only channels owned by this user}
                             {--channel-id= : Limit to a channel id}
                             {--dry-run : Show counts only, without updating}';
 
@@ -18,19 +22,26 @@ class FixOrphanSettlementsCommand extends Command
 
     public function handle(): int
     {
+        $userId = $this->requireTenantUser();
+        if ($userId <= 0) {
+            return self::FAILURE;
+        }
+
         $dryRun = (bool) $this->option('dry-run');
         $channelIdOpt = $this->option('channel-id');
         $channelId = ($channelIdOpt !== null && $channelIdOpt !== '' && (int) $channelIdOpt > 0) ? (int) $channelIdOpt : 0;
 
-        // Build a mapping of channel_id => user_id (without tenant scope).
-        $channelsQ = Channel::withoutGlobalScopes()->select(['id', 'user_id'])->whereNotNull('user_id');
+        // Only channels owned by the requested tenant (still without global scope so orphans are visible).
+        $channelsQ = Channel::withoutGlobalScopes()
+            ->select(['id', 'user_id'])
+            ->where('user_id', $userId);
         if ($channelId > 0) {
             $channelsQ->where('id', $channelId);
         }
         $channelToUser = $channelsQ->get()->pluck('user_id', 'id')->toArray();
 
         if ($channelToUser === []) {
-            $this->warn('No channels with user_id found for the given filter.');
+            $this->warn('No channels found for this user / filter.');
 
             return self::SUCCESS;
         }
@@ -40,7 +51,7 @@ class FixOrphanSettlementsCommand extends Command
             ->whereIn('channel_id', array_keys($channelToUser));
 
         $orphans = (int) $settlementsQ->count();
-        $this->info("Orphan settlements (user_id is null): {$orphans}".($dryRun ? ' (dry run)' : ''));
+        $this->info("Orphan settlements for user={$userId} (user_id is null): {$orphans}".($dryRun ? ' (dry run)' : ''));
 
         if ($orphans === 0) {
             return self::SUCCESS;
@@ -52,7 +63,6 @@ class FixOrphanSettlementsCommand extends Command
 
         DB::beginTransaction();
         try {
-            // Update settlements.user_id from channel owner.
             $updatedSettlements = 0;
             foreach ($channelToUser as $cid => $uid) {
                 if ((int) $uid <= 0) {
@@ -64,8 +74,6 @@ class FixOrphanSettlementsCommand extends Command
                     ->update(['user_id' => (int) $uid]);
             }
 
-            // Also backfill settlement_items.user_id (if column exists) from settlement owner for consistency.
-            // Safe even if some rows already have user_id.
             $updatedItems = 0;
             $settlementIds = Settlement::withoutGlobalScopes()
                 ->whereIn('channel_id', array_keys($channelToUser))
@@ -79,7 +87,6 @@ class FixOrphanSettlementsCommand extends Command
                     ->whereIn('settlement_id', $settlementIds)
                     ->whereNull('user_id')
                     ->update([
-                        // Use a subquery so each row gets its settlement's user_id.
                         'user_id' => DB::raw('(SELECT s.user_id FROM settlements s WHERE s.id = settlement_items.settlement_id LIMIT 1)'),
                     ]);
             }
