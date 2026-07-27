@@ -1,7 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
-
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use App\Models\User;

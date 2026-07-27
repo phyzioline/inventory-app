@@ -1,0 +1,22 @@
+---
+description: Never run production frontend build unless the user explicitly asks
+alwaysApply: true
+---
+
+# No `npm run build` / Vite production bundle unless asked
+
+## Requirement
+
+- **Do not** run `npm run build`, `vite build`, or any command that **emits/updates** files under `public/app/` (inventory SPA), **unless the user clearly asks** in that turn (e.g. "اعمل build", "run npm run build").
+- Do **not** build "just to verify" after edits. Prefer `read_lints`, or `npx tsc --noEmit` / `npm run lint` only if asked — still **no** production `vite build` unless requested.
+- If a build is needed to finish a task, **ask first** in one short sentence.
+
+## Frontend path
+
+```
+resources/frontend/   →  vite build  →  public/app/
+```
+
+## Rationale
+
+Production builds rewrite large hashed bundles and create noisy diffs.

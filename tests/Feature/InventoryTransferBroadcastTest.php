@@ -1,7 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
-
 use Illuminate\Support\Facades\Event;
 use App\Models\User;
 use App\Domain\Events\StockUpdated;

@@ -19,15 +19,21 @@
     </source>
     <php>
         <ini name="memory_limit" value="512M"/>
-        <env name="APP_ENV" value="testing"/>
+        <!--
+          DATABASE SAFETY (2026-07-27 incident):
+          force="true" OVERRIDES shell/.env values. Without force, a missing
+          .env.testing let RefreshDatabase wipe phyzioline_inventory.
+          Never remove force or point DB_DATABASE at production.
+        -->
+        <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="BROADCAST_CONNECTION" value="null"/>
-        <env name="CACHE_STORE" value="array"/>
-        <!-- PostgreSQL only — credentials from .env.testing (see .env.testing.example) -->
-        <env name="DB_CONNECTION" value="pgsql"/>
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
-        <env name="SESSION_DRIVER" value="array"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
+        <env name="CACHE_STORE" value="array" force="true"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_DATABASE" value="phyzioline_inventory_test" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
     </php>
 </phpunit>

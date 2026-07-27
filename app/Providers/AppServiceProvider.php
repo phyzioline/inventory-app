@@ -100,9 +100,11 @@ class AppServiceProvider extends ServiceProvider
                 ReconcileSettlementsCommand::class,
                 ReconcileSettlementReturnsCommand::class,
                 RollbackMarketplaceImportStockCommand::class,
+                \App\Presentation\Console\Commands\RetryImportStockDeductionsCommand::class,
                 SyncSkuCostsFromMasterProductsCommand::class,
                 AuditImportSkuDrift::class,
                 RepairImportSkuDrift::class,
+                \App\Presentation\Console\Commands\FixSwappedMarketplaceOrderDatesCommand::class,
             ]);
         }
     }

@@ -1,0 +1,56 @@
+---
+description: Database migrations and seeders belong in the owning module — not database/migrations for domain tables
+alwaysApply: true
+---
+
+# Module Database Placement (mandatory)
+
+## Rule
+
+**New migrations and seeders go in the owning module**, not `database/migrations/` or `database/seeders/`.
+
+| Asset | Location |
+|-------|----------|
+| Domain migrations | `Modules/{Name}/database/migrations/` |
+| Domain seeders | `Modules/{Name}/database/seeders/` |
+| Laravel framework (`0001_01_01_*` users, cache, queue jobs, sanctum tokens) | `Modules/Authentication/` + `Modules/Administration/` |
+| Root orchestrator | `Modules/Administration/database/seeders/DatabaseSeeder.php` (`Database\Seeders` namespace via composer) |
+
+## ServiceProvider
+
+Every module with migrations must call in `boot()`:
+
+```php
+use Modules\Administration\app\Infrastructure\Migration\RegistersModuleMigrations;
+
+class ExampleServiceProvider extends ServiceProvider
+{
+    use RegistersModuleMigrations;
+
+    public function boot(): void
+    {
+        $this->loadModuleMigrations('Example');
+    }
+}
+```
+
+## Distribute existing shared files
+
+```bash
+php artisan migration:distribute-to-modules --move --seeders --force
+```
+
+Per-module legacy collectors still work:
+
+```bash
+php artisan clinics:collect-migrations
+php artisan ecommerce:collect-migrations
+php artisan inventory:collect-migrations
+```
+
+## Never
+
+- `migrate:fresh` on shared PostgreSQL
+- Duplicate the same migration in `database/migrations/` AND `Modules/{Name}/database/migrations/`
+
+Audit: `docs/refactoring/MODULE_AUDIT.md`

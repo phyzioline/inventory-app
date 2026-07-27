@@ -1,0 +1,21 @@
+---
+description: Confirm repo identity — inventory-app vs laravel-phyzio monolith
+alwaysApply: true
+---
+
+# Repo identity (READ FIRST)
+
+| | **This repo** | The other |
+|---|---|---|
+| Name | `phyzioline/inventory` | `laravel/laravel` |
+| Path | `/home/phyzioline-inventory/htdocs/inventory.phyzioline.com` | `/home/phyzioline/htdocs/phyzioline.com` |
+| Remote | `inventory-app.git` | `laravel-phyzio.git` |
+| URL | `inventory.phyzioline.com` | `phyzioline.com` |
+
+Before `git commit` / `git push` / claims about `Modules/Ecommerce` / clinics:
+
+```bash
+pwd && git remote -v
+```
+
+If you see `Modules/` paths or clinic booking — you are in the **wrong** project.

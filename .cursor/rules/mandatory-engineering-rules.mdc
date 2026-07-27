@@ -1,0 +1,48 @@
+---
+description: Mandatory Clean Architecture placement and safety for inventory-app
+alwaysApply: true
+---
+
+# Mandatory Engineering Rules (إلزامي)
+
+## 1. Clean Architecture placement
+
+New domain logic goes under:
+
+| Layer | Path |
+|-------|------|
+| Application | `app/Application/` |
+| Domain | `app/Domain/` |
+| Infrastructure | `app/Infrastructure/` |
+| Presentation | `app/Presentation/` |
+
+**Forbidden:** random root folders, duplicate services, putting business logic in React only when a backend service already exists.
+
+**Before creating any file:** search the repo — reuse or extend; do not duplicate.
+
+## 2. Allowed thin `app/` leftovers
+
+| Path | Purpose |
+|------|---------|
+| `app/Models/User.php` | Auth user model |
+| `app/Providers/*` | Bootstrap, Gate::before |
+| `app/Http/Middleware/*` | Global middleware |
+| `app/Support/DatabaseSafetyGuard.php` | Production DB protection |
+| `app/Console/Commands/*` | Ops / one-off backfills only when not Presentation |
+
+Prefer `Presentation/Console/Commands` for domain artisan commands.
+
+## 3. No git push / no migrate:fresh / no build unless asked
+
+See sibling rules: `no-git-push-without-request.mdc`, `no-migrate-fresh.mdc`, `no-frontend-build-without-explicit-request.mdc`, `database-safety.mdc`.
+
+## 4. Migrations
+
+- Live in `database/migrations/` (this app is not nwidart-modular).
+- PostgreSQL only — no MySQL-only syntax without driver guards.
+- Prefer idempotent `Schema::hasTable` / `hasColumn` when restoring from shared dumps.
+- **Never** `migrate:fresh` on `phyzioline_inventory`.
+
+## 5. Scripts
+
+Ops only under `/home/phyzioline-inventory/backup_*.sh` or documented ops paths — not ad-hoc domain tooling at repo root.

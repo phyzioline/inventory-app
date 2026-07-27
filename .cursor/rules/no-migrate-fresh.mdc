@@ -1,0 +1,26 @@
+---
+description: Never run migrate:fresh or db:wipe on production inventory DB
+alwaysApply: true
+---
+
+# No `migrate:fresh` / `db:wipe` on production (FORBIDDEN)
+
+## Requirement
+
+- **Never** run `php artisan migrate:fresh`, `migrate:fresh --seed`, `db:wipe`, `migrate:refresh`, or `migrate:reset` against **`phyzioline_inventory`**.
+- **Never** suggest `migrate:fresh` as a default fix.
+- For schema: `php artisan migrate` or `php artisan migrate:status` only.
+- Tests may use `RefreshDatabase` **only** on `phyzioline_inventory_test` (see `database-safety.mdc`).
+
+## Allowed
+
+```bash
+php artisan migrate
+php artisan migrate:status
+# tests — only with .env.testing → phyzioline_inventory_test
+./vendor/bin/pest tests/Unit/DatabaseSafetyGuardTest.php
+```
+
+## Rationale
+
+Incident 2026-07-27: Pest wiped production. Enforced in code by `App\Support\DatabaseSafetyGuard`.

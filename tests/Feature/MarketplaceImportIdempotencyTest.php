@@ -1,7 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
-
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use App\Models\User;
@@ -747,6 +745,160 @@ describe('Preview row sampling', function () {
         expect($issueRow)->not->toBeNull()
             ->and($issueRow['row_number'])->toBe(2001)
             ->and($issueRow['stock_preview']['shortage'] ?? false)->toBeTrue();
+    });
+
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Batch retry of pending deductions (no sheet re-upload)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('retryPendingStockDeductions', function () {
+
+    it('deducts a legacy null-status line and does not double-deduct on second run', function () {
+        $user = User::factory()->create();
+        Auth::login($user);
+
+        $channel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'FBA Channel',
+            'slug' => 'fba-'.uniqid(),
+            'type' => 'fba',
+            'is_active' => true,
+        ]);
+        $location = InventoryLocation::factory()->create([
+            'channel_id' => $channel->id,
+            'user_id' => $user->id,
+            'is_active' => true,
+        ]);
+        $sku = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'RETRY-001',
+            'marketplace_id' => 'RETRY-001',
+            'channel_id' => $channel->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $sku->id,
+            'location_id' => $location->id,
+            'quantity' => 10,
+            'user_id' => $user->id,
+        ]);
+
+        $order = InventoryOrder::factory()->create([
+            'user_id' => $user->id,
+            'channel_id' => $channel->id,
+            'platform_order_id' => '800-RETRY-0000001',
+            'order_date' => now()->subHours(6),
+            'status' => 'shipped',
+        ]);
+        $item = InventoryOrderItem::factory()->create([
+            'inventory_order_id' => $order->id,
+            'user_id' => $user->id,
+            'sku_id' => $sku->id,
+            'sku_code' => 'RETRY-001',
+            'quantity' => 3,
+            'unit_price' => 20.00,
+            'stock_deduction_status' => null,
+        ]);
+
+        $service = app(MarketplaceImportService::class);
+
+        $dry = $service->retryPendingStockDeductions([
+            'user_id' => $user->id,
+            'since' => now()->subDay()->toDateTimeString(),
+            'dry_run' => true,
+        ]);
+        expect($dry['scanned'])->toBe(1)
+            ->and($dry['deducted'])->toBe(1)
+            ->and((int) SkuInventory::where('sku_id', $sku->id)->value('quantity'))->toBe(10);
+
+        $run = $service->retryPendingStockDeductions([
+            'user_id' => $user->id,
+            'since' => now()->subDay()->toDateTimeString(),
+            'dry_run' => false,
+        ]);
+        expect($run['deducted'])->toBe(1)
+            ->and((int) SkuInventory::where('sku_id', $sku->id)->value('quantity'))->toBe(7);
+        expect($item->fresh()->stock_deduction_status)->toBe('deducted');
+        expect(InventoryTransaction::where('reference_type', 'ImportedOrder')->where('type', 'OUT')->count())->toBe(1);
+
+        $again = $service->retryPendingStockDeductions([
+            'user_id' => $user->id,
+            'since' => now()->subDay()->toDateTimeString(),
+            'dry_run' => false,
+            'include_legacy_null' => true,
+        ]);
+        // Item is now deducted — not in shortage/null candidate set.
+        expect($again['scanned'])->toBe(0)
+            ->and((int) SkuInventory::where('sku_id', $sku->id)->value('quantity'))->toBe(7)
+            ->and(InventoryTransaction::where('reference_type', 'ImportedOrder')->where('type', 'OUT')->count())->toBe(1);
+    });
+
+    it('retries a shortage line when stock becomes available', function () {
+        $user = User::factory()->create();
+        Auth::login($user);
+
+        $channel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'FBA Channel',
+            'slug' => 'fba-'.uniqid(),
+            'type' => 'fba',
+            'is_active' => true,
+        ]);
+        $location = InventoryLocation::factory()->create([
+            'channel_id' => $channel->id,
+            'user_id' => $user->id,
+            'is_active' => true,
+        ]);
+        $sku = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'RETRY-SHORT-1',
+            'marketplace_id' => 'RETRY-SHORT-1',
+            'channel_id' => $channel->id,
+        ]);
+        $inv = SkuInventory::factory()->create([
+            'sku_id' => $sku->id,
+            'location_id' => $location->id,
+            'quantity' => 0,
+            'user_id' => $user->id,
+        ]);
+
+        $order = InventoryOrder::factory()->create([
+            'user_id' => $user->id,
+            'channel_id' => $channel->id,
+            'platform_order_id' => '800-RETRY-SHORT-1',
+            'order_date' => now()->subHours(2),
+            'status' => 'shipped',
+        ]);
+        $item = InventoryOrderItem::factory()->create([
+            'inventory_order_id' => $order->id,
+            'user_id' => $user->id,
+            'sku_id' => $sku->id,
+            'sku_code' => 'RETRY-SHORT-1',
+            'quantity' => 2,
+            'stock_deduction_status' => 'shortage',
+            'stock_shortage_reason' => 'insufficient',
+        ]);
+
+        $service = app(MarketplaceImportService::class);
+        $stillShort = $service->retryPendingStockDeductions([
+            'user_id' => $user->id,
+            'only_shortage' => true,
+            'dry_run' => false,
+        ]);
+        expect($stillShort['shortage'])->toBe(1)
+            ->and($item->fresh()->stock_deduction_status)->toBe('shortage');
+
+        $inv->update(['quantity' => 5]);
+
+        $fixed = $service->retryPendingStockDeductions([
+            'user_id' => $user->id,
+            'only_shortage' => true,
+            'dry_run' => false,
+        ]);
+        expect($fixed['deducted'])->toBe(1)
+            ->and($item->fresh()->stock_deduction_status)->toBe('deducted')
+            ->and((int) SkuInventory::where('sku_id', $sku->id)->value('quantity'))->toBe(3);
     });
 
 });

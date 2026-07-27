@@ -141,4 +141,67 @@ class MarketplaceOrderController extends Controller
             ], 422);
         }
     }
+
+    /**
+     * Preview or run batch retry of pending import stock deductions (no sheet re-upload).
+     */
+    public function retryStockDeductions(Request $request): JsonResponse
+    {
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(600);
+        }
+
+        $data = $request->validate([
+            'since' => 'nullable|date',
+            'until' => 'nullable|date',
+            'days' => 'nullable|integer|min:0|max:366',
+            'only_shortage' => 'nullable|boolean',
+            'dry_run' => 'nullable|boolean',
+            'limit' => 'nullable|integer|min:1|max:5000',
+        ]);
+
+        $since = $data['since'] ?? null;
+        if ($since === null && isset($data['days'])) {
+            $since = now()->subDays((int) $data['days'])->startOfDay()->toDateTimeString();
+        }
+
+        try {
+            $details = $this->importService->retryPendingStockDeductions([
+                'user_id' => (int) $request->user()->id,
+                'since' => $since,
+                'until' => $data['until'] ?? null,
+                'dry_run' => (bool) ($data['dry_run'] ?? false),
+                'only_shortage' => (bool) ($data['only_shortage'] ?? false),
+                'limit' => $data['limit'] ?? null,
+            ]);
+
+            return response()->json([
+                'message' => ! empty($details['dry_run'])
+                    ? 'Pending deduction preview'
+                    : 'Pending deductions processed',
+                'details' => $details,
+            ]);
+        } catch (ValidationException $e) {
+            $messages = $e->errors();
+            $first = '';
+            foreach ($messages as $vals) {
+                if (is_array($vals) && isset($vals[0])) {
+                    $first = (string) $vals[0];
+                    break;
+                }
+            }
+
+            return response()->json([
+                'message' => 'Retry blocked',
+                'error' => $first !== '' ? $first : $e->getMessage(),
+            ], 422);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'Retry failed',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }

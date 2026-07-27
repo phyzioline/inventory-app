@@ -222,15 +222,24 @@ final class DashboardMetricsService
 
         $userId = (int) auth()->id();
 
+        // Aggregate non-grouped columns: Postgres only allows SELECT of non-grouped
+        // columns when grouping by a PRIMARY KEY. After dump restores the PK can be
+        // missing, so MAX(...) stays correct either way. Cast jsonb via text for MAX.
         $rows = DB::table('master_products as mp')
             ->leftJoin('inventory_offers as o', 'o.master_product_id', '=', 'mp.id')
             ->leftJoin('skus as s', 's.offer_id', '=', 'o.id')
             ->leftJoin('sku_inventory as si', 'si.sku_id', '=', 's.id')
             ->where('mp.user_id', $userId)
             ->groupBy('mp.id')
-            ->selectRaw('mp.id, mp.internal_name, mp.specifications, COALESCE(SUM(si.quantity), 0) as total_qty, MIN(s.sku) as sku')
-            ->havingRaw("(COALESCE(mp.specifications->>'min_stock', '0'))::numeric > 0")
-            ->havingRaw("COALESCE(SUM(si.quantity), 0) < (COALESCE(mp.specifications->>'min_stock', '0'))::numeric")
+            ->selectRaw(
+                "mp.id, ".
+                "MAX(mp.internal_name) as internal_name, ".
+                "(MAX(mp.specifications::text))::jsonb as specifications, ".
+                "COALESCE(SUM(si.quantity), 0) as total_qty, ".
+                "MIN(s.sku) as sku"
+            )
+            ->havingRaw("(COALESCE(MAX(mp.specifications::text)::jsonb->>'min_stock', '0'))::numeric > 0")
+            ->havingRaw("COALESCE(SUM(si.quantity), 0) < (COALESCE(MAX(mp.specifications::text)::jsonb->>'min_stock', '0'))::numeric")
             ->orderBy('total_qty')
             ->limit($limit)
             ->get();

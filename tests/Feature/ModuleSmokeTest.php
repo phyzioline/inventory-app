@@ -1,7 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class);
-
 use App\Application\Services\InventoryReturnImportService;
 use App\Application\Services\InventoryReturnListingService;
 

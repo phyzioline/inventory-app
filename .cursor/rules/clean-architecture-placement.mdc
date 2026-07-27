@@ -1,0 +1,39 @@
+---
+description: File placement — Clean Architecture layers only; no Modules/ here
+alwaysApply: true
+---
+
+# File Placement (inventory-app)
+
+## Rule
+
+This is a **standalone** Laravel app extracted from the monolith. There is **no** `Modules/` directory.
+
+| What | Where |
+|------|--------|
+| Application logic | `app/Application/` |
+| Domain models / contracts | `app/Domain/` |
+| External APIs, observers, jobs | `app/Infrastructure/` |
+| Controllers, Form Requests, Artisan | `app/Presentation/` |
+| SPA | `resources/frontend/src/` |
+| Migrations / seeders | `database/migrations/`, `database/seeders/` |
+| Tests | `tests/Feature/`, `tests/Unit/` |
+| Agent docs | `CLAUDE.md`, `.cursor/rules/` |
+
+## Forbidden
+
+```
+❌ Modules/...
+❌ app/Modules/...
+❌ Creating parallel "inventory2" trees
+❌ Business logic only in public/ without backend service when ledger/stock is involved
+```
+
+## Examples
+
+```
+✅ app/Application/Services/MarketplaceImportService.php
+✅ app/Domain/Models/Wms/InventoryOrder.php
+✅ app/Presentation/Http/Controllers/Api/MarketplaceOrderController.php
+✅ resources/frontend/src/components/inventory/OrderImportDialog.tsx
+```

@@ -1,0 +1,21 @@
+---
+description: Never push to git unless the user explicitly asks in that turn
+alwaysApply: true
+---
+
+# No `git push` unless explicitly requested
+
+## Requirement
+
+- **Never** run `git push`, `git push -u`, or any remote publish unless the user **clearly asks** in that turn (e.g. "push", "ارفع جيت", "push to origin").
+- Do **not** push "to complete" a task, verify CI, or sync after commits unless asked.
+- Commits only when requested — see user commit rules.
+
+## Allowed without push
+
+```bash
+git status
+git diff
+git log
+git add … && git commit …   # only when user asked to commit
+```

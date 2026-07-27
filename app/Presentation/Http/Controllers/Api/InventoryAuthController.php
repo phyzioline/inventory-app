@@ -5,13 +5,14 @@ namespace App\Presentation\Http\Controllers\Api;
 use App\Domain\Models\Subscription;
 use App\Domain\Models\SubscriptionPlan;
 use App\Http\Controllers\Controller;
+use App\Infrastructure\Notifications\InventoryResetPassword;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
-use App\Infrastructure\Notifications\InventoryResetPassword;
+use Illuminate\Support\Str;
 
 class InventoryAuthController extends Controller
 {
@@ -31,16 +32,12 @@ class InventoryAuthController extends Controller
 
         $request->session()->regenerate();
 
+        /** @var User $user */
         $user = Auth::user();
 
         return response()->json([
             'success' => true,
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'is_super_admin' => $user->is_super_admin,
-            ],
+            'user' => $this->userPayload($user),
         ]);
     }
 
@@ -63,12 +60,61 @@ class InventoryAuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'is_super_admin' => $user->is_super_admin,
-            ],
+            'user' => $this->userPayload($user),
+        ]);
+    }
+
+    public function updateProfile(Request $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = Auth::user();
+
+        $data = $request->validate([
+            'name' => ['sometimes', 'required', 'string', 'min:2', 'max:255'],
+            'company_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'email' => ['sometimes', 'required', 'email', 'max:255', 'unique:users,email,'.$user->id],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'currency' => ['sometimes', 'nullable', 'string', 'in:EGP,USD,EUR,SAR,AED'],
+            'preferred_locale' => ['sometimes', 'nullable', 'string', 'in:ar,en'],
+        ]);
+
+        $user->fill($data);
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated.',
+            'user' => $this->userPayload($user->fresh()),
+        ]);
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = Auth::user();
+
+        $data = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        if (! Hash::check($data['current_password'], $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Current password is incorrect.',
+                'errors' => ['current_password' => ['Current password is incorrect.']],
+            ], 422);
+        }
+
+        $user->forceFill([
+            'password' => $data['password'],
+        ])->save();
+
+        $request->session()->regenerate();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Password updated successfully.',
         ]);
     }
 
@@ -99,7 +145,10 @@ class InventoryAuthController extends Controller
         Auth::login($user, true);
         $request->session()->regenerate();
 
-        return response()->json($user, 201);
+        return response()->json([
+            'success' => true,
+            'user' => $this->userPayload($user),
+        ], 201);
     }
 
     public function forgotPassword(Request $request): JsonResponse
@@ -109,8 +158,6 @@ class InventoryAuthController extends Controller
         $status = Password::sendResetLink(
             $request->only('email'),
             function (User $user, string $token) {
-                // SPA is built to public/app/ (see resources/frontend/vite.config.ts) and
-                // served at /app/index.html to avoid colliding with this app's own public/index.php.
                 $resetUrl = url('/app/index.html#/reset-password?token='.$token.'&email='.urlencode($user->email));
                 $user->notify(new InventoryResetPassword($token, $resetUrl));
             }
@@ -135,7 +182,7 @@ class InventoryAuthController extends Controller
             $request->only('email', 'password', 'password_confirmation', 'token'),
             function (User $user, string $password) {
                 $user->forceFill(['password' => Hash::make($password)])
-                    ->setRememberToken(\Illuminate\Support\Str::random(60));
+                    ->setRememberToken(Str::random(60));
                 $user->save();
             }
         );
@@ -145,5 +192,22 @@ class InventoryAuthController extends Controller
         }
 
         return response()->json(['message' => __($status)], 422);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function userPayload(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'company_name' => $user->company_name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'currency' => $user->currency ?: 'EGP',
+            'preferred_locale' => $user->preferred_locale,
+            'is_super_admin' => (bool) $user->is_super_admin,
+        ];
     }
 }

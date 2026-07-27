@@ -1,0 +1,53 @@
+---
+description: Mandatory migration rules — Clean Architecture only, no git push, no migrate:fresh
+alwaysApply: true
+---
+
+# Mandatory Migration Rules (إلزامي)
+
+## 1. No files outside Clean Architecture
+
+- **Forbidden:** creating domain logic, services, commands, jobs, observers, mail, notifications, or helpers under `app/` (except one-line shims listed in `app-footprint-after-migration.mdc`).
+- **Before creating any file:** `grep` the repo — if it exists in `Modules/`, **move it**; never duplicate.
+- **`app/Models/`**, **`app/Support/`**, **`app/Observers/`** = transitional shims only — real code lives in modules.
+- **`app/Mail/`** and **`app/Notifications/`** = **shims only** — real Mailables/Notifications in `Modules/{Name}/app/Infrastructure/`.
+- **Docs:** new module docs go in `Modules/{Name}/docs/` or `Modules/{Name}/README.md` — not scattered under repo root or `scripts/`.
+
+## 2. Module placement
+
+| Layer | Path |
+|-------|------|
+| Application | `Modules/{Name}/app/Application/` |
+| Domain | `Modules/{Name}/app/Domain/` |
+| Infrastructure | `Modules/{Name}/app/Infrastructure/` |
+| Presentation | `Modules/{Name}/app/Presentation/` |
+
+## 3. No git push
+
+- Never run `git push` unless the user explicitly asks in that turn.
+
+## 4. No migrate:fresh
+
+- Never run `php artisan migrate:fresh`, `db:wipe`, or equivalent on shared PostgreSQL.
+- Use `php artisan migrate` or `php artisan migrate:status` only.
+
+## 5. Deprecation pattern
+
+Extract → Wrap → Delegate → move to `legacy_archive/` — never `class_alias()` for domain code.
+
+## 6. أي سكربت / أوامر في الخطة (إلزامي)
+
+عند إرسال **أي block أوامر** للمستخدم (verify، setup، migration، CI) يجب أن:
+
+1. **تتبع قواعد هذا الملف و** `app-footprint-after-migration.mdc` **و** `CURSOR.md` — لا تقترح إنشاء ملفات تحت `app/` أو `scripts/` للـ domain.
+2. **قبل أي `module:make` أو ملف جديد:** ابحث في `Modules/` — إن وُجد المنطق انقله؛ لا تُكرر.
+3. **لا** `migrate:fresh` / `db:wipe` — استخدم `php artisan migrate` فقط.
+4. **لا** `git push` إلا بطلب صريح.
+5. **بعد ترحيل middleware:** شغّل `php artisan optimize:clear` (أو ضمن `administration:migrate-app-footprint`).
+6. **Windows — smoke tests:** لا تستخدم `Modules/*/...` (لا يعمل في PowerShell). استخدم:
+
+```powershell
+./vendor/bin/pest Modules/Ads/tests Modules/CRM/tests Modules/Social/tests Modules/Universities/tests Modules/DataHub/tests Modules/AI/tests Modules/Payments/tests Modules/Courses/tests Modules/Administration/tests --filter=ModuleSmoke
+```
+
+7. **nwidart `module:make`:** عدّل `module.json` إلى `Modules\{Name}\app\Providers\` وضع `"Name": false` في `modules_statuses.json` قبل أي `artisan` تالي.

@@ -2296,6 +2296,12 @@ class SettlementService
             'd/m/Y H:i:s',
             'd/m/Y H:i',
             'd/m/Y',
+            'd-m-Y H:i:s',
+            'd-m-Y H:i',
+            'd-m-Y',
+            'd.m.Y H:i:s',
+            'd.m.Y H:i',
+            'd.m.Y',
             'Y-m-d H:i:s',
             'Y-m-d',
             'm/d/Y H:i:s',
@@ -2303,10 +2309,20 @@ class SettlementService
             'm/d/Y',
         ];
         foreach ($formats as $format) {
-            $dt = \DateTime::createFromFormat($format, $raw);
+            $dt = \DateTime::createFromFormat('!'.$format, $raw);
             if ($dt instanceof \DateTime) {
+                $errors = \DateTime::getLastErrors();
+                if (is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0)) {
+                    continue;
+                }
+
                 return $dt->format('Y-m-d H:i:s');
             }
+        }
+
+        // Avoid US-centric strtotime for ambiguous numeric slash dates (d/m vs m/d).
+        if (preg_match('/^\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/', $raw)) {
+            return null;
         }
 
         try {

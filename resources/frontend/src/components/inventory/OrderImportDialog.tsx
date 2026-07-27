@@ -9,6 +9,7 @@ import api from '@/lib/api';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useMarketplaceImportPreviewLiveRefresh } from '@/hooks/useMarketplaceImportPreviewLiveRefresh';
 
@@ -109,6 +110,9 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
     const [isPreviewLoading, setIsPreviewLoading] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
     const [rollbackBusy, setRollbackBusy] = useState(false);
+    const [retryBusy, setRetryBusy] = useState(false);
+    const [retryDays, setRetryDays] = useState('1');
+    const [retryPreview, setRetryPreview] = useState<any>(null);
     const [results, setResults] = useState<any>(null);
     const [preview, setPreview] = useState<any>(null);
     const [previewRowFilter, setPreviewRowFilter] = useState<'all' | 'issues'>('all');
@@ -331,7 +335,74 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
         setPreview(null);
         setPreviewRowFilter('all');
         setRollbackBusy(false);
+        setRetryBusy(false);
+        setRetryPreview(null);
+        setRetryDays('1');
         onOpenChange(false);
+    };
+
+    const handleRetryStockPreview = async () => {
+        setRetryBusy(true);
+        setRetryPreview(null);
+        try {
+            const days = Math.max(0, Number(retryDays) || 1);
+            const res = await api.post('marketplace/import/retry-stock-deductions', {
+                days,
+                dry_run: true,
+            });
+            setRetryPreview(res?.details ?? res);
+            const d = res?.details ?? res;
+            toast.success(
+                isAr
+                    ? `معاينة: ${d?.scanned ?? 0} بند — سيُخصم ${d?.deducted ?? 0}، سبق خصمه ${d?.already_deducted ?? 0}`
+                    : `Preview: ${d?.scanned ?? 0} lines — would deduct ${d?.deducted ?? 0}, already done ${d?.already_deducted ?? 0}`
+            );
+        } catch (error: any) {
+            toast.error(
+                error.response?.data?.error ||
+                    error.response?.data?.message ||
+                    (isAr ? 'تعذر المعاينة' : 'Preview failed')
+            );
+        } finally {
+            setRetryBusy(false);
+        }
+    };
+
+    const handleRetryStockRun = async () => {
+        const would = Number(retryPreview?.deducted ?? 0);
+        const scanned = Number(retryPreview?.scanned ?? 0);
+        const msg = isAr
+            ? `إعادة خصم المخزون للبنود الناقصة خلال آخر ${retryDays} يوم(أيام):\n• معاينة: ${scanned} بند، سيُخصم تقريباً ${would}\n• لن يُخصم مرتين إن وُجدت حركة OUT سابقة\nالمتابعة؟`
+            : `Retry stock deduction for pending lines in the last ${retryDays} day(s):\n• Preview: ${scanned} line(s), ~${would} would deduct\n• Will not double-deduct if an OUT already exists\nContinue?`;
+        if (!window.confirm(msg)) {
+            return;
+        }
+        setRetryBusy(true);
+        try {
+            const days = Math.max(0, Number(retryDays) || 1);
+            const res = await api.post('marketplace/import/retry-stock-deductions', {
+                days,
+                dry_run: false,
+            });
+            const d = res?.details ?? res;
+            setRetryPreview(d);
+            toast.success(
+                isAr
+                    ? `تم: خُصم ${d?.deducted ?? 0}، نواقص ${d?.shortage ?? 0}، سبق خصمه ${d?.already_deducted ?? 0}`
+                    : `Done: deducted ${d?.deducted ?? 0}, shortage ${d?.shortage ?? 0}, already ${d?.already_deducted ?? 0}`
+            );
+            void queryClient.invalidateQueries({ queryKey: ['orders'] });
+            void queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
+            if (onSuccess) onSuccess();
+        } catch (error: any) {
+            toast.error(
+                error.response?.data?.error ||
+                    error.response?.data?.message ||
+                    (isAr ? 'تعذر إعادة الخصم' : 'Retry failed')
+            );
+        } finally {
+            setRetryBusy(false);
+        }
     };
 
     const handleRollbackLastImport = async () => {
@@ -658,20 +729,87 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                         ? 'لو الاستيراد فشل بسبب عدم تطابق الأعمدة، نزّل القالب واملأ عليه ثم ارفعه.'
                                         : 'If import fails due to column mismatch, download the template, fill it, then upload it.'}
                                 </p>
-                                <div className="flex flex-wrap gap-2">
-                                    <Button type="button" variant="outline" size="sm" onClick={() => downloadTemplate('all-orders')}>
-                                        <Download className="w-4 h-4 mr-1" />
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 w-full px-3 text-xs font-medium justify-center"
+                                        onClick={() => downloadTemplate('all-orders')}
+                                    >
+                                        <Download className="w-3.5 h-3.5 me-1.5 shrink-0" />
                                         {isAr ? 'كل الطلبات' : 'All Orders'}
                                     </Button>
-                                    <Button type="button" variant="outline" size="sm" onClick={() => downloadTemplate('amazon-fba')}>
-                                        <Download className="w-4 h-4 mr-1" />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 w-full px-3 text-xs font-medium justify-center"
+                                        onClick={() => downloadTemplate('amazon-fba')}
+                                    >
+                                        <Download className="w-3.5 h-3.5 me-1.5 shrink-0" />
                                         {isAr ? 'أمازون FBA' : 'Amazon FBA'}
                                     </Button>
-                                    <Button type="button" variant="outline" size="sm" onClick={() => downloadTemplate('amazon-fbm')}>
-                                        <Download className="w-4 h-4 mr-1" />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 w-full px-3 text-xs font-medium justify-center"
+                                        onClick={() => downloadTemplate('amazon-fbm')}
+                                    >
+                                        <Download className="w-3.5 h-3.5 me-1.5 shrink-0" />
                                         {isAr ? 'أمازون FBM' : 'Amazon FBM'}
                                     </Button>
                                 </div>
+                            </div>
+
+                            <div className="rounded-lg border border-amber-500/35 bg-amber-500/5 p-3 space-y-2">
+                                <p className="text-sm font-medium text-foreground">
+                                    {isAr ? 'إعادة خصم النواقص (بدون رفع الشيت)' : 'Retry pending deductions (no sheet)'}
+                                </p>
+                                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                    {isAr
+                                        ? 'للطلبات المسجّلة بنقص مخزون أو بدون خصم سابق. يتحقق من عدم وجود حركة OUT قبل الخصم — لا دبلرة.'
+                                        : 'For shortage / legacy undeducted lines. Checks for an existing OUT before deducting — no double sell.'}
+                                </p>
+                                <div className="flex flex-wrap items-end gap-2">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">{isAr ? 'آخر كام يوم' : 'Last N days'}</Label>
+                                        <Input
+                                            type="number"
+                                            min={0}
+                                            max={366}
+                                            className="w-24 h-8"
+                                            value={retryDays}
+                                            onChange={(e) => setRetryDays(e.target.value)}
+                                        />
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={retryBusy}
+                                        onClick={() => void handleRetryStockPreview()}
+                                    >
+                                        {retryBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ScanLine className="w-4 h-4 mr-1" />}
+                                        {isAr ? 'معاينة' : 'Preview'}
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        className="bg-amber-600 hover:bg-amber-700 text-white"
+                                        disabled={retryBusy || !retryPreview}
+                                        onClick={() => void handleRetryStockRun()}
+                                    >
+                                        {retryBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                                        {isAr ? 'تنفيذ الخصم' : 'Run deduction'}
+                                    </Button>
+                                </div>
+                                {retryPreview ? (
+                                    <p className="text-[11px] text-muted-foreground">
+                                        {isAr
+                                            ? `نتيجة: ممسوح ${retryPreview.scanned} · سيُخصم/خُصم ${retryPreview.deducted} · سبق ${retryPreview.already_deducted} · نقص ${retryPreview.shortage} · تجاهل ${retryPreview.skipped}`
+                                            : `Result: scanned ${retryPreview.scanned} · deduct ${retryPreview.deducted} · already ${retryPreview.already_deducted} · shortage ${retryPreview.shortage} · skipped ${retryPreview.skipped}`}
+                                        {retryPreview.dry_run ? (isAr ? ' (معاينة فقط)' : ' (preview only)') : ''}
+                                    </p>
+                                ) : null}
                             </div>
                         </>
                     ) : preview && !results ? (

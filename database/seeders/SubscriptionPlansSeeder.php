@@ -9,29 +9,64 @@ class SubscriptionPlansSeeder extends Seeder
 {
     public function run(): void
     {
+        // Cheap launch pricing (EGP) — demo-friendly for Paymob live checkout.
         SubscriptionPlan::query()->updateOrCreate(
             ['plan_code' => 'free'],
             [
-                'name' => 'Free',
+                'name' => 'مجاني',
                 'price_monthly' => 0,
                 'price_yearly' => 0,
-                'features' => ['support' => 'community'],
-                'limits' => ['warehouses' => 1, 'channels' => 1, 'monthly_orders' => 100],
+                'features' => [
+                    'support' => 'community',
+                    'label_en' => 'Free',
+                ],
+                'limits' => [
+                    'warehouses' => 1,
+                    'channels' => 2,
+                    'monthly_orders' => 200,
+                ],
                 'is_active' => true,
                 'sort_order' => 1,
             ]
         );
 
         SubscriptionPlan::query()->updateOrCreate(
-            ['plan_code' => 'pro'],
+            ['plan_code' => 'starter'],
             [
-                'name' => 'Pro',
-                'price_monthly' => 499,
-                'price_yearly' => 4990,
-                'features' => ['support' => 'priority'],
-                'limits' => ['warehouses' => null, 'channels' => null, 'monthly_orders' => null],
+                'name' => 'أساسي',
+                'price_monthly' => 49,
+                'price_yearly' => 490,
+                'features' => [
+                    'support' => 'email',
+                    'label_en' => 'Starter',
+                ],
+                'limits' => [
+                    'warehouses' => 3,
+                    'channels' => 5,
+                    'monthly_orders' => 2000,
+                ],
                 'is_active' => true,
                 'sort_order' => 2,
+            ]
+        );
+
+        SubscriptionPlan::query()->updateOrCreate(
+            ['plan_code' => 'pro'],
+            [
+                'name' => 'احترافي',
+                'price_monthly' => 149,
+                'price_yearly' => 1490,
+                'features' => [
+                    'support' => 'priority',
+                    'label_en' => 'Pro',
+                ],
+                'limits' => [
+                    'warehouses' => null,
+                    'channels' => null,
+                    'monthly_orders' => null,
+                ],
+                'is_active' => true,
+                'sort_order' => 3,
             ]
         );
     }

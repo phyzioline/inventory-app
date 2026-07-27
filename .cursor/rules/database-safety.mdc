@@ -1,0 +1,28 @@
+---
+description: Never touch production DB with tests or destructive artisan
+alwaysApply: true
+---
+
+# Production database is sacred
+
+**Incident 2026-07-27:** Running Pest without `.env.testing` let `RefreshDatabase` wipe `phyzioline_inventory`.
+
+## Hard rules for agents
+
+1. **Never** run `php artisan test`, `./vendor/bin/pest`, or PHPUnit until:
+   - `.env.testing` exists with `DB_DATABASE=phyzioline_inventory_test`
+   - Database `phyzioline_inventory_test` exists
+   - Confirm with: `grep DB_DATABASE .env.testing phpunit.xml`
+2. **Never** run against `phyzioline_inventory`, `phyzioline`, or `phyziolinedb`:
+   - `migrate:fresh`, `migrate:refresh`, `migrate:reset`, `db:wipe`
+   - Any `RefreshDatabase` / factory seed that targets production
+3. **Never** change `phpunit.xml` `DB_DATABASE` away from `phyzioline_inventory_test`, or remove `force="true"`.
+4. **Never** set `ALLOW_DESTRUCTIVE_DB=1` unless the user explicitly requests a wipe of a non-production DB.
+5. Before any migrate/test command, verify:
+   ```bash
+   php -r 'require "vendor/autoload.php";' 2>/dev/null; grep -E '^DB_DATABASE=' .env .env.testing phpunit.xml
+   ```
+6. If `.env.testing` is missing: create it from `.env.testing.example` and `createdb phyzioline_inventory_test` — do **not** fall back to production credentials/database name.
+7. Production restore / `psql` load into `phyzioline_inventory` only when the user explicitly orders recovery.
+
+Code enforces this via `App\Support\DatabaseSafetyGuard` (tests + artisan). Do not weaken that guard.

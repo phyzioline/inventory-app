@@ -1,0 +1,22 @@
+---
+description: Index of Cursor rules for inventory-app
+alwaysApply: false
+---
+
+# Rules index
+
+| File | Purpose |
+|------|---------|
+| `repo-identity.mdc` | inventory vs laravel-phyzio |
+| `database-safety.mdc` | Never wipe production DB / test DB only |
+| `no-migrate-fresh.mdc` | Ban migrate:fresh on production |
+| `no-git-push-without-request.mdc` | No push unless asked |
+| `no-frontend-build-without-explicit-request.mdc` | No vite build unless asked |
+| `inventory-global-engineering.mdc` | Quality / security / UX bar |
+| `mandatory-engineering-rules.mdc` | Placement + safety checklist |
+| `clean-architecture-placement.mdc` | Where files go |
+| `inventory-critical-paths.mdc` | Stock / money red lines |
+| `CURSOR.md` | Short agent brief |
+| `CLAUDE.md` (repo root) | Full agent context + 12 execution rules |
+
+Monolith verbatim copies: `docs/reference/from-phyzioline-monolith/`

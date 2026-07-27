@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -364,9 +364,18 @@ export function Sidebar({
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-sidebar-border">
-        <div className={cn('flex items-center gap-3 mb-2', collapsed && 'justify-center')}>
-          <div className="w-8 h-8 rounded-full bg-sidebar-foreground/20 flex items-center justify-center">
+      <div className="p-4 border-t border-sidebar-border space-y-2">
+        <Link
+          to="/settings"
+          onClick={handleNavClick}
+          className={cn(
+            'flex items-center gap-3 rounded-lg p-2 hover:bg-sidebar-accent transition-colors',
+            collapsed && 'justify-center',
+            location.pathname.startsWith('/settings') && 'bg-sidebar-accent'
+          )}
+          title={t('settings.tabAccount')}
+        >
+          <div className="w-8 h-8 rounded-full bg-sidebar-foreground/20 flex items-center justify-center flex-shrink-0">
             <UserCircle className="w-5 h-5 text-sidebar-foreground" />
           </div>
           <AnimatePresence>
@@ -375,14 +384,18 @@ export function Sidebar({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="flex-1 min-w-0"
+                className="flex-1 min-w-0 text-start"
               >
-                <p className="text-sm font-medium truncate text-sidebar-foreground">{t('auth.user')}</p>
-                <p className="text-xs text-sidebar-foreground/60 truncate">{user?.email}</p>
+                <p className="text-sm font-medium truncate text-sidebar-foreground">
+                  {user?.name || t('auth.user')}
+                </p>
+                <p className="text-xs text-sidebar-foreground/60 truncate" dir="ltr">
+                  {user?.email || '—'}
+                </p>
               </motion.div>
             )}
           </AnimatePresence>
-        </div>
+        </Link>
 
         <button
           onClick={() => {

@@ -28,6 +28,18 @@ Route::middleware('web')->group(base_path('routes/api.php'));
 // CSRF (see bootstrap/app.php's validateCsrfTokens except list).
 Route::post('webhooks/paymob', \App\Presentation\Http\Controllers\Api\PaymobWebhookController::class);
 
+// Paymob browser return (Transaction Response Callback). HashRouter cannot be
+// the direct return target — fragments are often dropped — so bounce into SPA.
+Route::get('payment/subscription-return', static function () {
+    $qs = http_build_query(array_filter([
+        'payment' => 'return',
+        'success' => request()->query('success'),
+        'id' => request()->query('id'),
+    ], static fn ($v) => $v !== null && $v !== ''));
+
+    return redirect('/app/#/settings/subscription'.($qs !== '' ? '?'.$qs : ''));
+});
+
 // Bare domain → SPA. The React app is a HashRouter (see tauri.conf.json /
 // resources/frontend), so this single static entry point is enough — no
 // catch-all route needed for client-side sub-routes.

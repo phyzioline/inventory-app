@@ -65,6 +65,8 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
     Route::middleware(['auth'])->group(function (): void {
 
         Route::get('auth/me', [InventoryAuthController::class, 'me']);
+        Route::put('auth/profile', [InventoryAuthController::class, 'updateProfile']);
+        Route::post('auth/change-password', [InventoryAuthController::class, 'changePassword']);
 
         // ── Inventory Core ──────────────────────────────────────────
         Route::apiResource('master-products', MasterProductController::class);
@@ -116,6 +118,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('marketplace/import', [MarketplaceOrderController::class, 'import']);
         Route::get('marketplace/import/last-batch', [MarketplaceOrderController::class, 'lastBatch']);
         Route::post('marketplace/import/rollback-last', [MarketplaceOrderController::class, 'rollbackLast']);
+        Route::post('marketplace/import/retry-stock-deductions', [MarketplaceOrderController::class, 'retryStockDeductions']);
 
         // ── Contacts & CRM ───────────────────────────────────────────
         Route::post('vendors/{id}/balance', [VendorController::class, 'adjustBalance']);

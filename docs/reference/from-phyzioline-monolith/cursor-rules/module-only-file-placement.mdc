@@ -1,0 +1,45 @@
+---
+description: Module migration tools and new code must live inside the owning module — never root scripts/
+alwaysApply: true
+---
+
+# Module-Only File Placement (mandatory)
+
+## Rule
+
+**Never create module migration, extraction, or refactor tooling under `scripts/` or repo root.**
+
+Every file belongs in:
+
+| What | Where |
+|------|--------|
+| Application logic | `Modules/{Name}/app/Application/` |
+| Domain | `Modules/{Name}/app/Domain/` |
+| Infrastructure (migration helpers, repos) | `Modules/{Name}/app/Infrastructure/` |
+| Controllers, Artisan commands | `Modules/{Name}/app/Presentation/` |
+| Module docs | `Modules/{Name}/docs/` or `Modules/{Name}/README.md` |
+| Module tests | `Modules/{Name}/tests/` |
+| Cross-app audit only | `app/Console/Commands/` + `app/Infrastructure/Migration/` |
+
+## Allowed in `scripts/`
+
+Ops only: deployment, DB diagnostics, local dev setup, maintenance — **not** Extract/Wrap/Delegate tooling.
+
+## Artisan pattern
+
+```bash
+php artisan clinics:wrap-legacy-web-controllers
+php artisan inventory:wrap-legacy-controllers
+php artisan migration:find-unwrapped-controllers   # app-wide audit only
+```
+
+## Examples
+
+```
+❌ scripts/wrap-clinic-controllers.php
+✅ Modules/Clinics/app/Infrastructure/Migration/WrapLegacyV1ClinicControllers.php
+✅ Modules/Clinics/app/Presentation/Console/Commands/WrapLegacyV1ClinicControllersCommand.php
+
+❌ docs/architecture/clinics-migration-plan.md
+✅ Modules/Clinics/docs/MIGRATION_PLAN.md
+```

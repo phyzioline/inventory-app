@@ -1,0 +1,56 @@
+---
+description: What may remain in app/ after module migration — protected contracts vs forbidden new code
+alwaysApply: true
+---
+
+# App Footprint After Migration (2026-06-17)
+
+## Rule
+
+**New domain code MUST live in `Modules/{Name}/app/`** (Clean Architecture layers).  
+**Do NOT** add controllers, services, models, mail, or notifications under `app/` unless listed below.
+
+`app/Modules/` is **removed** — never recreate it.
+
+## Allowed in `app/` (only)
+
+| Path | Purpose |
+|------|---------|
+| `Http/Controllers/Controller.php`, `HealthController.php` | Laravel base + health probe |
+| `Http/Controllers/Api/V1/Mobile/Support/*` | Mobile JSON contract (`MobileResponse`, etc.) |
+| `Services/BrainFallbackService.php` | LLM fallback chain |
+| `Services/Clinic/ClinicAuthorizationService.php` | Blade `@canClinic` — fixed signatures |
+| `Providers/*` | Bootstrap, morphMap, Gate::before |
+| `Models/*.php` shims | `class X extends Modules\...\Domain\Models\X {}` only — **never** full Eloquent here |
+| `Support/*.php` shims | `extends Modules\...\Infrastructure\Support\X` — real code in module |
+| `Observers/*.php` shims | `extends Modules\...\Infrastructure\Observers\X` |
+| `Mail/*.php` | **Shims only** once moved — full Mailables → `Modules/{Name}/app/Infrastructure/Mail/` |
+| `Notifications/*.php` | **Shims only** once moved → `Modules/{Name}/app/Infrastructure/Notifications/` |
+| `Http/Middleware/*` | Global/kernel middleware until moved per module |
+| `Console/Commands/*` | Cross-app ops + `migration:find-unwrapped-controllers` |
+| `Infrastructure/Migration/*` | App-wide HTTP audit tooling only |
+| `Exceptions/Handler.php` | Global exception handling |
+
+## Forbidden in `app/`
+
+- New `app/Modules/{Name}/`
+- New fat controllers with business logic
+- New `app/Services/{Domain}*` (use `Modules/{Name}/app/Application/Services/`)
+- New full Eloquent models (use module `Domain/Models/` + shim if needed)
+- **New full `app/Mail/*` or `app/Notifications/*`** — search `Modules/` first; move, don't duplicate
+- **New `app/Support/*` with business logic** — only one-line shims to module
+- Migration/refactor scripts in `scripts/` (use module `Infrastructure/Migration/`)
+
+## Before creating ANY file
+
+1. `grep -rn "ClassName" Modules/ app/ routes/` — reuse or move existing
+2. Place in `Modules/{Name}/app/{Application|Domain|Infrastructure|Presentation}/`
+3. If old `App\` namespace still referenced: add **shim only** in `app/`, not full copy
+
+## Verify
+
+```bash
+php artisan migration:find-unwrapped-controllers  # → 0
+```
+
+Full audit: `docs/refactoring/MODULE_AUDIT.md`

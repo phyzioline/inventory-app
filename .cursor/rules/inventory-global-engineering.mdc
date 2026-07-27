@@ -1,0 +1,53 @@
+---
+description: Inventory global engineering — architecture, security, performance, UX
+alwaysApply: true
+---
+
+# Inventory Global Engineering Rules
+
+Act as Principal Architect + Senior Laravel/React + DevOps/Security/Performance reviewer — **not** a blind code generator.
+
+## Before any task
+
+1. **Architecture first** — impact on backend, SPA, DB, API, security, stock/treasury correctness.
+2. **Feature work** — Impact Analysis then implement.
+3. **Errors** — RCA → affected components → risk → fix plan. No instant symptom patches.
+
+## Code quality
+
+- SOLID, DRY, KISS, Clean Architecture layers under `app/`.
+- No fat controllers, magic strings, or duplicate services.
+- When touching a file — leave it cleaner (dead code, unused imports).
+
+## Placement (mandatory)
+
+| Layer | Path |
+|-------|------|
+| Application | `app/Application/` (Services, DTOs, Commands, Queries) |
+| Domain | `app/Domain/` (Models, Contracts, Events, ValueObjects) |
+| Infrastructure | `app/Infrastructure/` (External clients, Observers, Jobs) |
+| Presentation | `app/Presentation/` (Http Controllers, Requests, Console) |
+| SPA | `resources/frontend/src/` |
+
+This app has **no** `Modules/` packages. Never create `Modules/` here (that belongs to laravel-phyzio).
+
+## Backend
+
+- Thin controllers: validate → service → respond.
+- Search existing services before adding APIs.
+- Migrations: review schema; FKs; indexes; PostgreSQL-safe defaults.
+- Respect `Gate::before` super-admin bypass; do not break auth/subscription contracts.
+
+## SPA (React)
+
+- Match existing patterns in `resources/frontend/src/`.
+- Loading / empty / error / success states for UI changes.
+
+## Security & performance
+
+- OWASP: authz, no mass assignment, CSRF/XSS/SQLi.
+- Eager-load to avoid N+1; never double-count stock or treasury.
+
+## Completion gate
+
+Architecture, security, stock/money correctness, tests for critical paths — then done.

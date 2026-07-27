@@ -449,6 +449,292 @@ class MarketplaceImportService
         ];
     }
 
+    /**
+     * Batch-retry stock deduction for order lines that failed (shortage) or never got an
+     * ImportedOrder OUT (legacy null status) — without re-uploading sheets.
+     *
+     * Idempotent: skips any line that already has a prior ImportedOrder OUT
+     * ({@see hasPriorImportedOrderDeduction}). Optionally retro-tags those as deducted.
+     *
+     * @param  array{
+     *     user_id?: int,
+     *     since?: string|null,
+     *     until?: string|null,
+     *     dry_run?: bool,
+     *     only_shortage?: bool,
+     *     include_legacy_null?: bool,
+     *     limit?: int|null
+     * }  $options
+     * @return array{
+     *     scanned: int,
+     *     already_deducted: int,
+     *     deducted: int,
+     *     shortage: int,
+     *     skipped: int,
+     *     dry_run: bool,
+     *     since: ?string,
+     *     until: ?string,
+     *     items: list<array<string, mixed>>,
+     *     stock_shortages: list<array<string, mixed>>
+     * }
+     */
+    public function retryPendingStockDeductions(array $options = []): array
+    {
+        $this->extendImportRuntime();
+
+        $uid = (int) ($options['user_id'] ?? (Auth::check() ? Auth::id() : 0));
+        if ($uid <= 0) {
+            throw new \RuntimeException('user_id is required (or authenticate first).');
+        }
+
+        if (! Auth::check() || (int) Auth::id() !== $uid) {
+            Auth::loginUsingId($uid);
+        }
+
+        $dryRun = (bool) ($options['dry_run'] ?? false);
+        $onlyShortage = (bool) ($options['only_shortage'] ?? false);
+        $includeLegacyNull = array_key_exists('include_legacy_null', $options)
+            ? (bool) $options['include_legacy_null']
+            : ! $onlyShortage;
+        $since = isset($options['since']) && $options['since'] !== '' && $options['since'] !== null
+            ? (string) $options['since']
+            : null;
+        $until = isset($options['until']) && $options['until'] !== '' && $options['until'] !== null
+            ? (string) $options['until']
+            : null;
+        $limit = isset($options['limit']) ? (int) $options['limit'] : null;
+        if ($limit !== null && $limit <= 0) {
+            $limit = null;
+        }
+
+        $hasStatusCol = Schema::hasColumn('inventory_order_items', 'stock_deduction_status');
+
+        $query = InventoryOrderItem::query()
+            ->withoutGlobalScopes()
+            ->where('inventory_order_items.quantity', '>', 0)
+            ->whereHas('order', function ($q) use ($uid, $since, $until) {
+                $q->withoutGlobalScopes()
+                    ->where('user_id', $uid)
+                    ->where(function ($qq) {
+                        $qq->whereNull('status')
+                            ->orWhereRaw('LOWER(status) NOT IN (?, ?)', ['cancelled', 'canceled']);
+                    })
+                    ->where(function ($qq) {
+                        $qq->whereNull('financial_status')
+                            ->orWhereRaw('LOWER(financial_status) NOT IN (?, ?)', ['cancelled', 'canceled']);
+                    });
+                if ($since) {
+                    $q->where('order_date', '>=', $since);
+                }
+                if ($until) {
+                    $q->where('order_date', '<=', $until);
+                }
+            });
+
+        if ($hasStatusCol) {
+            $query->where(function ($q) use ($onlyShortage, $includeLegacyNull) {
+                if ($onlyShortage) {
+                    $q->where('stock_deduction_status', 'shortage');
+                } else {
+                    $q->where('stock_deduction_status', 'shortage');
+                    if ($includeLegacyNull) {
+                        $q->orWhereNull('stock_deduction_status');
+                    }
+                }
+            });
+        }
+
+        $query->with(['order', 'sku'])->orderBy('inventory_order_items.id');
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        $items = $query->get();
+
+        $summary = [
+            'scanned' => $items->count(),
+            'already_deducted' => 0,
+            'deducted' => 0,
+            'shortage' => 0,
+            'skipped' => 0,
+            'dry_run' => $dryRun,
+            'since' => $since,
+            'until' => $until,
+            'items' => [],
+            'stock_shortages' => [],
+        ];
+
+        if ($items->isEmpty()) {
+            return $summary;
+        }
+
+        $importLock = Cache::lock('marketplace_import:user:'.$uid, 300);
+        if (! $importLock->block(10)) {
+            throw ValidationException::withMessages([
+                'retry' => ['يجري استيراد أو إعادة خصم الآن لهذا الحساب. انتظر ثم حاول مجدداً.'],
+            ]);
+        }
+
+        try {
+            $this->importStockShortages = [];
+            $this->importBatchStockOutTransactionIds = [];
+
+            foreach ($items as $item) {
+                /** @var InventoryOrderItem $item */
+                $order = $item->order;
+                if (! $order) {
+                    $summary['skipped']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'result' => 'skipped',
+                        'reason' => 'missing_order',
+                    ];
+
+                    continue;
+                }
+
+                $externalSkuCode = trim((string) ($item->sku_code ?? ''));
+                $sku = $item->sku;
+                if (! $sku && $externalSkuCode !== '') {
+                    $sku = $this->resolveSkuForOrderItem($externalSkuCode, (int) $order->channel_id);
+                    if ($sku && ! $dryRun && (int) ($item->sku_id ?? 0) <= 0) {
+                        $item->sku_id = (int) $sku->id;
+                        $item->save();
+                    }
+                }
+
+                $lineQty = (int) $item->quantity;
+                if ($lineQty <= 0) {
+                    $summary['skipped']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'platform_order_id' => (string) ($order->platform_order_id ?? ''),
+                        'result' => 'skipped',
+                        'reason' => 'zero_qty',
+                    ];
+
+                    continue;
+                }
+
+                if (! $sku) {
+                    $reason = 'unresolved_sku';
+                    if (! $dryRun && $hasStatusCol) {
+                        $item->update([
+                            'stock_deduction_status' => 'shortage',
+                            'stock_shortage_reason' => $reason,
+                        ]);
+                    }
+                    $summary['shortage']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'platform_order_id' => (string) ($order->platform_order_id ?? ''),
+                        'sku_code' => $externalSkuCode,
+                        'result' => 'shortage',
+                        'reason' => $reason,
+                    ];
+
+                    continue;
+                }
+
+                $already = $this->hasPriorImportedOrderDeduction(
+                    (int) $order->id,
+                    (int) $sku->id,
+                    $externalSkuCode
+                );
+
+                if ($already) {
+                    if (! $dryRun && $hasStatusCol) {
+                        $item->update([
+                            'stock_deduction_status' => 'deducted',
+                            'stock_shortage_reason' => null,
+                        ]);
+                    }
+                    $summary['already_deducted']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'platform_order_id' => (string) ($order->platform_order_id ?? ''),
+                        'sku_code' => $externalSkuCode !== '' ? $externalSkuCode : (string) ($sku->sku ?? ''),
+                        'sku_id' => (int) $sku->id,
+                        'qty' => $lineQty,
+                        'result' => 'already_deducted',
+                    ];
+
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $summary['deducted']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'platform_order_id' => (string) ($order->platform_order_id ?? ''),
+                        'sku_code' => $externalSkuCode !== '' ? $externalSkuCode : (string) ($sku->sku ?? ''),
+                        'sku_id' => (int) $sku->id,
+                        'qty' => $lineQty,
+                        'result' => 'would_deduct',
+                    ];
+
+                    continue;
+                }
+
+                $shortageCountBefore = count($this->importStockShortages);
+                $ok = false;
+                DB::transaction(function () use ($order, $sku, $lineQty, $externalSkuCode, &$ok) {
+                    $ok = $this->deductInventoryForImportedOrder(
+                        $order,
+                        $sku,
+                        $lineQty,
+                        $externalSkuCode !== '' ? $externalSkuCode : null
+                    );
+                });
+
+                if ($ok) {
+                    if ($hasStatusCol) {
+                        $item->update([
+                            'stock_deduction_status' => 'deducted',
+                            'stock_shortage_reason' => null,
+                        ]);
+                    }
+                    $summary['deducted']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'platform_order_id' => (string) ($order->platform_order_id ?? ''),
+                        'sku_code' => $externalSkuCode !== '' ? $externalSkuCode : (string) ($sku->sku ?? ''),
+                        'sku_id' => (int) $sku->id,
+                        'qty' => $lineQty,
+                        'result' => 'deducted',
+                    ];
+                } else {
+                    $newEntries = array_slice($this->importStockShortages, $shortageCountBefore);
+                    $shortageReason = $newEntries !== []
+                        ? implode(' | ', array_column($newEntries, 'message_en'))
+                        : 'deduction_failed';
+                    if ($hasStatusCol) {
+                        $item->update([
+                            'stock_deduction_status' => 'shortage',
+                            'stock_shortage_reason' => $shortageReason,
+                        ]);
+                    }
+                    $summary['shortage']++;
+                    $summary['items'][] = [
+                        'item_id' => (int) $item->id,
+                        'platform_order_id' => (string) ($order->platform_order_id ?? ''),
+                        'sku_code' => $externalSkuCode !== '' ? $externalSkuCode : (string) ($sku->sku ?? ''),
+                        'sku_id' => (int) $sku->id,
+                        'qty' => $lineQty,
+                        'result' => 'shortage',
+                        'reason' => $shortageReason,
+                    ];
+                }
+            }
+
+            $summary['stock_shortages'] = $this->importStockShortages;
+
+            return $summary;
+        } finally {
+            $importLock->release();
+        }
+    }
+
     private function legacyImportBatchCacheKey(int $userId): string
     {
         return self::LEGACY_IMPORT_BATCH_CACHE_PREFIX.$userId;
@@ -1678,12 +1964,12 @@ class MarketplaceImportService
 
             return [
                 'platform_order_id' => $noonOid,
-                'order_date' => date('Y-m-d H:i:s', strtotime($this->pick($row, [
+                'order_date' => $this->parseMarketplaceDateTime((string) ($this->pick($row, [
                     'order_timestamp',
                     'order date',
                     'order_date',
                     'تاريخ الطلب',
-                ]) ?? 'now')),
+                ]) ?? '')) ?: date('Y-m-d H:i:s'),
                 'currency' => $this->pick($row, ['currency', 'العملة', 'currency code', 'currency-code']) ?: 'EGP',
                 'shipping_amount' => 0.0,
                 'total_amount' => $isCancelled ? 0.0 : $unitPrice,
@@ -1839,6 +2125,7 @@ class MarketplaceImportService
             return null;
         }
 
+        // Excel serial date (days since 1899-12-30).
         if (is_numeric($value)) {
             $serial = (float) $value;
             if ($serial > 20000 && $serial < 80000) {
@@ -1848,9 +2135,72 @@ class MarketplaceImportService
             }
         }
 
-        $ts = strtotime($value);
-        if ($ts !== false && $ts > 0) {
-            return date('Y-m-d H:i:s', $ts);
+        // Normalize Arabic-Indic digits. Keep '.' for ISO fractional seconds;
+        // European d.m.Y is handled via dedicated formats below.
+        $value = strtr($value, [
+            '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4',
+            '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9',
+            '۰' => '0', '۱' => '1', '۲' => '2', '۳' => '3', '۴' => '4',
+            '۵' => '5', '۶' => '6', '۷' => '7', '۸' => '8', '۹' => '9',
+        ]);
+        $value = str_replace('\\', '/', $value);
+
+        // ISO-8601 / unambiguous year-first — safe with strtotime.
+        if (preg_match('/^\d{4}-\d{2}-\d{2}/', $value) || preg_match('/^\d{4}\/\d{2}\/\d{2}/', $value)) {
+            $ts = strtotime($value);
+            if ($ts !== false && $ts > 0) {
+                return date('Y-m-d H:i:s', $ts);
+            }
+        }
+
+        // Egypt / EU marketplace sheets use day/month/year. Prefer DMY over MDY so
+        // values like 08/05/2026 become 8 May (not 5 Aug). strtotime() alone is US-centric.
+        $formats = [
+            'd/m/Y H:i:s',
+            'd/m/Y H:i',
+            'd/m/Y',
+            'd-m-Y H:i:s',
+            'd-m-Y H:i',
+            'd-m-Y',
+            'd.m.Y H:i:s',
+            'd.m.Y H:i',
+            'd.m.Y',
+            'd/m/y H:i:s',
+            'd/m/y H:i',
+            'd/m/y',
+            'j/n/Y H:i:s',
+            'j/n/Y H:i',
+            'j/n/Y',
+            'j.n.Y',
+            'Y-m-d H:i:s',
+            'Y-m-d\TH:i:sP',
+            'Y-m-d\TH:i:s',
+            'Y-m-d',
+            // US last — only when DMY did not match.
+            'm/d/Y H:i:s',
+            'm/d/Y H:i',
+            'm/d/Y',
+        ];
+
+        foreach ($formats as $format) {
+            $dt = \DateTime::createFromFormat('!'.$format, $value);
+            if (! $dt instanceof \DateTime) {
+                continue;
+            }
+            $errors = \DateTime::getLastErrors();
+            if (is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0)) {
+                continue;
+            }
+
+            return $dt->format('Y-m-d H:i:s');
+        }
+
+        // Last resort: only for strings that already look year-first / textual months.
+        if (preg_match('/[a-zA-Z]/', $value) || preg_match('/^\d{4}\b/', $value)) {
+            $ts = strtotime($value);
+            if ($ts !== false && $ts > 0) {
+                return date('Y-m-d H:i:s', $ts);
+            }
         }
 
         return null;

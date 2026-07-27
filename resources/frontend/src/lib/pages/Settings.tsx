@@ -5,10 +5,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { 
   Settings as SettingsIcon, 
   Warehouse, 
-  Users, 
   Package, 
   Truck, 
-  Building2,
   Plus,
   Pencil,
   Trash2,
@@ -16,7 +14,10 @@ import {
   X,
   AlertCircle,
   CheckSquare,
-  Loader2
+  Loader2,
+  UserRound,
+  Shield,
+  CreditCard,
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -34,10 +35,15 @@ import { useWarehouses, useCreateWarehouse, useUpdateWarehouse, useDeleteWarehou
 import { useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier } from '@/hooks/useSuppliers';
 import { useSupplierAccountSummaries } from '@/hooks/useSupplierAccountSummaries';
 import { getSupplierOutstanding } from '@/lib/supplierOutstanding';
-import { profileService, Warehouse as WarehouseType, Supplier } from '@/lib/supabase-services';
+import { Warehouse as WarehouseType, Supplier } from '@/lib/supabase-services';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  SettingsAccountPanel,
+  SettingsSecurityPanel,
+  SettingsSubscriptionSummary,
+} from '@/components/settings/SettingsAccountPanels';
 
-type EditMode = { type: 'warehouse' | 'supplier' | 'product' | 'profile'; id?: string; data?: any } | null;
+type EditMode = { type: 'warehouse' | 'supplier' | 'product'; id?: string; data?: any } | null;
 
 const channelTypeOptions: Array<{ id: string; labelAr: string; labelEn: string }> = [
   { id: 'amazon_merchant', labelAr: 'أمازون تاجر', labelEn: 'Amazon Merchant' },
@@ -77,7 +83,7 @@ const safeNumber = (value: unknown): number => {
 const formatMoney = (value: unknown): string => safeNumber(value).toFixed(2);
 
 export default function Settings() {
-  const { t, language, setLanguage } = useLanguage();
+  const { t, language } = useLanguage();
   const isAr = language === 'ar';
   const queryClient = useQueryClient();
   const [editMode, setEditMode] = useState<EditMode>(null);
@@ -99,10 +105,6 @@ export default function Settings() {
       const res = await axios.get('/api/inventory/admin/master-products');
       return res.data;
     }
-  });
-  const { data: profile } = useQuery({
-    queryKey: ['profile'],
-    queryFn: () => profileService.getProfile(),
   });
 
   const { data: channels = [] } = useQuery({
@@ -172,19 +174,6 @@ export default function Settings() {
     }
   });
 
-  const updateProfile = useMutation({
-    mutationFn: (data: { full_name?: string; company_name?: string; currency?: string }) => 
-      profileService.updateProfile(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['profile'] });
-      toast.success('Profile updated successfully');
-      setEditMode(null);
-    },
-    onError: (error: Error) => {
-      toast.error(`Failed to update profile: ${error.message}`);
-    },
-  });
-
   const handleSave = () => {
     if (!editMode || !editMode.data) return;
 
@@ -237,9 +226,6 @@ export default function Settings() {
           updateProduct.mutate({ id: editMode.id, updates: editMode.data });
         }
         break;
-      case 'profile':
-        updateProfile.mutate(editMode.data);
-        break;
     }
     setEditMode(null);
   };
@@ -262,7 +248,9 @@ export default function Settings() {
   };
 
   const settingsTabs = [
-    { id: 'profile', label: t('settings.systemPreferences'), icon: SettingsIcon },
+    { id: 'account', label: t('settings.tabAccount'), icon: UserRound },
+    { id: 'security', label: t('settings.tabSecurity'), icon: Shield },
+    { id: 'subscription', label: t('settings.tabSubscription'), icon: CreditCard },
     { id: 'warehouses', label: t('nav.warehouses'), icon: Warehouse },
     { id: 'suppliers', label: t('nav.suppliers'), icon: Truck },
     { id: 'products', label: t('nav.products'), icon: Package },
@@ -302,95 +290,26 @@ export default function Settings() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
       >
-        <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList className="grid grid-cols-4 w-full max-w-2xl">
+        <Tabs defaultValue="account" className="space-y-6">
+          <TabsList className="flex w-full max-w-4xl h-auto flex-wrap justify-start gap-1 p-1">
             {settingsTabs.map((tab) => (
-              <TabsTrigger key={tab.id} value={tab.id} className="flex items-center gap-2">
+              <TabsTrigger key={tab.id} value={tab.id} className="flex items-center gap-2 px-3 py-2">
                 <tab.icon className="w-4 h-4" />
-                <span className="hidden sm:inline">{tab.label}</span>
+                <span className="text-xs sm:text-sm">{tab.label}</span>
               </TabsTrigger>
             ))}
           </TabsList>
 
-          {/* System Preferences */}
-          <TabsContent value="profile" className="space-y-6">
-            <Card className="glass-card">
-              <CardHeader>
-                <CardTitle>{t('settings.systemPreferences')}</CardTitle>
-                <CardDescription>{t('settings.systemPreferencesDesc')}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label>{t('settings.fullName')}</Label>
-                    <Input 
-                      value={profile?.full_name || ''} 
-                      onChange={(e) => setEditMode({
-                        type: 'profile', 
-                        data: { ...editMode?.data, full_name: e.target.value } 
-                      })}
-                      placeholder={t('settings.fullNamePlaceholder')}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t('settings.companyName')}</Label>
-                    <Input 
-                      value={profile?.company_name || ''} 
-                      onChange={(e) => setEditMode({ 
-                        type: 'profile', 
-                        data: { ...editMode?.data, company_name: e.target.value } 
-                      })}
-                      placeholder={t('settings.companyNamePlaceholder')}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t('settings.currency')}</Label>
-                    <Select 
-                      value={profile?.currency || 'EGP'}
-                      onValueChange={(value) => setEditMode({ 
-                        type: 'profile', 
-                        data: { ...editMode?.data, currency: value } 
-                      })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="EGP">{t('currency.egp')}</SelectItem>
-                        <SelectItem value="USD">{t('currency.usd')}</SelectItem>
-                        <SelectItem value="EUR">{t('currency.eur')}</SelectItem>
-                        <SelectItem value="SAR">{t('currency.sar')}</SelectItem>
-                        <SelectItem value="AED">{t('currency.aed')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t('settings.language')}</Label>
-                    <Select value={language} onValueChange={(value: 'en' | 'ar') => setLanguage(value)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="en">English</SelectItem>
-                        <SelectItem value="ar">العربية</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                {editMode?.type === 'profile' && (
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => setEditMode(null)}>
-                      <X className="w-4 h-4 me-2" />
-                      {t('common.cancel')}
-                    </Button>
-                    <Button onClick={handleSave}>
-                      <Save className="w-4 h-4 me-2" />
-                      {t('settings.saveChanges')}
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+          <TabsContent value="account" className="space-y-6">
+            <SettingsAccountPanel />
+          </TabsContent>
+
+          <TabsContent value="security" className="space-y-6">
+            <SettingsSecurityPanel />
+          </TabsContent>
+
+          <TabsContent value="subscription" className="space-y-6">
+            <SettingsSubscriptionSummary />
           </TabsContent>
 
           {/* Warehouses */}
@@ -398,26 +317,26 @@ export default function Settings() {
             <Card className="glass-card">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Warehouses & Stores</CardTitle>
-                  <CardDescription>Manage your warehouses, FBA locations, and stores</CardDescription>
+                  <CardTitle>{t('settings.warehousesStores')}</CardTitle>
+                  <CardDescription>{t('settings.warehousesStoresDesc')}</CardDescription>
                 </div>
                 <Button onClick={() => setEditMode({ type: 'warehouse', data: { name: '', type: 'shop', is_main: false, wallet_balance: 0 } })}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Warehouse
+                  <Plus className="w-4 h-4 me-2" />
+                  {t('settings.addWarehouse')}
                 </Button>
               </CardHeader>
               <CardContent>
                 {warehousesLoading ? (
-                  <div className="h-40 flex items-center justify-center text-muted-foreground">Loading...</div>
+                  <div className="h-40 flex items-center justify-center text-muted-foreground">{t('common.loading')}</div>
                 ) : (
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Wallet Balance</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                        <TableHead>{t('common.name')}</TableHead>
+                        <TableHead>{t('common.type')}</TableHead>
+                        <TableHead>{t('common.status')}</TableHead>
+                        <TableHead>{t('settings.walletBalance')}</TableHead>
+                        <TableHead className="text-end">{t('common.actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -699,7 +618,7 @@ export default function Settings() {
       </motion.div>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editMode && editMode.type !== 'profile'} onOpenChange={() => setEditMode(null)}>
+      <Dialog open={!!editMode} onOpenChange={() => setEditMode(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>

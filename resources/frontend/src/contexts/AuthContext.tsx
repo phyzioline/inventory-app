@@ -1,11 +1,14 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import api from '@/lib/api';
 
-// Define User type based on Laravel API response
 export interface User {
     id: number;
     name: string;
     email: string;
+    company_name?: string | null;
+    phone?: string | null;
+    currency?: string | null;
+    preferred_locale?: string | null;
     is_super_admin?: boolean;
 }
 
@@ -16,6 +19,14 @@ interface AuthContextType {
     signIn: (email: string, password: string) => Promise<{ error: any | null }>;
     signUp: (email: string, password: string, fullName: string) => Promise<{ error: any | null }>;
     signOut: () => Promise<void>;
+    refreshUser: () => Promise<User | null>;
+}
+
+function unwrapUser(payload: any): User | null {
+    if (!payload) return null;
+    if (payload.user && typeof payload.user === 'object') return payload.user as User;
+    if (payload.id && (payload.email || payload.name)) return payload as User;
+    return null;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -25,6 +36,7 @@ const AuthContext = createContext<AuthContextType>({
     signIn: async () => ({ error: null }),
     signUp: async () => ({ error: null }),
     signOut: async () => { },
+    refreshUser: async () => null,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -33,27 +45,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const checkUser = async () => {
+    const refreshUser = useCallback(async () => {
         try {
-            const userData = await api.me();
-            setUser(userData);
-        } catch (error) {
+            const payload = await api.me();
+            const next = unwrapUser(payload);
+            setUser(next);
+            return next;
+        } catch {
             setUser(null);
-        } finally {
-            setLoading(false);
+            return null;
         }
-    };
+    }, []);
 
     useEffect(() => {
-        checkUser();
-    }, []);
+        (async () => {
+            try {
+                await refreshUser();
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, [refreshUser]);
 
     const signIn = async (email: string, password: string) => {
         try {
             await api.initializeCsrf();
-            const userData = await api.login({ email, password });
-            setUser(userData);
-            // Use reload to ensure session is fully picked up and any SPA state is cleared
+            const payload = await api.login({ email, password });
+            setUser(unwrapUser(payload));
             window.location.hash = '#/';
             window.location.reload();
             return { error: null };
@@ -66,9 +84,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const signUp = async (email: string, password: string, fullName: string) => {
         try {
             await api.initializeCsrf();
-            const userData = await api.register({ name: fullName, email, password });
-            setUser(userData);
-            // Use reload to ensure session is fully picked up and any SPA state is cleared
+            const payload = await api.register({ name: fullName, email, password });
+            setUser(unwrapUser(payload));
             window.location.hash = '#/';
             window.location.reload();
             return { error: null };
@@ -87,7 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(null);
             window.location.reload();
         } catch (error) {
-            console.error("Logout error:", error);
+            console.error('Logout error:', error);
             setUser(null);
         }
     };
@@ -99,7 +116,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             loading,
             signIn,
             signUp,
-            signOut
+            signOut,
+            refreshUser,
         }}>
             {children}
         </AuthContext.Provider>

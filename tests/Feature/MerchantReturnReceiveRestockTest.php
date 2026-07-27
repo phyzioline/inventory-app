@@ -1,7 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
-
 use App\Models\User;
 use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\InventoryReturnMutationService;

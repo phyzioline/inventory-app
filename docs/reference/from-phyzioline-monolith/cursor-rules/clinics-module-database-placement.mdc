@@ -1,0 +1,43 @@
+# Clinics — module-only migrations & seeders
+
+## Requirement
+
+**Never** add new clinic-domain migrations, seeders, or **notifications** under:
+
+- `database/migrations/`
+- `database/seeders/`
+- `app/Notifications/` (clinic portal / appointment / booking types)
+
+Clinic notifications belong in `Modules/Clinics/app/Infrastructure/Notifications/`.  
+Orchestration helper: `Modules/Clinics/app/Application/Services/ClinicPortalNotifications.php`.
+
+Clinic ERP tables (`clinics`, `clinic_*`, `clinical_*`, `episodes_of_care`, `waitlists`, `sessions`, `treatment_programs_*`, `booking_slots`, `doctor_*`, `equipment_inventory`, `assessment_templates`, `clinic_wallets`, `rcm_*`, …) belong in:
+
+| What | Where |
+|---|---|
+| Migrations | `Modules/Clinics/database/migrations/` |
+| Seeders | `Modules/Clinics/database/seeders/` |
+| Sync tooling | `Modules/Clinics/app/Infrastructure/Migration/CollectSharedClinic*.php` |
+
+## Sync from legacy (one-time / drift repair)
+
+```bash
+php artisan clinics:collect-migrations --force
+php artisan clinics:collect-seeders --force
+```
+
+## Testing
+
+```bash
+php artisan migrate --path=Modules/Clinics/database/migrations --env=testing
+./vendor/bin/pest Modules/Clinics/tests/
+```
+
+- **No** `migrate:fresh` on shared dev DB — see `no-migrate-fresh.mdc`
+- `ClinicsServiceProvider` loads module migrations via `loadMigrationsFrom()`
+
+## Cross-module exceptions
+
+- `patients` table: shared with `Modules/Patients` — clinic migrations may reference it; Patients module owns PHI models
+- Insurance billing tables: `Modules/Insurance`
+- Ecommerce / Inventory / Jobs tables: their respective modules

@@ -1,0 +1,42 @@
+---
+description: Revenue-critical web flows must never break — clinic booking, home visits, ecommerce checkout, courses enrollment
+alwaysApply: true
+---
+
+# Revenue-Critical Paths (Red Lines)
+
+These flows are **primary website revenue**. Any change touching them requires explicit regression verification before merge/deploy.
+
+## Protected flows
+
+| Flow | Module | Key routes / entry points |
+|------|--------|---------------------------|
+| Clinic booking | `PrivateCases`, `Clinics` | `web.home_visits.clinics.*`, `web.clinic_visits.*`, `storeClinicBooking` |
+| Home visit booking | `PrivateCases` | `web.home_visits.book/store/payment`, `HomeVisitBookingService` |
+| Device / product purchase | `Ecommerce`, `Payments` | `/carts`, `checkout/pay`, `PaymentController`, `OrderService` |
+| Course enrollment | `Courses`, `Payments` | `/courses/{slug}`, course checkout, `CourseProgressService` |
+
+## Mandatory before changing
+
+1. **Read** controller, service, Form Request, view, and related migration — never patch from logs alone.
+2. **DB NOT NULL columns** — always set explicit defaults in service/model (`urgency`, `booking_type`, `settled`, etc.). Do not rely on MySQL-style migration defaults on PostgreSQL.
+3. **Nullable relations in Blade** — use `$model?->field` and branch on `visit_type` / context (clinic vs home vs product).
+4. **Guest → auth cart** — call `CartRepository::mergeGuestCartToUser()` before reading cart for logged-in checkout.
+5. **Run smoke tests** after edits:
+
+```bash
+./vendor/bin/pest Modules/PrivateCases/tests/Feature/HomeVisitBookGuardTest.php Modules/Ecommerce/tests/Feature/PublicCartSmokeTest.php Modules/Courses/tests/Feature/ModuleSmokeTest.php --no-coverage
+```
+
+## Forbidden
+
+- Removing or renaming revenue routes without redirects and mobile contract check.
+- Deploying migrations that add NOT NULL columns without backfill + default on PostgreSQL.
+- Shipping Blade/views that assume `therapist`, `clinic`, or `cart` always exist.
+- Breaking `MobileResponse` / payment callback shapes for these flows.
+
+## When logs show errors here
+
+1. Reproduce the exact user path (guest vs logged-in, clinic vs home, card vs cash).
+2. Fix root cause in the owning module layer — not a global workaround in `app/`.
+3. Add or extend a Feature test if the bug had no coverage.

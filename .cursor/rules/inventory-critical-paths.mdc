@@ -1,0 +1,36 @@
+---
+description: Inventory revenue/stock/treasury critical paths — never break silently
+alwaysApply: true
+---
+
+# Inventory Critical Paths (Red Lines)
+
+These flows move **real stock and money**. Changes require read-before-write and regression checks.
+
+## Protected flows
+
+| Flow | Key entry points |
+|------|------------------|
+| Marketplace sheet import + stock OUT | `MarketplaceImportService`, `hasPriorImportedOrderDeduction`, import preview/confirm UI |
+| Stock deduction status / shortages | `inventory_order_items.stock_deduction_status`, Orders page shortage badges |
+| Customer / vendor returns + ledger | `InventoryReturnMutationService`, treasury receipts/payments |
+| Settlements / Amazon import | `SettlementService`, settlement reconcile commands |
+| Purchases / purchase returns | purchase import, `PurchaseReturn` + supplier ledger |
+| Treasury spend / receipts | `TreasuryLedgerService`, `TreasurySpendGuard` |
+| Profit / COGS | `ProfitEngineService`, valuation / cost resolution |
+| Subscriptions / Paymob | `SubscriptionCheckoutService`, Paymob webhook |
+
+## Mandatory before changing
+
+1. Read controller → service → model → related migration/tests.
+2. PostgreSQL: never rely on MySQL-style implicit defaults for NOT NULL columns.
+3. Stock: never double-deduct — always check prior `ImportedOrder` OUT / idempotency keys.
+4. Money: ledger + treasury must stay consistent with UI actions (no silent gaps).
+5. Run relevant Pest filters on **`phyzioline_inventory_test` only**.
+
+## Forbidden
+
+- Shipping import changes that skip shortage recording or idempotency.
+- Restocking without reversing the correct location/SKU.
+- Breaking Paymob webhook HMAC / CSRF exception contract.
+- Running destructive DB commands on production (see `database-safety.mdc`).

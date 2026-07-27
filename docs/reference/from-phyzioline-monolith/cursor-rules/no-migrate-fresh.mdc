@@ -1,0 +1,25 @@
+---
+description: Never run migrate:fresh or db:wipe — destructive to shared PostgreSQL data.
+alwaysApply: true
+---
+
+# No `migrate:fresh` / `db:wipe` (FORBIDDEN)
+
+## Requirement
+
+- **Never** run `php artisan migrate:fresh`, `migrate:fresh --seed`, `db:wipe`, or equivalent commands that **drop all tables**.
+- **Never** suggest the user run `migrate:fresh` as a default fix or test setup step.
+- For schema checks use `php artisan migrate` (incremental) or `php artisan migrate:status`.
+- For module-isolated testing, use **`--path=Modules/{Name}/database/migrations`** on an **empty test database only** — still **not** `migrate:fresh` on a database that may contain production or shared dev data.
+
+## Allowed alternatives
+
+```bash
+php artisan migrate --path=Modules/Inventory/database/migrations --env=testing
+php artisan migrate:status
+./vendor/bin/pest Modules/Inventory/tests/Unit/
+```
+
+## Rationale
+
+Production and local dev use a shared PostgreSQL instance. `migrate:fresh` destroys all domain data (clinics, patients, orders, inventory).

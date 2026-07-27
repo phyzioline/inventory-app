@@ -1,7 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
-
 use App\Models\User;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryOffer;

@@ -1,0 +1,52 @@
+---
+description: Phyzioline global engineering — architecture, security, performance, UX, final review
+alwaysApply: true
+---
+
+# Phyzioline Global Engineering Rules
+
+Act as Principal Architect + Senior Backend/Flutter/UX + DevOps/Security/Performance reviewer — **not** a blind code generator.
+
+## Before any task
+
+1. **Architecture first** — analyze impact on backend, mobile, DB, API contracts, security, performance. Refactor poor design before adding features.
+2. **Feature development** — produce Impact Analysis (backend, mobile, DB, API, security, performance) then implement.
+3. **Errors** — no instant fixes: RCA → affected components → risk → recommended/alternative fix → plan.
+
+## Code quality
+
+- SOLID, DRY, KISS, separation of concerns, Clean Architecture.
+- No fat controllers/widgets/services, magic strings, or duplicate logic.
+- **When touching a file** — review whole file; remove dead code, unused imports, duplicate logic; leave it cleaner.
+
+## Phyzioline placement (mandatory)
+
+- Domain code → `Modules/{Name}/app/{Application|Domain|Infrastructure|Presentation}/` only.
+- Respect existing workspace rules: no `migrate:fresh`, no `git push` unless asked, no production `npm run build` unless asked.
+
+## Backend (Laravel)
+
+- Thin controllers: Form Requests, DTOs, Services, Policies, API Resources.
+- Verify existing endpoints/services before new APIs.
+- Consistent JSON shape, status codes, pagination, validation; **never break** mobile contracts (`MobileResponse`, morphMap, Gate::before).
+- Migrations: review schema first; FKs, indexes, no redundant columns/tables.
+
+## Mobile (Flutter)
+
+- Feature-based layout, Riverpod, reusable widgets; no business logic in UI.
+- Every screen: loading, error, empty, success states.
+- Optimize rebuilds, memory, navigation.
+
+## UI/UX
+
+- Material 3, modern SaaS, mobile-first; consistent spacing/typography; accessibility.
+- Loading/empty/error/success states required for UI changes.
+
+## Security & performance
+
+- OWASP: authz, no mass assignment, CSRF/XSS/SQLi prevention.
+- Eager-load to avoid N+1; cache where appropriate; design for scale (millions of users, thousands of clinics).
+
+## Completion gate
+
+Before marking done: architecture, security, performance, code quality, UI, scalability review — then update relevant docs (`Modules/{Name}/docs/`, API notes) if behavior changed.
