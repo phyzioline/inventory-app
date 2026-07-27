@@ -44,6 +44,15 @@ class MarketplaceImportService
     private array $importBatchNewOrderIds = [];
 
     /**
+     * InventoryOrderItem ids created during the current {@see import()}, whether their parent order
+     * is brand new or pre-existing. Needed so rollback can remove a line added to a pre-existing
+     * order — whole-order deletion (via $importBatchNewOrderIds) only covers brand-new orders.
+     *
+     * @var list<int>
+     */
+    private array $importBatchNewOrderItemIds = [];
+
+    /**
      * OUT inventory_transaction ids created during the current {@see import()} (marketplace import deductions only).
      *
      * @var list<int>
@@ -118,6 +127,7 @@ class MarketplaceImportService
     private function runImport(UploadedFile $file, int $channelId, bool $lockChannel, int $uid): array
     {
         $this->importBatchNewOrderIds = [];
+        $this->importBatchNewOrderItemIds = [];
         $this->importBatchStockOutTransactionIds = [];
         $this->importStockShortages = [];
         $channelId = $this->resolveImportChannelId($channelId, $lockChannel);
@@ -162,8 +172,9 @@ class MarketplaceImportService
 
             if ($uid > 0) {
                 $newOrderIds = array_values(array_unique(array_map('intval', array_keys($this->importBatchNewOrderIds))));
+                $newOrderItemIds = array_values(array_unique(array_map('intval', $this->importBatchNewOrderItemIds)));
                 $txIds = array_values(array_unique(array_map('intval', $this->importBatchStockOutTransactionIds)));
-                $this->writeLastImportBatchToDatabase($uid, $channelId, $txIds, $newOrderIds);
+                $this->writeLastImportBatchToDatabase($uid, $channelId, $txIds, $newOrderIds, $newOrderItemIds);
             }
 
             $newOrderCount = count($this->importBatchNewOrderIds);
@@ -309,8 +320,9 @@ class MarketplaceImportService
 
         $transactionIds = $batch['transaction_ids'];
         $newOrderIds = $batch['new_inventory_order_ids'];
+        $newOrderItemIds = $batch['new_inventory_order_item_ids'] ?? [];
 
-        if ($transactionIds === [] && $newOrderIds === []) {
+        if ($transactionIds === [] && $newOrderIds === [] && $newOrderItemIds === []) {
             throw new \RuntimeException('No recent import batch to roll back.');
         }
 
@@ -318,8 +330,9 @@ class MarketplaceImportService
         $skipped = 0;
         $ordersDeleted = 0;
         $ordersSkipped = 0;
+        $itemsDeleted = 0;
 
-        DB::transaction(function () use ($uid, $transactionIds, $newOrderIds, &$reversed, &$skipped, &$ordersDeleted, &$ordersSkipped) {
+        DB::transaction(function () use ($uid, $transactionIds, $newOrderIds, $newOrderItemIds, &$reversed, &$skipped, &$ordersDeleted, &$ordersSkipped, &$itemsDeleted) {
             foreach ($transactionIds as $tid) {
                 $tid = (int) $tid;
                 if ($tid <= 0) {
@@ -412,6 +425,18 @@ class MarketplaceImportService
                     ->delete();
             }
 
+            // Lines added to a PRE-EXISTING order by this import batch aren't covered by the
+            // whole-order deletion above (that only removes brand-new orders). Their stock was
+            // already restored in the transaction-reversal loop; remove the line itself so the
+            // order stops showing it as sold. A no-op for ids already gone via cascade delete
+            // above (brand-new order's own lines).
+            if ($newOrderItemIds !== []) {
+                $itemsDeleted = InventoryOrderItem::query()
+                    ->whereIn('id', $newOrderItemIds)
+                    ->where('user_id', $uid)
+                    ->delete();
+            }
+
             $this->forgetLastImportBatchForUser($uid);
         });
 
@@ -420,6 +445,7 @@ class MarketplaceImportService
             'skipped' => $skipped,
             'orders_deleted' => $ordersDeleted,
             'orders_skipped' => $ordersSkipped,
+            'items_deleted' => $itemsDeleted,
         ];
     }
 
@@ -442,7 +468,7 @@ class MarketplaceImportService
     }
 
     /**
-     * @return array{transaction_ids: list<int>, new_inventory_order_ids: list<int>, import_channel_id: int, recorded_at: ?string}|null
+     * @return array{transaction_ids: list<int>, new_inventory_order_ids: list<int>, new_inventory_order_item_ids: list<int>, import_channel_id: int, recorded_at: ?string}|null
      */
     private function readLastImportBatchForUser(int $uid): ?array
     {
@@ -452,6 +478,9 @@ class MarketplaceImportService
                 return [
                     'transaction_ids' => $this->decodeJsonIdList($row->transaction_ids),
                     'new_inventory_order_ids' => $this->decodeJsonIdList($row->new_inventory_order_ids),
+                    'new_inventory_order_item_ids' => isset($row->new_inventory_order_item_ids)
+                        ? $this->decodeJsonIdList($row->new_inventory_order_item_ids)
+                        : [],
                     'import_channel_id' => (int) ($row->import_channel_id ?? 0),
                     'recorded_at' => isset($row->recorded_at) && $row->recorded_at ? (string) $row->recorded_at : null,
                 ];
@@ -470,6 +499,9 @@ class MarketplaceImportService
             'new_inventory_order_ids' => isset($legacy['new_inventory_order_ids']) && is_array($legacy['new_inventory_order_ids'])
                 ? array_values(array_unique(array_map('intval', $legacy['new_inventory_order_ids'])))
                 : [],
+            'new_inventory_order_item_ids' => isset($legacy['new_inventory_order_item_ids']) && is_array($legacy['new_inventory_order_item_ids'])
+                ? array_values(array_unique(array_map('intval', $legacy['new_inventory_order_item_ids'])))
+                : [],
             'import_channel_id' => (int) ($legacy['import_channel_id'] ?? 0),
             'recorded_at' => isset($legacy['recorded_at']) ? (string) $legacy['recorded_at'] : null,
         ];
@@ -479,7 +511,8 @@ class MarketplaceImportService
                 $uid,
                 $normalized['import_channel_id'],
                 $normalized['transaction_ids'],
-                $normalized['new_inventory_order_ids']
+                $normalized['new_inventory_order_ids'],
+                $normalized['new_inventory_order_item_ids']
             );
             Cache::forget($this->legacyImportBatchCacheKey($uid));
         }
@@ -490,11 +523,13 @@ class MarketplaceImportService
     /**
      * @param  list<int>  $transactionIds
      * @param  list<int>  $newOrderIds
+     * @param  list<int>  $newOrderItemIds
      */
-    private function writeLastImportBatchToDatabase(int $uid, int $importChannelId, array $transactionIds, array $newOrderIds): void
+    private function writeLastImportBatchToDatabase(int $uid, int $importChannelId, array $transactionIds, array $newOrderIds, array $newOrderItemIds = []): void
     {
         $transactionIds = array_values(array_unique(array_map('intval', $transactionIds)));
         $newOrderIds = array_values(array_unique(array_map('intval', $newOrderIds)));
+        $newOrderItemIds = array_values(array_unique(array_map('intval', $newOrderItemIds)));
 
         if (! Schema::hasTable(self::LAST_IMPORT_BATCH_TABLE)) {
             Cache::put(
@@ -504,6 +539,7 @@ class MarketplaceImportService
                     'recorded_at' => now()->toIso8601String(),
                     'import_channel_id' => $importChannelId,
                     'new_inventory_order_ids' => $newOrderIds,
+                    'new_inventory_order_item_ids' => $newOrderItemIds,
                 ],
                 now()->addDays(14),
             );
@@ -519,6 +555,9 @@ class MarketplaceImportService
             'recorded_at' => $now,
             'updated_at' => $now,
         ];
+        if (Schema::hasColumn(self::LAST_IMPORT_BATCH_TABLE, 'new_inventory_order_item_ids')) {
+            $payload['new_inventory_order_item_ids'] = json_encode($newOrderItemIds);
+        }
 
         $existing = DB::table(self::LAST_IMPORT_BATCH_TABLE)->where('user_id', $uid)->first();
         if ($existing) {
@@ -902,13 +941,24 @@ class MarketplaceImportService
                             && ! $this->hasPriorImportedOrderDeduction((int) $order->id, $itemSkuId, $externalSkuCode)
                             && isset($this->importBatchNewOrderIds[(int) $order->id]) === false
                         ) {
-                            if ($this->deductInventoryForImportedOrder(
+                            $shortageCountBefore = count($this->importStockShortages);
+                            $deducted = $this->deductInventoryForImportedOrder(
                                 $order,
                                 $sku,
                                 $lineQty,
                                 $externalSkuCode !== '' ? $externalSkuCode : null
-                            )) {
+                            );
+                            if ($deducted) {
                                 $anyNewItem = true;
+                            }
+                            if (Schema::hasColumn('inventory_order_items', 'stock_deduction_status')) {
+                                $newEntries = array_slice($this->importStockShortages, $shortageCountBefore);
+                                $existingItem->update([
+                                    'stock_deduction_status' => $deducted ? 'deducted' : 'shortage',
+                                    'stock_shortage_reason' => $deducted
+                                        ? null
+                                        : (implode(' | ', array_column($newEntries, 'message_en')) ?: 'deduction_failed'),
+                                ]);
                             }
                         }
 
@@ -930,7 +980,7 @@ class MarketplaceImportService
                     continue;
                 }
 
-                InventoryOrderItem::create($this->filterOrderItemColumns([
+                $newItem = InventoryOrderItem::create($this->filterOrderItemColumns([
                     'inventory_order_id' => $order->id,
                     'sku_id' => $sku->id,
                     // Keep external SKU code for traceability, while sku_id points to the internal SKU used for inventory.
@@ -940,9 +990,14 @@ class MarketplaceImportService
                     'unit_price' => $lineUnit,
                     'total_price' => $lineQty * $lineUnit,
                 ]));
+                // Track every newly-created item (new order or a new line on a pre-existing order) so
+                // rollback can remove it — whole-order deletion below only covers brand-new orders.
+                $this->importBatchNewOrderItemIds[] = (int) $newItem->id;
                 // Never deduct stock when re-importing sheets for orders that already existed before this import run.
                 // Multi-line NEW orders still deduct: parent order id was registered in $importBatchNewOrderIds on create.
                 // Pass $externalSkuCode so hasPriorImportedOrderDeduction can find the original OUT even when sku_id changed.
+                $deductionStatus = 'not_applicable';
+                $shortageReason = null;
                 if (
                     $this->shouldDeductInventoryForChannel((int) $order->channel_id)
                     && (
@@ -950,12 +1005,26 @@ class MarketplaceImportService
                         || ! $this->hasPriorImportedOrderDeduction((int) $order->id, (int) $sku->id, $externalSkuCode)
                     )
                 ) {
-                    $this->deductInventoryForImportedOrder(
+                    $shortageCountBefore = count($this->importStockShortages);
+                    $deducted = $this->deductInventoryForImportedOrder(
                         $order,
                         $sku,
                         $lineQty,
                         $externalSkuCode !== '' ? $externalSkuCode : null
                     );
+                    $deductionStatus = $deducted ? 'deducted' : 'shortage';
+                    if (! $deducted) {
+                        $newEntries = array_slice($this->importStockShortages, $shortageCountBefore);
+                        $shortageReason = $newEntries !== []
+                            ? implode(' | ', array_column($newEntries, 'message_en'))
+                            : 'deduction_failed';
+                    }
+                }
+                if (Schema::hasColumn('inventory_order_items', 'stock_deduction_status')) {
+                    $newItem->update([
+                        'stock_deduction_status' => $deductionStatus,
+                        'stock_shortage_reason' => $shortageReason,
+                    ]);
                 }
                 $anyNewItem = true;
             }
@@ -1264,11 +1333,18 @@ class MarketplaceImportService
                 // physical stock). The preview mirrors this: only store availability is counted.
                 // Merchant channel locations may hold phantom stock (see reconcilePhantomMerchantStockForListingSku);
                 // those are excluded here so the preview does not overcount available units.
-                $cacheKey = $resolvedSku->id > 0
-                    ? ('mplan:'.(string) $resolvedSku->id.':'.(string) $stockChannelId)
-                    : null;
                 $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
                 $storeSkuId = (int) (ChannelStockResolver::resolveStoreSkuIdForListingSku($resolvedSku) ?? 0);
+
+                // Key by the shared physical bucket (store SKU), not the listing SKU: sibling listings
+                // (e.g. an Amazon-Merchant row and a Noon-Merchant row for the same product) resolve to
+                // the same store SKU and must deplete one shared simulated pool, matching what the real
+                // deduction (planMerchantOrderDeduction) actually does. Keying by the listing SKU let two
+                // sibling rows each see the full quantity independently — a false-clean preview that then
+                // failed for real at confirm time.
+                $cacheKey = $storeSkuId > 0
+                    ? ('mplan:store:'.(string) $storeSkuId.':'.(string) $storeChannelId)
+                    : ($resolvedSku->id > 0 ? ('mplan:unmapped:'.(string) $resolvedSku->id.':'.(string) $stockChannelId) : null);
 
                 if ($cacheKey !== null) {
                     if (! array_key_exists($cacheKey, $stockSimRemaining)) {

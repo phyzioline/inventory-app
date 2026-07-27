@@ -8,9 +8,11 @@ use App\Models\User;
 use App\Application\Services\MarketplaceImportService;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryLocation;
+use App\Domain\Models\Wms\InventoryOffer;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\InventoryOrderItem;
 use App\Domain\Models\Wms\InventoryTransaction;
+use App\Domain\Models\Wms\MasterProduct;
 use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
 
@@ -127,7 +129,7 @@ describe('SKU drift idempotency', function () {
             ->where('location_id', $location->id)
             ->sum('quantity');
         expect($totalStock)->toBe(58, 'Stock must be 48+10 = 58 — no double deduction');
-    })->skip('Pre-existing failure, unrelated to CI infra fix — see docs/fixes/CI_KNOWN_FAILING_TESTS.md');
+    });
 
 });
 
@@ -173,7 +175,7 @@ describe('Historical import idempotency', function () {
         expect($txCountAfterHistorical)->toBe($txCountAfterDaily, 'No new OUT transactions on re-import');
         expect($resultH['skipped'])->toBe(30);
         expect($resultH['imported'])->toBe(0);
-    })->skip('Pre-existing failure, unrelated to CI infra fix — see docs/fixes/CI_KNOWN_FAILING_TESTS.md');
+    });
 
     it('can import new orders on top of previously imported historical data', function () {
         $user = User::factory()->create();
@@ -204,7 +206,7 @@ describe('Historical import idempotency', function () {
         expect($stockAfterHistorical)->toBe(25, '5 new orders deducted, not 25');
         expect($resultH['imported'])->toBe(5);
         expect($resultH['skipped'])->toBe(20);
-    })->skip('Pre-existing failure, unrelated to CI infra fix — see docs/fixes/CI_KNOWN_FAILING_TESTS.md');
+    });
 
 });
 
@@ -244,6 +246,289 @@ describe('Preview stock consistency', function () {
         // Preview must report a shortage (only 50 units in store, not 50+100=150).
         expect($preview['import_blocked'])->toBeTrue();
         expect($preview['stock_shortage_count'])->toBeGreaterThan(0);
+    });
+
+    it('preview does not double-count one shared store SKU across two sibling listing SKUs', function () {
+        $user = User::factory()->create();
+        Auth::login($user);
+
+        $channel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'Amazon Merchant',
+            'slug' => 'amazon-merchant',
+            'type' => 'merchant',
+            'is_active' => true,
+        ]);
+        $storeChannel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'Main Store',
+            'slug' => 'main-store',
+            'type' => 'store',
+            'is_active' => true,
+        ]);
+        $storeLocation = InventoryLocation::factory()->create([
+            'channel_id' => $storeChannel->id,
+            'user_id' => $user->id,
+            'is_active' => true,
+        ]);
+
+        $masterProduct = MasterProduct::factory()->create(['user_id' => $user->id]);
+
+        $storeOffer = InventoryOffer::factory()->create(['master_product_id' => $masterProduct->id, 'user_id' => $user->id]);
+        $storeSku = Sku::factory()->create([
+            'offer_id' => $storeOffer->id,
+            'channel_id' => $storeChannel->id,
+            'sku' => 'STORE-SHARED-001',
+            'user_id' => $user->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $storeSku->id,
+            'location_id' => $storeLocation->id,
+            'quantity' => 10, // one shared physical bucket
+            'user_id' => $user->id,
+        ]);
+
+        // Two sibling listings for the SAME master product, on the same merchant channel.
+        $amzOffer = InventoryOffer::factory()->create(['master_product_id' => $masterProduct->id, 'user_id' => $user->id]);
+        Sku::factory()->create([
+            'offer_id' => $amzOffer->id,
+            'channel_id' => $channel->id,
+            'sku' => 'AMZ-SIBLING-001',
+            'marketplace_id' => 'AMZ-SIBLING-001',
+            'user_id' => $user->id,
+        ]);
+        $noonOffer = InventoryOffer::factory()->create(['master_product_id' => $masterProduct->id, 'user_id' => $user->id]);
+        Sku::factory()->create([
+            'offer_id' => $noonOffer->id,
+            'channel_id' => $channel->id,
+            'sku' => 'NOON-SIBLING-001',
+            'marketplace_id' => 'NOON-SIBLING-001',
+            'user_id' => $user->id,
+        ]);
+
+        // 6 + 6 = 12 requested against 10 shared units — must be a shortage.
+        $file = makeCsvFile([
+            ['700-AAAAAA-0000001', 'AMZ-SIBLING-001', '6', '25.00', 'MERCHANT'],
+            ['700-AAAAAA-0000002', 'NOON-SIBLING-001', '6', '25.00', 'MERCHANT'],
+        ]);
+
+        $service = app(MarketplaceImportService::class);
+        $preview = $service->preview($file, $channel->id, true);
+
+        // Pre-fix, each sibling listing independently saw the full 10 units and both
+        // reported fulfillable — a false-clean preview. Post-fix they share one pool.
+        expect($preview['import_blocked'])->toBeTrue('combined 12 requested > 10 shared store units');
+        expect($preview['stock_shortage_count'])->toBeGreaterThan(0);
+    });
+
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Durable stock-deduction status on InventoryOrderItem (a failed deduction must not
+// vanish once the import modal closes — it has to be findable later).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Stock deduction status is recorded durably', function () {
+
+    it('marks a new line "deducted" when stock covers it and "shortage" when it does not', function () {
+        $user = User::factory()->create();
+        Auth::login($user);
+
+        $channel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'FBA Channel',
+            'slug' => 'fba-'.uniqid(),
+            'type' => 'fba',
+            'is_active' => true,
+        ]);
+        $location = InventoryLocation::factory()->create([
+            'channel_id' => $channel->id,
+            'user_id' => $user->id,
+            'is_active' => true,
+        ]);
+
+        $plentifulSku = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'PLENTY-001',
+            'marketplace_id' => 'PLENTY-001',
+            'channel_id' => $channel->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $plentifulSku->id,
+            'location_id' => $location->id,
+            'quantity' => 10,
+            'user_id' => $user->id,
+        ]);
+
+        $scarceSku = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'SCARCE-001',
+            'marketplace_id' => 'SCARCE-001',
+            'channel_id' => $channel->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $scarceSku->id,
+            'location_id' => $location->id,
+            'quantity' => 2,
+            'user_id' => $user->id,
+        ]);
+
+        $file = makeCsvFile([
+            ['800-AAAAAA-0000001', 'PLENTY-001', '5', '25.00', 'AFN'],
+            ['800-BBBBBB-0000002', 'SCARCE-001', '10', '25.00', 'AFN'],
+        ]);
+
+        $service = app(MarketplaceImportService::class);
+        $service->import($file, $channel->id, true);
+
+        $deductedItem = InventoryOrderItem::where('sku_id', $plentifulSku->id)->first();
+        $shortageItem = InventoryOrderItem::where('sku_id', $scarceSku->id)->first();
+
+        expect($deductedItem)->not->toBeNull()
+            ->and($deductedItem->stock_deduction_status)->toBe('deducted')
+            ->and($deductedItem->stock_shortage_reason)->toBeNull();
+
+        expect($shortageItem)->not->toBeNull()
+            ->and($shortageItem->stock_deduction_status)->toBe('shortage')
+            ->and($shortageItem->stock_shortage_reason)->not->toBeEmpty();
+
+        expect((int) SkuInventory::where('sku_id', $plentifulSku->id)->value('quantity'))->toBe(5);
+        expect((int) SkuInventory::where('sku_id', $scarceSku->id)->value('quantity'))->toBe(2, 'shortage must not touch stock');
+    });
+
+    it('retro-tags a legacy item with no prior deduction on re-import (backfill path)', function () {
+        $user = User::factory()->create();
+        Auth::login($user);
+
+        $channel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'FBA Channel',
+            'slug' => 'fba-'.uniqid(),
+            'type' => 'fba',
+            'is_active' => true,
+        ]);
+        $location = InventoryLocation::factory()->create([
+            'channel_id' => $channel->id,
+            'user_id' => $user->id,
+            'is_active' => true,
+        ]);
+        $sku = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'LEGACY-001',
+            'marketplace_id' => 'LEGACY-001',
+            'channel_id' => $channel->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $sku->id,
+            'location_id' => $location->id,
+            'quantity' => 10,
+            'user_id' => $user->id,
+        ]);
+
+        $order = InventoryOrder::factory()->create([
+            'user_id' => $user->id,
+            'channel_id' => $channel->id,
+            'platform_order_id' => '900-LEGACY-0000001',
+        ]);
+        InventoryOrderItem::factory()->create([
+            'inventory_order_id' => $order->id,
+            'sku_id' => $sku->id,
+            'sku_code' => 'LEGACY-001',
+            'quantity' => 3,
+            'unit_price' => 25.00,
+        ]);
+        // No InventoryTransaction OUT recorded — matches a historical pre-fix import.
+
+        $file = makeCsvFile([
+            ['900-LEGACY-0000001', 'LEGACY-001', '3', '25.00', 'AFN'],
+        ]);
+        $service = app(MarketplaceImportService::class);
+        $service->import($file, $channel->id, true);
+
+        $item = InventoryOrderItem::where('inventory_order_id', $order->id)->where('sku_id', $sku->id)->first();
+        expect($item->stock_deduction_status)->toBe('deducted');
+        expect((int) SkuInventory::where('sku_id', $sku->id)->value('quantity'))->toBe(7);
+    });
+
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rollback must remove new order lines, not just reverse stock, when the import
+// added a line to a PRE-EXISTING order rather than creating a new order.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Rollback removes new items on pre-existing orders', function () {
+
+    it('deletes a new line added to a pre-existing order and leaves earlier lines untouched', function () {
+        $user = User::factory()->create();
+        Auth::login($user);
+
+        $channel = Channel::factory()->create([
+            'user_id' => $user->id,
+            'name' => 'FBA Channel',
+            'slug' => 'fba-'.uniqid(),
+            'type' => 'fba',
+            'is_active' => true,
+        ]);
+        $location = InventoryLocation::factory()->create([
+            'channel_id' => $channel->id,
+            'user_id' => $user->id,
+            'is_active' => true,
+        ]);
+
+        $skuOne = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'ROLLBACK-ONE',
+            'marketplace_id' => 'ROLLBACK-ONE',
+            'channel_id' => $channel->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $skuOne->id,
+            'location_id' => $location->id,
+            'quantity' => 10,
+            'user_id' => $user->id,
+        ]);
+        $skuTwo = Sku::factory()->create([
+            'user_id' => $user->id,
+            'sku' => 'ROLLBACK-TWO',
+            'marketplace_id' => 'ROLLBACK-TWO',
+            'channel_id' => $channel->id,
+        ]);
+        SkuInventory::factory()->create([
+            'sku_id' => $skuTwo->id,
+            'location_id' => $location->id,
+            'quantity' => 10,
+            'user_id' => $user->id,
+        ]);
+
+        $service = app(MarketplaceImportService::class);
+
+        // Import 1: creates the order with one line (ROLLBACK-ONE). This is a batch on its own —
+        // its snapshot is overwritten by import 2 below, which is expected: rollback only ever
+        // targets the LAST batch, and import 2's batch is what we exercise here.
+        $service->import(makeCsvFile([
+            ['950-ROLLBACK-0000001', 'ROLLBACK-ONE', '2', '25.00', 'AFN'],
+        ]), $channel->id, true);
+
+        $order = InventoryOrder::where('platform_order_id', '950-ROLLBACK-0000001')->firstOrFail();
+        $originalItemId = InventoryOrderItem::where('inventory_order_id', $order->id)->where('sku_id', $skuOne->id)->value('id');
+
+        // Import 2: adds a NEW line (ROLLBACK-TWO) to the now pre-existing order.
+        $service->import(makeCsvFile([
+            ['950-ROLLBACK-0000001', 'ROLLBACK-TWO', '4', '25.00', 'AFN'],
+        ]), $channel->id, true);
+
+        $addedItemId = InventoryOrderItem::where('inventory_order_id', $order->id)->where('sku_id', $skuTwo->id)->value('id');
+        expect($addedItemId)->not->toBeNull();
+        expect((int) SkuInventory::where('sku_id', $skuTwo->id)->value('quantity'))->toBe(6);
+
+        $result = $service->rollbackLastStockDeductionBatch();
+
+        expect($result['items_deleted'])->toBeGreaterThanOrEqual(1);
+        expect(InventoryOrderItem::find($addedItemId))->toBeNull('the line added in the rolled-back batch must be gone');
+        expect(InventoryOrderItem::find($originalItemId))->not->toBeNull('a line from an earlier, different batch must be untouched');
+        expect((int) SkuInventory::where('sku_id', $skuTwo->id)->value('quantity'))->toBe(10, 'stock for the rolled-back line must be restored');
+        expect(InventoryOrder::find($order->id))->not->toBeNull('the pre-existing order itself must survive rollback');
     });
 
 });
@@ -291,7 +576,7 @@ describe('Order id column recognition', function () {
         expect($preview['summary']['duplicates'])->toBe(1)
             ->and($preview['summary']['new_orders'])->toBe(0)
             ->and($preview['import_blocked'])->toBeFalse();
-    })->skip('Pre-existing failure, unrelated to CI infra fix — see docs/fixes/CI_KNOWN_FAILING_TESTS.md');
+    });
 
     it('resolves product via asin column when merchant-sku column is empty', function () {
         $user = User::factory()->create();
@@ -419,7 +704,7 @@ describe('hasPriorImportedOrderDeduction', function () {
         // With sku_code hint → must return true.
         $withCode = $method->invoke($service, (int) $order->id, (int) $newSku->id, 'ASIN-TEST-001');
         expect($withCode)->toBeTrue('should find OUT via sku_code lookup');
-    })->skip('Pre-existing failure, unrelated to CI infra fix — see docs/fixes/CI_KNOWN_FAILING_TESTS.md');
+    });
 
 });
 
@@ -462,6 +747,6 @@ describe('Preview row sampling', function () {
         expect($issueRow)->not->toBeNull()
             ->and($issueRow['row_number'])->toBe(2001)
             ->and($issueRow['stock_preview']['shortage'] ?? false)->toBeTrue();
-    })->skip('Pre-existing failure, unrelated to CI infra fix — see docs/fixes/CI_KNOWN_FAILING_TESTS.md');
+    });
 
 });

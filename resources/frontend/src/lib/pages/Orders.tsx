@@ -311,6 +311,7 @@ export default function Orders() {
     customer: '',
     payment: '',
     status: '',
+    hasShortage: false,
   });
   const [sortField, setSortField] = useState<'order_id' | 'product' | 'channel' | 'customer' | 'date' | 'cogs' | 'total' | 'payment' | 'status'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -473,6 +474,21 @@ export default function Orders() {
     return `${unique.slice(0, 2).join(' + ')} +${unique.length - 2}`;
   }
 
+  // Marketplace-import lines that were booked as sold but never actually deducted from stock
+  // (see MarketplaceImportService::processOrderRow) — surfaced durably here since the one-time
+  // import-confirmation warning disappears once that dialog is closed.
+  function hasStockShortage(order: any): boolean {
+    return (order?.items || []).some((item: any) => item?.stock_deduction_status === 'shortage');
+  }
+
+  function getStockShortageReasonsText(order: any): string {
+    return (order?.items || [])
+      .filter((item: any) => item?.stock_deduction_status === 'shortage')
+      .map((item: any) => item?.stock_shortage_reason)
+      .filter(Boolean)
+      .join(' | ');
+  }
+
   const getPaymentState = (order: any) => {
     const st = String(order?.status || '').toLowerCase();
     const fin = String(order?.financial_status || '').toLowerCase();
@@ -541,6 +557,7 @@ export default function Orders() {
       const matchesCustomer = !columnFilters.customer || customer.includes(normalize(columnFilters.customer));
       const matchesPayment = !columnFilters.payment || payment === normalize(columnFilters.payment);
       const matchesStatus = !columnFilters.status || status === normalize(columnFilters.status);
+      const matchesShortage = !columnFilters.hasShortage || hasStockShortage(o);
       const matchesDate = bypassDateFilter || isDateInRange(orderDate);
 
       return (
@@ -551,6 +568,7 @@ export default function Orders() {
         matchesCustomer &&
         matchesPayment &&
         matchesStatus &&
+        matchesShortage &&
         matchesDate
       );
     });
@@ -1009,6 +1027,17 @@ export default function Orders() {
                   value={columnFilters.product}
                   onChange={(e) => setColumnFilters((prev) => ({ ...prev, product: e.target.value }))}
                 />
+                <button
+                  type="button"
+                  className={`mt-1 h-6 w-full rounded-md border text-[10px] ${
+                    columnFilters.hasShortage
+                      ? 'border-destructive bg-destructive/10 text-destructive'
+                      : 'border-input text-muted-foreground'
+                  }`}
+                  onClick={() => setColumnFilters((prev) => ({ ...prev, hasShortage: !prev.hasShortage }))}
+                >
+                  {isAr ? 'فقط: مخزون لم يُخصم' : 'Only: not deducted'}
+                </button>
               </TableHead>
               <TableHead className="py-2">
                 <Input
@@ -1089,9 +1118,20 @@ export default function Orders() {
                   </TableCell>
                   <TableCell className="py-2 max-w-[280px]">
                     <div className="min-w-0">
-                      <p className="text-xs leading-5 truncate" title={getOrderProductsText(order)}>
-                        {getOrderProductsText(order)}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs leading-5 truncate" title={getOrderProductsText(order)}>
+                          {getOrderProductsText(order)}
+                        </p>
+                        {hasStockShortage(order) ? (
+                          <Badge
+                            variant="destructive"
+                            className="shrink-0 text-[9px] px-1 py-0 leading-4"
+                            title={getStockShortageReasonsText(order) || (isAr ? 'مخزون لم يُخصم' : 'Stock not deducted')}
+                          >
+                            {isAr ? 'لم يُخصم' : 'Not deducted'}
+                          </Badge>
+                        ) : null}
+                      </div>
                       {getOrderSkusText(order) ? (
                         <p
                           className="text-[10px] leading-4 text-muted-foreground font-mono tabular-nums truncate"

@@ -14,6 +14,7 @@ class InventoryOrderItem extends Model
     protected $fillable = [
         'inventory_order_id', 'sku_id', 'sku_code',
         'product_name', 'quantity', 'unit_price', 'total_price',
+        'stock_deduction_status', 'stock_shortage_reason',
     ];
 
     protected static function newFactory(): InventoryOrderItemFactory
