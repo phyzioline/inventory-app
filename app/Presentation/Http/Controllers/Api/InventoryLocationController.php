@@ -221,7 +221,7 @@ class InventoryLocationController extends Controller
     {
         $cacheKey = 'inventory_warehouses_summary_v5_'.(auth()->id() ?? 'guest');
 
-        return response()->json(Cache::remember($cacheKey, now()->addMinutes(2), function () use ($valuation) {
+        return response()->json(Cache::remember($cacheKey, now()->addSeconds(15), function () use ($valuation) {
             return $valuation->warehouseSummaryRows();
         }));
     }

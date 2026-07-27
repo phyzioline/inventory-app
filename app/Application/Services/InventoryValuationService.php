@@ -20,7 +20,7 @@ class InventoryValuationService
     ) {}
 
     /**
-     * @return list<array{id: mixed, name: mixed, type: mixed, total_items: int, total_quantity: float, total_cost: float}>
+     * @return list<array{id: mixed, name: mixed, type: mixed, channel_id: mixed, total_items: int, total_quantity: float, total_cost: float}>
      */
     public function warehouseSummaryRows(): array
     {
@@ -71,6 +71,7 @@ class InventoryValuationService
                 'id' => $loc->id,
                 'name' => $loc->name,
                 'type' => $loc->type,
+                'channel_id' => $loc->channel_id,
                 'total_items' => (int) ($stats['total_items'] ?? 0),
                 'total_quantity' => round((float) ($stats['total_quantity'] ?? 0), 4),
                 'total_cost' => round((float) ($stats['total_cost'] ?? 0), 2),

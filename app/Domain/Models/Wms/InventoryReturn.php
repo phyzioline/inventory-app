@@ -5,6 +5,7 @@ namespace App\Domain\Models\Wms;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Application\Services\ChannelStockResolver;
 use App\Infrastructure\Traits\IsIsolatedByUser;
 
@@ -16,6 +17,7 @@ class InventoryReturn extends Model
         'financial_deduction' => 0,
         'extra_shipping_fee' => 0,
         'refund_amount' => 0,
+        'refund_method' => 'credit_note',
         'return_status' => 'return_requested',
         'inventory_status' => 'on_hold',
         'return_quantity' => 1,
@@ -23,7 +25,7 @@ class InventoryReturn extends Model
 
     protected $fillable = [
         'inventory_order_id', 'platform_return_id', 'sku_code', 'return_quantity',
-        'return_date', 'last_update_date', 'external_status', 'refund_amount',
+        'return_date', 'last_update_date', 'external_status', 'refund_amount', 'refund_method',
         'financial_deduction', 'extra_shipping_fee', 'source_channel', 'channel',
         'return_location', 'merchant_identifier', 'fulfillment_channel', 'metadata',
         'status', 'return_status', 'inventory_status', 'reason', 'disposition', 'user_id',
@@ -47,6 +49,7 @@ class InventoryReturn extends Model
             'financial_deduction' => 0,
             'extra_shipping_fee' => 0,
             'refund_amount' => 0,
+            'refund_method' => 'credit_note',
             'return_quantity' => 1,
         ];
         $external = strtolower(trim((string) ($payload['external_status'] ?? '')));
@@ -144,16 +147,37 @@ class InventoryReturn extends Model
                 $remainingQty -= $qtyToProcess;
             }
 
+            $updates = ['status' => 'completed', 'return_status' => 'restocked', 'inventory_status' => 'restocked', 'last_update_date' => now()];
+
             if ((float) ($this->refund_amount ?? 0) <= 0.0) {
-                $credit = $this->resolveCustomerCreditAmount();
+                $diagnostics = $this->resolveCustomerCreditAmountWithDiagnostics();
+                $credit = $diagnostics['amount'];
+
+                if ($diagnostics['fallback_used']) {
+                    Log::warning('inventory_return.credit_sku_fallback_used', [
+                        'return_id' => $this->id,
+                        'inventory_order_id' => $this->inventory_order_id,
+                        'sku_code' => $this->sku_code,
+                    ]);
+                }
+
                 if ($credit > 0.0) {
                     $this->refund_amount = $credit;
+                    $updates['refund_amount'] = $credit;
                     $order->remaining_amount = round((float) ($order->remaining_amount ?? 0) - $credit, 2);
                     $order->save();
+                } else {
+                    Log::warning('inventory_return.zero_customer_credit', [
+                        'return_id' => $this->id,
+                        'inventory_order_id' => $this->inventory_order_id,
+                        'sku_code' => $this->sku_code,
+                        'matched_items' => $diagnostics['matched_items'],
+                    ]);
+                    $updates['metadata'] = array_merge((array) ($this->metadata ?? []), ['needs_refund_review' => true]);
                 }
             }
 
-            $this->update(['status' => 'completed', 'return_status' => 'restocked', 'inventory_status' => 'restocked', 'last_update_date' => now()]);
+            $this->update($updates);
             DB::commit();
 
             return true;
@@ -171,18 +195,48 @@ class InventoryReturn extends Model
      */
     public function resolveCustomerCreditAmount(): float
     {
+        return $this->resolveCustomerCreditAmountWithDiagnostics()['amount'];
+    }
+
+    /**
+     * Same calculation as {@see resolveCustomerCreditAmount()}, plus diagnostics so callers
+     * can tell a genuine zero-value return apart from a matching failure that silently
+     * produced zero (which is exactly what let manual returns skip the customer ledger).
+     *
+     * @return array{amount: float, matched_items: int, fallback_used: bool}
+     */
+    public function resolveCustomerCreditAmountWithDiagnostics(): array
+    {
         $order = $this->inventoryOrder;
         if (! $order) {
-            return 0.0;
+            return ['amount' => 0.0, 'matched_items' => 0, 'fallback_used' => false];
         }
-        $lineTotal = 0.0;
-        $remainingQty = max(1, (int) ($this->return_quantity ?? 1));
-        $orderItems = $order->items ?? collect();
+
+        $allItems = $order->items ?? collect();
+        $orderItems = $allItems;
+        $fallbackUsed = false;
+
         if (! empty($this->sku_code)) {
-            $orderItems = $orderItems->filter(function ($item) {
-                return ($item->sku?->sku ?? null) === $this->sku_code || ($item->sku_code ?? null) === $this->sku_code;
+            $needle = strtoupper(trim((string) $this->sku_code));
+            $matched = $allItems->filter(function ($item) use ($needle) {
+                $sku = strtoupper(trim((string) ($item->sku?->sku ?? '')));
+                $skuCode = strtoupper(trim((string) ($item->sku_code ?? '')));
+
+                return ($sku !== '' && $sku === $needle) || ($skuCode !== '' && $skuCode === $needle);
             });
+
+            if ($matched->isEmpty()) {
+                // No line item matched this SKU (casing/whitespace drift, or a mapping gap) —
+                // fall back to all order items rather than resolving a guaranteed-wrong zero.
+                $fallbackUsed = true;
+            } else {
+                $orderItems = $matched;
+            }
         }
+
+        $lineTotal = 0.0;
+        $matchedItems = 0;
+        $remainingQty = max(1, (int) ($this->return_quantity ?? 1));
         foreach ($orderItems as $item) {
             if ($remainingQty <= 0) {
                 break;
@@ -195,9 +249,14 @@ class InventoryReturn extends Model
             $unit = (float) ($item->unit_price ?? 0);
             $lineTotal += $qty * $unit;
             $remainingQty -= $qty;
+            $matchedItems++;
         }
 
-        return $lineTotal > 0 ? round($lineTotal, 2) : 0.0;
+        return [
+            'amount' => $lineTotal > 0 ? round($lineTotal, 2) : 0.0,
+            'matched_items' => $matchedItems,
+            'fallback_used' => $fallbackUsed,
+        ];
     }
 
     public function calculateLoss(): float

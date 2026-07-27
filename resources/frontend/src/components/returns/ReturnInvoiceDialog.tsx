@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Card, CardContent } from '@/components/ui/card';
 import { useSalesOrders } from '@/hooks/useSales';
@@ -106,8 +107,17 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
   const [reason, setReason] = useState('');
   const [amazonOrderNumber, setAmazonOrderNumber] = useState('');
   const [refundAmount, setRefundAmount] = useState<number>(0);
+  const [refundMethod, setRefundMethod] = useState<'credit_note' | 'cash' | 'bank_transfer'>('credit_note');
 
   const selectedOrder = orders?.find((o) => String(o.id) === String(selectedOrderId));
+
+  // Default the refund to the full order amount so a missed edit can't silently leave the
+  // customer's balance and treasury untouched — an explicit action is required to zero it out.
+  useEffect(() => {
+    if (selectedOrder) {
+      setRefundAmount(Number(selectedOrder.total_amount) || 0);
+    }
+  }, [selectedOrderId]);
 
   // Filter orders that can be returned (not already returned)
   const returnableOrders = orders?.filter(
@@ -149,6 +159,7 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
         reason,
         amazon_order_number: amazonOrderNumber || undefined,
         refund_amount: refundAmount,
+        refund_method: refundAmount > 0 ? refundMethod : 'credit_note',
         return_quantity: Math.max(1, sumQty),
       });
     },
@@ -172,6 +183,7 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
     setReason('');
     setAmazonOrderNumber('');
     setRefundAmount(0);
+    setRefundMethod('credit_note');
     onOpenChange(false);
   };
 
@@ -394,6 +406,26 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
                   >
                     Set to full amount ({selectedOrder.total_amount.toLocaleString()} EGP)
                   </Button>
+                )}
+                {refundAmount > 0 ? (
+                  <Select value={refundMethod} onValueChange={(v) => setRefundMethod(v as typeof refundMethod)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="credit_note">
+                        {isAr ? 'خصم من حساب العميل (بدون صرف من الخزينة)' : 'Credit note (no treasury movement)'}
+                      </SelectItem>
+                      <SelectItem value="cash">{isAr ? 'كاش من الخزينة' : 'Cash refund'}</SelectItem>
+                      <SelectItem value="bank_transfer">{isAr ? 'تحويل بنكي' : 'Bank transfer'}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-destructive">
+                    {isAr
+                      ? 'لن يتم تعديل رصيد العميل أو الخزينة لهذا المرتجع — تأكد أن هذا مقصود'
+                      : "This return won't adjust the customer balance or treasury — confirm this is intentional."}
+                  </p>
                 )}
               </div>
 

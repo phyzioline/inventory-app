@@ -18,6 +18,7 @@ import api from '@/lib/api';
 import { useCustomerAccountSummaries } from '@/hooks/useCustomerAccountSummaries';
 import { useSupplierAccountSummaries } from '@/hooks/useSupplierAccountSummaries';
 import { getSupplierOutstanding } from '@/lib/supplierOutstanding';
+import { sumWarehouseSummary } from '@/lib/warehouseSummaryAggregation';
 
 const toDateInput = (date: Date) => date.toISOString().slice(0, 10);
 /** Backend requires dates; use a fixed early start so bank snapshot = all history through today. */
@@ -157,11 +158,7 @@ export function ProfitSnapshotKpis({ showReceivablesRow = true, onBeforeScrollTo
   });
 
   const currentInventoryCost = useMemo(
-    () =>
-      (Array.isArray(warehouseSummaryRows) ? warehouseSummaryRows : []).reduce(
-        (sum: number, row: any) => sum + toNumber(row?.total_cost),
-        0
-      ),
+    () => sumWarehouseSummary(Array.isArray(warehouseSummaryRows) ? warehouseSummaryRows : []).totalCost,
     [warehouseSummaryRows]
   );
 

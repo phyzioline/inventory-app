@@ -943,6 +943,7 @@ export const returnService = {
             reason: data.reason || 'Manual return',
             disposition: data.return_type === 'stock' ? 'sellable' : 'damaged',
             refund_amount: data.refund_amount != null ? Number(data.refund_amount) : undefined,
+            refund_method: data.refund_method || 'credit_note',
         });
     },
     async getById(id: string) {

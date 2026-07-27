@@ -58,6 +58,7 @@ import { useCustomers } from '@/hooks/useCustomers';
 import { useSupplierAccountSummaries } from '@/hooks/useSupplierAccountSummaries';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { getSupplierOutstanding } from '@/lib/supplierOutstanding';
+import { sumWarehouseSummary } from '@/lib/warehouseSummaryAggregation';
 import { toast } from 'sonner';
 import { TreasuryDashboard, type TreasuryStatsSlice, type TreasuryExtraRow } from '@/components/finance/TreasuryDashboard';
 import { treasuryExtraOutbound } from '@/components/finance/treasuryRegistry';
@@ -254,11 +255,7 @@ export default function CapitalManagement() {
   });
 
   const currentInventoryCost = useMemo(
-    () =>
-      (Array.isArray(warehouseSummaryRows) ? warehouseSummaryRows : []).reduce(
-        (sum: number, row: any) => sum + toNum(row?.total_cost),
-        0
-      ),
+    () => sumWarehouseSummary(Array.isArray(warehouseSummaryRows) ? warehouseSummaryRows : []).totalCost,
     [warehouseSummaryRows]
   );
 

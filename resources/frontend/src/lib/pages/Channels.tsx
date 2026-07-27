@@ -29,6 +29,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { type ChannelInventoryMetrics } from "@/lib/channelInventoryMetrics";
+import { dedupeWarehouseSummaryRows } from "@/lib/warehouseSummaryAggregation";
 import { toast } from "sonner";
 
 const staticChannelMeta: Record<string, any> = {
@@ -164,7 +165,9 @@ export default function Channels() {
 
     const warehouseMetrics = useMemo(() => {
         const map: Record<string, ChannelInventoryMetrics> = {};
-        (warehouseSummary || []).forEach((row: any) => {
+        // A channel can own more than one location row; the backend stamps the same channel-level
+        // totals onto every one of them, so dedupe before reading per-location values.
+        dedupeWarehouseSummaryRows(warehouseSummary || []).forEach((row: any) => {
             map[String(row.id)] = {
                 products: Number(row?.total_items || 0),
                 pieces: Number(row?.total_quantity || 0),

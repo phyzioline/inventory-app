@@ -54,15 +54,11 @@ class ProfitEngineService
     }
 
     /**
-     * Prefer master/SKU cost fields; when still zero, use batch average for the linked master product.
+     * Prefer the batch-weighted average cost (true purchase history for this product);
+     * fall back to master/SKU static cost fields only when no batch history exists.
      */
     public function resolveEffectiveUnitCost($master, $sku, array $batchCostsByMasterId = []): float
     {
-        $fromStored = $this->unitCostFromMasterAndSku($master, $sku);
-        if ($fromStored > 0) {
-            return $fromStored;
-        }
-
         $mid = $master?->id;
         if ($mid) {
             $batch = (float) ($batchCostsByMasterId[(string) $mid] ?? 0.0);
@@ -71,17 +67,26 @@ class ProfitEngineService
             }
         }
 
-        return 0.0;
+        return $this->unitCostFromMasterAndSku($master, $sku);
     }
 
     /**
      * Shop purchase unit cost from the master catalog (updated on purchase invoice receive).
      * Does not use per-channel SKU overrides — avoids double/conflicting costs.
+     * Prefers the batch-weighted average over the static last-purchase-price snapshot.
      */
     public function resolveShopPurchaseUnitCost($master, array $batchCostsByMasterId = []): float
     {
         if ($master === null) {
             return 0.0;
+        }
+
+        $mid = $master->id ?? null;
+        if ($mid) {
+            $batch = (float) ($batchCostsByMasterId[(string) $mid] ?? 0.0);
+            if ($batch > 0) {
+                return $batch;
+            }
         }
 
         foreach ([
@@ -93,14 +98,6 @@ class ProfitEngineService
             $unit = (float) $value;
             if ($unit > 0) {
                 return $unit;
-            }
-        }
-
-        $mid = $master->id ?? null;
-        if ($mid) {
-            $batch = (float) ($batchCostsByMasterId[(string) $mid] ?? 0.0);
-            if ($batch > 0) {
-                return $batch;
             }
         }
 

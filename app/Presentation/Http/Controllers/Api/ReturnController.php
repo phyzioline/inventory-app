@@ -39,6 +39,7 @@ class ReturnController extends Controller
             'extra_shipping_fee' => 'nullable|numeric|min:0',
             'inventory_status' => 'nullable|string|max:100',
             'refund_amount' => 'nullable|numeric|min:0',
+            'refund_method' => 'nullable|string|in:credit_note,cash,bank_transfer',
             'external_status' => 'nullable|string|max:255',
         ]);
 
@@ -90,6 +91,7 @@ class ReturnController extends Controller
             'reason' => 'nullable|string',
             'disposition' => 'sometimes|in:sellable,damaged,unsellable',
             'refund_amount' => 'nullable|numeric|min:0',
+            'refund_method' => 'nullable|string|in:credit_note,cash,bank_transfer',
             'external_status' => 'nullable|string|max:255',
             'return_location' => 'nullable|string|max:100',
             'return_status' => 'nullable|string|max:100',

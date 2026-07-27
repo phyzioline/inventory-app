@@ -2,15 +2,20 @@
 
 namespace App\Application\Services;
 
+use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use App\Domain\Models\Wms\Customer;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\InventoryReturn;
+use App\Domain\Models\Wms\Payment;
 
 class InventoryReturnMutationService
 {
     public function __construct(
         private InventoryReturnImportService $imports,
+        private TreasurySpendGuard $treasurySpendGuard,
     ) {}
 
     public function findWithLoss(int $id): InventoryReturn
@@ -51,6 +56,7 @@ class InventoryReturnMutationService
             'last_update_date' => $this->imports->normalizeDateTime($validated['last_update_date'] ?? null) ?? now(),
             'channel' => $validated['channel'] ?? null,
             'refund_amount' => (float) ($validated['refund_amount'] ?? 0),
+            'refund_method' => $validated['refund_method'] ?? 'credit_note',
             'financial_deduction' => (float) ($validated['financial_deduction'] ?? 0),
             'extra_shipping_fee' => (float) ($validated['extra_shipping_fee'] ?? 0),
             'external_status' => $validated['external_status'] ?? null,
@@ -78,6 +84,8 @@ class InventoryReturnMutationService
                     'return_id' => $return->id,
                     'inventory_order_id' => $return->inventory_order_id,
                 ]);
+            } else {
+                $this->syncCustomerRefundPayment($return->fresh(['inventoryOrder']));
             }
 
             $return = $return->fresh(['inventoryOrder.items.sku']);
@@ -86,6 +94,96 @@ class InventoryReturnMutationService
         }
 
         return ['return' => $return, 'created' => $createdNew, 'ignored' => false];
+    }
+
+    /**
+     * Keeps the treasury-visible refund (an outgoing {@see Payment}, symmetric to how
+     * PurchaseReturnController creates an incoming Receipt for vendor cash refunds) in sync
+     * with a return's refund_method/refund_amount. `credit_note` (the default) never touches
+     * treasury — that path is the ledger-only order.remaining_amount adjustment already applied
+     * in {@see InventoryReturn::processReturn()}. Runs outside processReturn()'s own transaction
+     * on purpose: whether the till can afford a cash refund right now must never roll back a
+     * stock restock that has already, physically, happened.
+     */
+    public function syncCustomerRefundPayment(InventoryReturn $return): void
+    {
+        $order = $return->inventoryOrder;
+        if (! $order) {
+            return;
+        }
+
+        $method = (string) ($return->refund_method ?? 'credit_note');
+        $amount = (float) ($return->refund_amount ?? 0);
+        $existingPayment = Payment::where('reference_type', InventoryReturn::class)
+            ->where('reference_id', $return->id)
+            ->first();
+
+        $wantsCashPayment = in_array($method, ['cash', 'bank_transfer'], true) && $amount > 0.00001;
+
+        if (! $wantsCashPayment) {
+            $existingPayment?->delete();
+
+            return;
+        }
+
+        if (! $order->customer_id) {
+            Log::warning('inventory_return.treasury_payment_blocked', [
+                'return_id' => $return->id,
+                'inventory_order_id' => $return->inventory_order_id,
+                'reason' => 'no_customer_linked',
+            ]);
+            $this->flagMetadata($return, [
+                'treasury_payment_blocked' => true,
+                'treasury_payment_blocked_reason' => 'no_customer_linked',
+            ]);
+            $existingPayment?->delete();
+
+            return;
+        }
+
+        $userId = (int) ($return->user_id ?: $order->user_id);
+
+        try {
+            $this->treasurySpendGuard->assertPaymentAllowedForUser($userId, $amount);
+        } catch (HttpResponseException $e) {
+            Log::warning('inventory_return.treasury_payment_blocked', [
+                'return_id' => $return->id,
+                'inventory_order_id' => $return->inventory_order_id,
+                'amount' => $amount,
+                'reason' => 'insufficient_treasury_balance',
+            ]);
+            $this->flagMetadata($return, [
+                'treasury_payment_blocked' => true,
+                'treasury_payment_blocked_reason' => 'insufficient_treasury_balance',
+                'treasury_payment_blocked_amount' => $amount,
+            ]);
+            $existingPayment?->delete();
+
+            return;
+        }
+
+        DB::transaction(function () use ($return, $order, $method, $amount, $userId) {
+            Payment::updateOrCreate(
+                ['reference_type' => InventoryReturn::class, 'reference_id' => $return->id],
+                [
+                    'payee_type' => Customer::class,
+                    'payee_id' => $order->customer_id,
+                    'payee_name' => $order->customer_name,
+                    'amount' => $amount,
+                    'payment_method' => $method,
+                    'payment_date' => now()->toDateString(),
+                    'status' => 'completed',
+                    'warehouse_id' => $order->fulfillment_warehouse_id ?? $order->warehouse_id ?? null,
+                    'user_id' => $userId,
+                    'notes' => "Customer return refund for order {$order->platform_order_id}",
+                ]
+            );
+        });
+    }
+
+    private function flagMetadata(InventoryReturn $return, array $flags): void
+    {
+        $return->update(['metadata' => array_merge((array) ($return->metadata ?? []), $flags)]);
     }
 
     /**
@@ -106,6 +204,8 @@ class InventoryReturnMutationService
                 'process' => ['Failed to process return'],
             ]);
         }
+
+        $this->syncCustomerRefundPayment($return->fresh(['inventoryOrder']));
     }
 
     /**
@@ -138,6 +238,8 @@ class InventoryReturnMutationService
                     'return_id' => $return->id,
                     'inventory_order_id' => $return->inventory_order_id,
                 ]);
+            } else {
+                $this->syncCustomerRefundPayment($return->fresh(['inventoryOrder']));
             }
         }
 
@@ -178,9 +280,16 @@ class InventoryReturnMutationService
 
         $validated['last_update_date'] = $incomingUpdateDate;
         $return->update($validated);
+        $return = $return->fresh('inventoryOrder');
+
+        // A refund_method/refund_amount edit on an already-completed return must re-sync
+        // treasury (e.g. switching credit_note -> cash, or correcting the amount).
+        if ($return->status === 'completed' && (array_key_exists('refund_method', $validated) || array_key_exists('refund_amount', $validated))) {
+            $this->syncCustomerRefundPayment($return);
+        }
 
         return [
-            'return' => $return->fresh('inventoryOrder'),
+            'return' => $return,
             'ignored' => false,
             'invalid_transition' => false,
         ];

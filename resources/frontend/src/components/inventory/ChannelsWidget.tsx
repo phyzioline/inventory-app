@@ -20,6 +20,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ChannelInventoryMetrics } from "@/lib/channelInventoryMetrics";
+import { dedupeWarehouseSummaryRows } from "@/lib/warehouseSummaryAggregation";
 import { toast } from "sonner";
 
 import amazonLogo from "@/assets/channel-logos/amazon.png";
@@ -157,9 +158,19 @@ export function ChannelsWidget() {
         return linked ? Number(linked.id) : 0;
     }, [channels, warehouses]);
 
+    /**
+     * A channel can own more than one location row; the backend stamps the same channel-level
+     * totals onto every one of them. Dedupe once here so nothing downstream double-counts a
+     * multi-location channel (see {@link dedupeWarehouseSummaryRows}).
+     */
+    const dedupedWarehouseSummary = useMemo(
+        () => dedupeWarehouseSummaryRows(warehouseSummary || []),
+        [warehouseSummary]
+    );
+
     const warehouseMetrics = useMemo(() => {
         const map: Record<string, ChannelInventoryMetrics> = {};
-        (warehouseSummary || []).forEach((row: any) => {
+        dedupedWarehouseSummary.forEach((row: any) => {
             map[String(row.id)] = {
                 products: Number(row?.total_items || 0),
                 pieces: Number(row?.total_quantity || 0),
@@ -167,7 +178,7 @@ export function ChannelsWidget() {
             };
         });
         return map;
-    }, [warehouseSummary]);
+    }, [dedupedWarehouseSummary]);
 
     /** Per-channel rollup from cached warehouse summary (same source as top KPI card). */
     const channelMetricsFromWarehouses = useMemo(() => {
@@ -184,8 +195,7 @@ export function ChannelsWidget() {
     }, [warehouses, warehouseMetrics]);
 
     const physicalWarehouseMetrics = useMemo((): ChannelInventoryMetrics => {
-        const rows = Array.isArray(warehouseSummary) ? warehouseSummary : [];
-        const physicalRows = rows.filter((row) => isPhysicalWarehouseRow(row, mainStoreLocationId));
+        const physicalRows = dedupedWarehouseSummary.filter((row) => isPhysicalWarehouseRow(row, mainStoreLocationId));
         if (physicalRows.length === 0) {
             return { products: 0, pieces: 0, purchaseCost: 0 };
         }
@@ -197,7 +207,7 @@ export function ChannelsWidget() {
             }),
             { products: 0, pieces: 0, purchaseCost: 0 }
         );
-    }, [warehouseSummary, mainStoreLocationId]);
+    }, [dedupedWarehouseSummary, mainStoreLocationId]);
 
     /** Show platform cards as soon as channel list is known; metrics fill in when summary arrives. */
     const metricsPending = summaryLoading && warehouseSummary.length === 0;

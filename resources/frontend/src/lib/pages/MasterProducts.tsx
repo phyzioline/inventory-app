@@ -31,6 +31,7 @@ import AddSKUDialog from "@/components/inventory/AddSKUDialog";
 import { SkuMovementTrackerDialog } from "@/components/inventory/SkuMovementTrackerDialog";
 import { ChannelsWidget } from "@/components/inventory/ChannelsWidget";
 import { getProductImageSrc } from "@/lib/utils";
+import { sumWarehouseSummary, type WarehouseSummaryRow } from "@/lib/warehouseSummaryAggregation";
 import { api, apiClient } from "@/lib/api";
 import { broadcastInventoryCatalogUpdated } from "@/lib/inventoryCatalogBroadcast";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -280,8 +281,9 @@ const MasterProducts = () => {
         }, 0);
 
         const whRows = Array.isArray(warehouseSummaryRows) ? warehouseSummaryRows : [];
-        const fromWarehousesItems = whRows.reduce((acc, row: any) => acc + Number(row?.total_quantity ?? 0), 0);
-        const fromWarehousesCost = whRows.reduce((acc, row: any) => acc + Number(row?.total_cost ?? 0), 0);
+        const warehouseTotals = sumWarehouseSummary(whRows as WarehouseSummaryRow[]);
+        const fromWarehousesItems = warehouseTotals.totalQuantity;
+        const fromWarehousesCost = warehouseTotals.totalCost;
 
         // Prefer warehouse rollup when the summary API returned real totals (same source as channel cards).
         const hasWarehouseTotals =
