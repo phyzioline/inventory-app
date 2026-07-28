@@ -24,6 +24,11 @@ class SkuController extends Controller
     private function quantityForChannelScopedSku(Sku $sku, int $scopeChannelId, int $linkedLocationId): float
     {
         if ($scopeChannelId > 0 && (int) $sku->id > 0) {
+            // Prefer preloaded inventory on list endpoints — avoids N+1 re-finds.
+            if ($sku->relationLoaded('inventory')) {
+                return ChannelStockResolver::availableQuantityFromPreloadedInventory($sku, $scopeChannelId);
+            }
+
             return ChannelStockResolver::availableQuantityForChannelSku((int) $sku->id, $scopeChannelId);
         }
 
@@ -41,6 +46,15 @@ class SkuController extends Controller
         }
         if ($request->has('channel_id')) {
             $query->where('channel_id', $request->channel_id);
+        }
+
+        $linked = $request->query('linked');
+        if ($linked === '1' || $linked === 1 || $linked === true || $linked === 'true') {
+            $query->whereNotNull('offer_id')->where('offer_id', '>', 0);
+        } elseif ($linked === '0' || $linked === 0 || $linked === false || $linked === 'false') {
+            $query->where(function ($q) {
+                $q->whereNull('offer_id')->orWhere('offer_id', 0);
+            });
         }
 
         $search = trim((string) $request->query('search', ''));
@@ -77,6 +91,53 @@ class SkuController extends Controller
     }
 
     /**
+     * Lightweight KPI totals for a channel inventory page (avoids loading all SKUs).
+     */
+    public function channelSummary(Request $request)
+    {
+        $channelId = (int) $request->query('channel_id', 0);
+        if ($channelId <= 0) {
+            return response()->json(['message' => 'channel_id is required'], 422);
+        }
+
+        $base = Sku::query()->where('channel_id', $channelId);
+        $products = (clone $base)->count();
+        $unlinked = (clone $base)->where(function ($q) {
+            $q->whereNull('offer_id')->orWhere('offer_id', 0);
+        })->count();
+
+        $pieces = 0.0;
+        $purchaseCost = 0.0;
+        $sellingValue = 0.0;
+
+        // Merchant listings show store sellable in the row UI; KPI "pieces" stays 0 (virtual channel).
+        if (! ChannelStockResolver::deductsFromMainStoreBucket($channelId)) {
+            $locationIds = ChannelStockResolver::resolveLocationIdsForChannel($channelId);
+            if ($locationIds !== []) {
+                $agg = DB::table('skus')
+                    ->join('sku_inventory as si', 'si.sku_id', '=', 'skus.id')
+                    ->where('skus.channel_id', $channelId)
+                    ->whereIn('si.location_id', $locationIds)
+                    ->selectRaw('COALESCE(SUM(si.quantity), 0) as pieces')
+                    ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(skus.cost_price, 0)), 0) as purchase_cost')
+                    ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(skus.selling_price, 0)), 0) as selling_value')
+                    ->first();
+                $pieces = (float) ($agg->pieces ?? 0);
+                $purchaseCost = (float) ($agg->purchase_cost ?? 0);
+                $sellingValue = (float) ($agg->selling_value ?? 0);
+            }
+        }
+
+        return response()->json([
+            'products' => $products,
+            'unlinked' => $unlinked,
+            'pieces' => $pieces,
+            'purchaseCost' => $purchaseCost,
+            'sellingValue' => $sellingValue,
+        ]);
+    }
+
+    /**
      * @param  \Illuminate\Support\Collection<int, Sku>|\Illuminate\Database\Eloquent\Collection<int, Sku>  $rows
      */
     private function enrichSkuRows($rows, int $channelId)
@@ -89,8 +150,14 @@ class SkuController extends Controller
                 ->value('id') ?? 0);
         }
 
+        // Resolve once — isMerchantChannel() / planMerchantOrderDeduction() were N+1 on large channels.
+        $deductsFromStore = $channelId > 0 && ChannelStockResolver::deductsFromMainStoreBucket($channelId);
+        $storeAvailByListingId = $deductsFromStore
+            ? ChannelStockResolver::batchStoreAvailableForListingSkus($rows)
+            : [];
+
         $masterTotalsById = [];
-        if ($channelId > 0 && $scopedLocationId >= 0) {
+        if ($channelId > 0 && $scopedLocationId >= 0 && ! $deductsFromStore) {
             foreach ($rows as $sku) {
                 $masterId = (int) ($sku->offer?->masterProduct?->id ?? 0);
                 if ($masterId <= 0) {
@@ -100,9 +167,7 @@ class SkuController extends Controller
                     $masterTotalsById[$masterId] = 0.0;
                 }
 
-                $masterTotalsById[$masterId] += ChannelStockResolver::deductsFromMainStoreBucket($channelId)
-                    ? 0.0
-                    : $this->quantityForChannelScopedSku($sku, $channelId, $scopedLocationId);
+                $masterTotalsById[$masterId] += $this->quantityForChannelScopedSku($sku, $channelId, $scopedLocationId);
             }
         }
 
@@ -121,7 +186,14 @@ class SkuController extends Controller
                 ->groupBy('channel_id')
                 ->map(fn ($group) => (int) $group->first()->id);
 
-        return $rows->map(function ($sku) use ($scopedLocationId, $masterTotalsById, $channelId, $linkedLocationByChannelId) {
+        return $rows->map(function ($sku) use (
+            $scopedLocationId,
+            $masterTotalsById,
+            $channelId,
+            $linkedLocationByChannelId,
+            $deductsFromStore,
+            $storeAvailByListingId
+        ) {
             $data = $sku->toArray();
             if ($sku->offer && $sku->offer->master_product_id) {
                 if (! isset($data['offer']) || ! is_array($data['offer'])) {
@@ -147,14 +219,23 @@ class SkuController extends Controller
             // Note: use $channelId here — same value as $scopeChannelId when scoped — because $scopeChannelId
             // is not in the closure `use` list (would be undefined and break /skus?channel_id= with HTTP 500).
             if ($channelId > 0 && $scopedLocationId >= 0) {
-                if (ChannelStockResolver::deductsFromMainStoreBucket($channelId)) {
-                    $plan = ChannelStockResolver::planMerchantOrderDeduction((int) $sku->id, $channelId, 1.0);
+                if ($deductsFromStore) {
                     $data['display_quantity'] = 0;
-                    $data['sellable_from_store_quantity'] = round((float) ($plan['store_available'] ?? 0), 4);
-                    $phantom = round(
-                        (float) $this->quantityForChannelScopedSku($sku, $channelId, $scopedLocationId),
+                    $data['sellable_from_store_quantity'] = round(
+                        (float) ($storeAvailByListingId[(int) $sku->id] ?? 0),
                         4
                     );
+                    // Phantom qty from eager-loaded inventory only — never re-query per row on list.
+                    $phantom = 0.0;
+                    if ($sku->relationLoaded('inventory') && $sku->inventory->isNotEmpty()) {
+                        foreach ($sku->inventory as $invRow) {
+                            $loc = $invRow->relationLoaded('location') ? $invRow->location : null;
+                            if ($loc && (int) ($loc->channel_id ?? 0) === $channelId) {
+                                $phantom += (float) ($invRow->quantity ?? 0);
+                            }
+                        }
+                    }
+                    $phantom = round($phantom, 4);
                     if ($phantom > 0) {
                         $data['phantom_merchant_quantity'] = $phantom;
                     }

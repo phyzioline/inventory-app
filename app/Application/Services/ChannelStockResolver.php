@@ -411,6 +411,123 @@ class ChannelStockResolver
     }
 
     /**
+     * Batch store-bucket availability for merchant listing SKUs (list/index pages).
+     * Avoids per-row planMerchantOrderDeduction / resolveStoreSkuId queries.
+     *
+     * @param  Collection<int, Sku>|\Illuminate\Support\Collection<int, Sku>|iterable<int, Sku>  $listingSkus
+     * @return array<int, float> listing_sku_id => store_available qty
+     */
+    public static function batchStoreAvailableForListingSkus(iterable $listingSkus): array
+    {
+        $storeChannelId = self::resolveMainStoreChannelId();
+        if ($storeChannelId <= 0) {
+            return [];
+        }
+
+        $listingById = [];
+        $masterIds = [];
+        $offerIds = [];
+        foreach ($listingSkus as $sku) {
+            if (! $sku instanceof Sku) {
+                continue;
+            }
+            $id = (int) $sku->id;
+            if ($id <= 0) {
+                continue;
+            }
+            $listingById[$id] = $sku;
+            $masterId = (int) ($sku->offer?->master_product_id ?? 0);
+            if ($masterId > 0) {
+                $masterIds[$masterId] = true;
+            }
+            $offerId = (int) ($sku->offer_id ?? 0);
+            if ($offerId > 0) {
+                $offerIds[$offerId] = true;
+            }
+        }
+
+        if ($listingById === []) {
+            return [];
+        }
+
+        $result = array_fill_keys(array_keys($listingById), 0.0);
+        if ($masterIds === [] && $offerIds === []) {
+            return $result;
+        }
+
+        $storeSkus = Sku::query()
+            ->where('channel_id', $storeChannelId)
+            ->where(function ($q) use ($masterIds, $offerIds) {
+                if ($masterIds !== []) {
+                    $q->orWhereHas('offer', static fn ($oq) => $oq->whereIn('master_product_id', array_keys($masterIds)));
+                }
+                if ($offerIds !== []) {
+                    $q->orWhereIn('offer_id', array_keys($offerIds));
+                }
+            })
+            ->with('offer:id,master_product_id')
+            ->get(['id', 'offer_id', 'channel_id']);
+
+        if ($storeSkus->isEmpty()) {
+            return $result;
+        }
+
+        $storeSkuIds = $storeSkus->pluck('id')->map(fn ($id) => (int) $id)->filter(fn ($id) => $id > 0)->values()->all();
+        $storeLocationIds = self::resolveLocationIdsForChannel($storeChannelId);
+
+        $qtyByStoreSkuId = [];
+        if ($storeSkuIds !== []) {
+            $invQuery = SkuInventory::query()->whereIn('sku_id', $storeSkuIds);
+            if ($storeLocationIds !== []) {
+                $invQuery->whereIn('location_id', $storeLocationIds);
+            }
+            foreach ($invQuery->selectRaw('sku_id, SUM(quantity) as total_qty')->groupBy('sku_id')->get() as $row) {
+                $qtyByStoreSkuId[(int) $row->sku_id] = max(0.0, (float) ($row->total_qty ?? 0));
+            }
+        }
+
+        $storeSkuIdsByMaster = [];
+        $storeSkuIdByOffer = [];
+        foreach ($storeSkus as $storeSku) {
+            $sid = (int) $storeSku->id;
+            $masterId = (int) ($storeSku->offer?->master_product_id ?? 0);
+            $offerId = (int) ($storeSku->offer_id ?? 0);
+            if ($masterId > 0) {
+                $storeSkuIdsByMaster[$masterId][] = $sid;
+            }
+            if ($offerId > 0 && ! isset($storeSkuIdByOffer[$offerId])) {
+                $storeSkuIdByOffer[$offerId] = $sid;
+            }
+        }
+
+        foreach ($listingById as $listingId => $listingSku) {
+            $storeSkuId = 0;
+            $masterId = (int) ($listingSku->offer?->master_product_id ?? 0);
+            if ($masterId > 0 && ! empty($storeSkuIdsByMaster[$masterId])) {
+                $bestId = 0;
+                $bestQty = -1.0;
+                foreach ($storeSkuIdsByMaster[$masterId] as $sid) {
+                    $qty = $qtyByStoreSkuId[$sid] ?? 0.0;
+                    if ($qty > $bestQty) {
+                        $bestQty = $qty;
+                        $bestId = $sid;
+                    }
+                }
+                $storeSkuId = $bestId > 0 ? $bestId : (int) $storeSkuIdsByMaster[$masterId][0];
+            } else {
+                $offerId = (int) ($listingSku->offer_id ?? 0);
+                if ($offerId > 0) {
+                    $storeSkuId = (int) ($storeSkuIdByOffer[$offerId] ?? 0);
+                }
+            }
+
+            $result[$listingId] = $storeSkuId > 0 ? (float) ($qtyByStoreSkuId[$storeSkuId] ?? 0.0) : 0.0;
+        }
+
+        return $result;
+    }
+
+    /**
      * Store-channel SKU id for the same master product as the listing SKU.
      */
     public static function resolveStoreSkuIdForListingSku(Sku $listingSku): ?int

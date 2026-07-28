@@ -32,6 +32,7 @@ import { purchaseInvoiceService, productService, warehouseService as storeServic
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fetchMergedLocationInventory } from '@/lib/warehouseInventoryFetch';
 import api from '@/lib/api';
+import { invalidateInventoryLiveQueries } from '@/lib/inventoryLiveQueries';
 import {
     buildPickerRowFromChannelSku,
     matchesPickerQuery,
@@ -272,15 +273,11 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
         mutationFn: (data: any) => purchaseInvoiceService.create(data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['purchase-invoices'] });
-            queryClient.invalidateQueries({ queryKey: ['master-products'] });
             queryClient.invalidateQueries({ queryKey: ['purchase-invoice-store-inventory'] });
             queryClient.invalidateQueries({ queryKey: ['purchase-invoice-store-channel-skus'] });
-            queryClient.invalidateQueries({ queryKey: ['warehouses-summary'] });
-            queryClient.invalidateQueries({ queryKey: ['warehouses'] });
-            queryClient.invalidateQueries({ queryKey: ['skus'] });
-            queryClient.invalidateQueries({ queryKey: ['channels-all-skus-metrics'] });
             queryClient.invalidateQueries({ queryKey: ['payments'] });
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            invalidateInventoryLiveQueries(queryClient, { scope: 'purchase', immediate: true });
             toast.success(isAr ? 'تم إنشاء فاتورة الشراء بنجاح' : 'Purchase invoice created successfully');
             onOpenChange(false);
             reset(buildDefaultValues());

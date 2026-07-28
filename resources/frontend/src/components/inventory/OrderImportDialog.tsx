@@ -7,6 +7,7 @@ import { Upload, FileSpreadsheet, Loader2, CheckCircle, XCircle, Download, Rotat
 import { useLanguage } from '@/contexts/LanguageContext';
 import api from '@/lib/api';
 import { toast } from 'sonner';
+import { invalidateInventoryLiveQueries } from '@/lib/inventoryLiveQueries';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -277,9 +278,9 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
             const details = response.details;
             setResults(details);
             void queryClient.invalidateQueries({ queryKey: ['marketplace-import-last-batch'] });
-            void queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
             void queryClient.invalidateQueries({ queryKey: ['orders'] });
             void queryClient.invalidateQueries({ queryKey: ['orders-for-profit'] });
+            invalidateInventoryLiveQueries(queryClient, { scope: 'marketplace-import', immediate: true });
             const shortageN = Number(details?.stock_shortage_count ?? details?.stock_shortages?.length ?? 0);
             const importedN = Number(details?.imported ?? 0);
             const skippedN = Number(details?.skipped ?? 0);
@@ -425,9 +426,9 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                     : `Rollback done: ${rev} stock line(s), ${del} order(s) removed.`
             );
             void queryClient.invalidateQueries({ queryKey: ['marketplace-import-last-batch'] });
-            void queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
             void queryClient.invalidateQueries({ queryKey: ['orders'] });
             void queryClient.invalidateQueries({ queryKey: ['orders-for-profit'] });
+            invalidateInventoryLiveQueries(queryClient, { scope: 'marketplace-rollback', immediate: true });
             setResults((prev: any) =>
                 prev
                     ? {

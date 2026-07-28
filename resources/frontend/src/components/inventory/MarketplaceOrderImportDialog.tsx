@@ -6,6 +6,7 @@ import { Upload, FileSpreadsheet, Loader2, CheckCircle, XCircle, AlertTriangle }
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
+import { invalidateInventoryLiveQueries } from '@/lib/inventoryLiveQueries';
 import { useToast } from '@/hooks/use-toast';
 
 const MARKETPLACE_IMPORT_UPLOAD_TIMEOUT_MS = 600_000;
@@ -41,6 +42,7 @@ export default function MarketplaceOrderImportDialog({ open, onOpenChange, chann
             const details = data.details ?? data;
             setResults(details);
             queryClient.invalidateQueries({ queryKey: ['orders'] });
+            invalidateInventoryLiveQueries(queryClient, { scope: 'marketplace-import', immediate: true });
             const shortageN = Number(details?.stock_shortage_count ?? details?.stock_shortages?.length ?? 0);
             if (shortageN > 0) {
                 toast({

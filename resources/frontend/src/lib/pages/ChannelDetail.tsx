@@ -5,7 +5,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { broadcastInventoryCatalogUpdated } from '@/lib/inventoryCatalogBroadcast';
 import {
-  computeChannelStatsFromSkus,
   getSkuQtyForMetrics,
   resolveMasterProduct,
   resolvePurchaseUnitCost,
@@ -154,6 +153,7 @@ export default function ChannelDetail() {
   const [sortPriority, setSortPriority] = useState<'price' | 'stock'>('price');
   const [pageSize, setPageSize] = useState<number>(100);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [bulkSellingPrice, setBulkSellingPrice] = useState('');
   const [bulkCostPrice, setBulkCostPrice] = useState('');
@@ -172,6 +172,11 @@ export default function ChannelDetail() {
     }
   }, [slug]);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [searchQuery]);
+
   // 1. Fetch channel object by slug/name
   const { data: channel, isLoading: loadingChannel } = useQuery({
     queryKey: ['channel-by-slug', decodedSlug],
@@ -180,20 +185,70 @@ export default function ChannelDetail() {
     },
   });
 
-  // 2. Fetch SKUs for this channel
-  const { data: skus, isLoading: loadingSkus } = useQuery({
-    queryKey: ['channel-skus', channel?.id, includeGeneral],
+  // 2. KPI totals (cheap count — do not load all SKUs)
+  const { data: channelSummary, isFetching: fetchingSummary } = useQuery({
+    queryKey: ['channel-sku-summary', channel?.id],
+    queryFn: async () => api.get(`/skus/channel-summary?channel_id=${channel.id}`),
+    enabled: !!channel?.id && !includeGeneral,
+    placeholderData: (prev: any) => prev,
+    staleTime: 15_000,
+  });
+
+  // 3. Paginated SKUs for this channel (merchant channels have thousands of rows)
+  const {
+    data: skuPage,
+    isLoading: loadingSkus,
+    isError: skusError,
+    isFetching: fetchingSkus,
+  } = useQuery({
+    queryKey: [
+      'channel-skus',
+      channel?.id,
+      includeGeneral,
+      currentPage,
+      pageSize,
+      debouncedSearch,
+      linkFilter,
+    ],
     queryFn: async () => {
-      if (!channel?.id) return [];
-      if (!includeGeneral) {
-        return await api.getArray(`/skus?channel_id=${channel.id}`);
+      if (!channel?.id) {
+        return { data: [], current_page: 1, last_page: 1, per_page: pageSize, total: 0 };
       }
-      const all = await api.getArray('/skus');
-      // "General only" view: SKUs without a sales channel / warehouse assignment.
-      return (all || []).filter((s: any) => !s?.channel_id);
+      if (includeGeneral) {
+        const all = await api.get('/skus', { timeout: 120000 });
+        const list = (Array.isArray(all) ? all : Array.isArray(all?.data) ? all.data : []).filter(
+          (s: any) => !s?.channel_id
+        );
+        return {
+          data: list,
+          current_page: 1,
+          last_page: 1,
+          per_page: list.length || pageSize,
+          total: list.length,
+        };
+      }
+      const params = new URLSearchParams({
+        channel_id: String(channel.id),
+        paginate: '1',
+        page: String(currentPage),
+        per_page: String(Math.min(pageSize, 200)),
+      });
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      if (linkFilter === 'linked') params.set('linked', '1');
+      if (linkFilter === 'unlinked') params.set('linked', '0');
+      return await api.get(`/skus?${params.toString()}`, { timeout: 60000 });
     },
     enabled: !!channel?.id,
+    retry: 1,
+    placeholderData: (prev: any) => prev,
+    staleTime: 15_000,
   });
+
+  const skus = useMemo(() => {
+    const rows = skuPage?.data;
+    return Array.isArray(rows) ? rows : [];
+  }, [skuPage]);
+
   const isMerchantChannel = useMemo(() => {
     const type = String(channel?.type || '').toLowerCase();
     const slugVal = String(channel?.slug || '').toLowerCase();
@@ -216,43 +271,34 @@ export default function ChannelDetail() {
   };
 
   const stats = useMemo(() => {
-    if (!skus) return { total: 0, totalPieces: 0, unlinked: 0, totalValue: 0, sellingValue: 0 };
-    const computed = computeChannelStatsFromSkus(skus);
+    if (includeGeneral) {
+      return {
+        total: skus.length,
+        totalPieces: skus.reduce((sum: number, s: any) => sum + Math.max(0, getSkuQty(s)), 0),
+        unlinked: skus.filter((s: any) => !s?.offer_id).length,
+        totalValue: 0,
+        sellingValue: 0,
+      };
+    }
     return {
-      total: computed.products,
-      totalPieces: computed.pieces,
-      unlinked: computed.unlinked,
-      totalValue: computed.purchaseCost,
-      sellingValue: computed.sellingValue,
+      total: Number(channelSummary?.products ?? skuPage?.total ?? 0),
+      totalPieces: Number(channelSummary?.pieces ?? 0),
+      unlinked: Number(channelSummary?.unlinked ?? 0),
+      totalValue: Number(channelSummary?.purchaseCost ?? 0),
+      sellingValue: Number(channelSummary?.sellingValue ?? 0),
     };
-  }, [skus]);
+  }, [includeGeneral, skus, channelSummary, skuPage?.total]);
 
   const filteredSkus = useMemo(() => {
-    const base = (skus || []).filter((sku: any) => {
-      const query = searchQuery.toLowerCase().trim();
-      const matchesSearch =
-        !query ||
-        sku.sku?.toLowerCase().includes(query) ||
-        sku.name?.toLowerCase().includes(query) ||
-        sku.offer?.master_product?.internal_name?.toLowerCase().includes(query);
-
-      const isLinked = !!sku.offer_id;
-      const matchesLink =
-        linkFilter === 'all' ||
-        (linkFilter === 'linked' && isLinked) ||
-        (linkFilter === 'unlinked' && !isLinked);
-
-      return matchesSearch && matchesLink;
-    });
-
-    return base.sort((a: any, b: any) => {
+    // Search + link filter are applied server-side; keep client sort on the current page.
+    return [...skus].sort((a: any, b: any) => {
       const priceA = resolveDisplayUnitPrice(a);
       const priceB = resolveDisplayUnitPrice(b);
       const qtyA = getSkuQty(a);
       const qtyB = getSkuQty(b);
 
-      const priceDelta = priceSort === 'desc' ? (priceB - priceA) : (priceA - priceB);
-      const qtyDelta = stockSort === 'desc' ? (qtyB - qtyA) : (qtyA - qtyB);
+      const priceDelta = priceSort === 'desc' ? priceB - priceA : priceA - priceB;
+      const qtyDelta = stockSort === 'desc' ? qtyB - qtyA : qtyA - qtyB;
 
       if (sortPriority === 'stock') {
         if (qtyDelta !== 0) return qtyDelta;
@@ -264,17 +310,15 @@ export default function ChannelDetail() {
 
       return String(a?.sku || '').localeCompare(String(b?.sku || ''));
     });
-  }, [skus, searchQuery, linkFilter, stockSort, priceSort, sortPriority]);
+  }, [skus, stockSort, priceSort, sortPriority]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredSkus.length / pageSize));
-  const pagedSkus = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredSkus.slice(start, start + pageSize);
-  }, [filteredSkus, currentPage, pageSize]);
+  const totalFiltered = Number(skuPage?.total ?? filteredSkus.length);
+  const totalPages = Math.max(1, Number(skuPage?.last_page ?? 1));
+  const pagedSkus = filteredSkus;
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, linkFilter, stockSort, priceSort, pageSize, channel?.id]);
+  }, [debouncedSearch, linkFilter, pageSize, channel?.id, includeGeneral]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -312,6 +356,7 @@ export default function ChannelDetail() {
       });
       setSelectedSkus(new Set());
       queryClient.invalidateQueries({ queryKey: ['channel-skus'] });
+      queryClient.invalidateQueries({ queryKey: ['channel-sku-summary', channel?.id] });
       broadcastInventoryCatalogUpdated('channel-skus');
     }
   });
@@ -325,6 +370,7 @@ export default function ChannelDetail() {
     },
     onSuccess: ({ ok, failed, total }) => {
       queryClient.invalidateQueries({ queryKey: ['channel-skus', channel?.id] });
+      queryClient.invalidateQueries({ queryKey: ['channel-sku-summary', channel?.id] });
       broadcastInventoryCatalogUpdated('channel-skus');
       setSelectedSkus(new Set());
       if (failed === 0) {
@@ -400,11 +446,26 @@ export default function ChannelDetail() {
     },
   });
 
-  if (loadingChannel || loadingSkus) {
+  if (loadingChannel || (loadingSkus && !skuPage)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
         <Loader2 className="w-12 h-12 animate-spin text-primary" />
         <p className="text-muted-foreground animate-pulse">جاري تحميل بيانات القناة...</p>
+      </div>
+    );
+  }
+
+  if (skusError) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 p-6">
+        <AlertCircle className="w-12 h-12 text-destructive" />
+        <p className="text-muted-foreground">تعذر تحميل منتجات هذه القناة. حاول مرة أخرى.</p>
+        <Button
+          variant="outline"
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['channel-skus', channel?.id] })}
+        >
+          إعادة المحاولة
+        </Button>
       </div>
     );
   }
@@ -472,7 +533,11 @@ export default function ChannelDetail() {
       />
 
       {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-5">
+      <div
+        className={`grid gap-4 md:grid-cols-5 transition-opacity ${
+          fetchingSummary || fetchingSkus ? 'opacity-80' : 'opacity-100'
+        }`}
+      >
         {[
           { title: 'إجمالي المنتجات', value: stats.total, icon: Package, color: 'blue' },
           { title: 'إجمالي القطع', value: stats.totalPieces, icon: ShoppingCart, color: 'emerald' },
@@ -671,8 +736,16 @@ export default function ChannelDetail() {
                   <TableCell colSpan={9} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3">
                       <Package className="w-12 h-12 text-slate-200" />
-                      <p className="text-muted-foreground">لا توجد منتجات مطابقة في هذه القناة.</p>
-                      <Button variant="outline" onClick={() => navigate('/import/products')}>ابدأ بالاستيراد</Button>
+                      <p className="text-muted-foreground">
+                        {fetchingSkus
+                          ? 'جاري تحميل المنتجات...'
+                          : 'لا توجد منتجات مطابقة في هذه القناة.'}
+                      </p>
+                      {!fetchingSkus && (
+                        <Button variant="outline" onClick={() => setIsImportSkusOpen(true)}>
+                          ابدأ بالاستيراد
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -847,25 +920,26 @@ export default function ChannelDetail() {
           </Table>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-4 py-3 border-t bg-muted/20">
             <div className="text-xs text-muted-foreground">
-              عرض {filteredSkus.length === 0 ? 0 : ((currentPage - 1) * pageSize) + 1}
+              عرض {totalFiltered === 0 ? 0 : ((currentPage - 1) * pageSize) + 1}
               {' - '}
-              {Math.min(currentPage * pageSize, filteredSkus.length)}
+              {Math.min(currentPage * pageSize, totalFiltered)}
               {' من '}
-              {filteredSkus.length}
+              {totalFiltered}
+              {fetchingSkus ? ' …' : ''}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">عدد العناصر:</span>
               <Select
-                value={String(pageSize)}
+                value={String(Math.min(pageSize, 200))}
                 onValueChange={(v) => setPageSize(Number(v))}
               >
                 <SelectTrigger className="w-[90px] h-8">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="50">50</SelectItem>
                   <SelectItem value="100">100</SelectItem>
                   <SelectItem value="200">200</SelectItem>
-                  <SelectItem value="500">500</SelectItem>
                 </SelectContent>
               </Select>
               <Button

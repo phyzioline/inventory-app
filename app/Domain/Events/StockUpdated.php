@@ -6,15 +6,18 @@ namespace App\Domain\Events;
 
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
 
 /**
  * Broadcast-only event with scalar payload — do NOT use SerializesModels.
  * That trait left $userId uninitialized when the queued broadcast was restored,
  * causing failed_jobs: "Typed property ...::$userId must not be accessed before initialization".
+ *
+ * Uses ShouldBroadcastNow (not ShouldBroadcast) so KPI/list UIs refresh even when
+ * Redis queue workers are down — stock changes must reach Reverb immediately.
  */
-final class StockUpdated implements ShouldBroadcast
+final class StockUpdated implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets;
 

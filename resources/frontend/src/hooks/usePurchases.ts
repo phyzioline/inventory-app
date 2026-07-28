@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { purchaseInvoiceService, PurchaseInvoice } from '@/lib/supabase-services';
 import { toast } from 'sonner';
+import { invalidateInventoryLiveQueries } from '@/lib/inventoryLiveQueries';
 
 export function usePurchaseInvoices(options?: { includeCancelled?: boolean }) {
   const includeCancelled = options?.includeCancelled === true;
@@ -20,7 +21,7 @@ export function usePurchaseInvoice(id: string) {
 
 export function useCreatePurchaseInvoice() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (invoice: {
       supplier_id: string;
@@ -38,8 +39,8 @@ export function useCreatePurchaseInvoice() {
     }) => purchaseInvoiceService.create(invoice),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchase-invoices'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      invalidateInventoryLiveQueries(queryClient, { scope: 'purchase', immediate: true });
       toast.success('Purchase invoice created successfully');
     },
     onError: (error: Error) => {

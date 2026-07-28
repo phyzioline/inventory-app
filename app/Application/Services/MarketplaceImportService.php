@@ -16,6 +16,7 @@ use App\Domain\Models\Wms\InventoryOrderItem;
 use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
+use App\Infrastructure\Support\StockUpdateBroadcaster;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class MarketplaceImportService
@@ -187,6 +188,11 @@ class MarketplaceImportService
                 $results['skipped'],
                 $results['failed']
             );
+
+            // Marketplace OUT rows bypass InventoryTransactionService — ping open UIs once per batch.
+            if ($uid > 0 && $txCount > 0) {
+                StockUpdateBroadcaster::notifyUser($uid, 'sale');
+            }
 
             return array_merge($results, [
                 'rollback_stock_transactions' => $txCount,
@@ -439,6 +445,10 @@ class MarketplaceImportService
 
             $this->forgetLastImportBatchForUser($uid);
         });
+
+        if ($uid > 0 && $reversed > 0) {
+            StockUpdateBroadcaster::notifyUser($uid, 'adjust');
+        }
 
         return [
             'reversed' => $reversed,

@@ -1,27 +1,14 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-
-const STOCK_QUERY_PREFIXES = [
-    'warehouses-summary',
-    'warehouses',
-    'channel-skus',
-    'master-products',
-    'all-skus-lookup',
-    'channels-all-skus-metrics',
-    'dashboard-metrics',
-] as const;
-
-function invalidateStockQueries(queryClient: ReturnType<typeof useQueryClient>): void {
-    for (const key of STOCK_QUERY_PREFIXES) {
-        queryClient.invalidateQueries({ queryKey: [key] });
-    }
-}
+import { subscribeInventoryCatalogUpdated } from '@/lib/inventoryCatalogBroadcast';
+import { invalidateInventoryLiveQueries } from '@/lib/inventoryLiveQueries';
 
 const REALTIME_DEFER_MS = 2000;
 
 /**
- * Subscribe to inventory.user.{userId} and refresh stock caches on stock.updated.
- * Deferred so initial dashboard/API load is not blocked by WebSocket auth.
+ * Keep channel KPI boxes + product lists fresh:
+ * - Laravel Reverb `stock.updated` (other tabs / other devices after stock moves)
+ * - BroadcastChannel catalog pings (same browser, other tabs)
  */
 export function useInventoryRealtime(enabled: boolean, userId?: number | null): void {
     const queryClient = useQueryClient();
@@ -33,6 +20,19 @@ export function useInventoryRealtime(enabled: boolean, userId?: number | null): 
 
         let cancelled = false;
         let channelTeardown: (() => void) | null = null;
+
+        const refresh = () =>
+            invalidateInventoryLiveQueries(queryClient, { broadcast: false });
+
+        const unsubscribeCatalog = subscribeInventoryCatalogUpdated(refresh);
+
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') {
+                refresh();
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+
         const timer = window.setTimeout(() => {
             void (async () => {
                 try {
@@ -48,7 +48,7 @@ export function useInventoryRealtime(enabled: boolean, userId?: number | null): 
 
                     const channel = echo.private(`inventory.user.${userId}`);
                     channel.listen('.stock.updated', () => {
-                        invalidateStockQueries(queryClient);
+                        refresh();
                     });
                     channelTeardown = () => {
                         try {
@@ -68,6 +68,8 @@ export function useInventoryRealtime(enabled: boolean, userId?: number | null): 
             cancelled = true;
             window.clearTimeout(timer);
             channelTeardown?.();
+            unsubscribeCatalog();
+            document.removeEventListener('visibilitychange', onVisibility);
             void import('@/lib/echo').then((m) => m.disconnectInventoryEcho()).catch(() => undefined);
         };
     }, [enabled, userId, queryClient]);

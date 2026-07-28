@@ -197,7 +197,32 @@ class ChannelController extends Controller
             ->orWhere('slug', $decodedSlug)
             ->orWhere('slug', $slugWithDashes)
             ->orWhere('name', $decodedSlug)
-            ->firstOrFail();
+            ->first();
+
+        // Partial Arabic / truncated URL segments (e.g. "التاجر") — prefer unique suffix match.
+        if (! $channel && $decodedSlug !== '') {
+            $like = '%'.$decodedSlug.'%';
+            $matches = Channel::query()
+                ->where(function ($q) use ($like) {
+                    $q->where('slug', 'like', $like)->orWhere('name', 'like', $like);
+                })
+                ->orderBy('id')
+                ->limit(5)
+                ->get();
+            if ($matches->count() === 1) {
+                $channel = $matches->first();
+            } elseif ($matches->count() > 1) {
+                $channel = $matches->first(function ($c) use ($decodedSlug) {
+                    return str_ends_with((string) $c->slug, $decodedSlug)
+                        || str_ends_with((string) $c->name, $decodedSlug)
+                        || str_contains((string) $c->slug, $decodedSlug);
+                }) ?: $matches->first();
+            }
+        }
+
+        if (! $channel) {
+            abort(404);
+        }
 
         // Only update an existing linked row — do NOT auto-create here. Otherwise deleting the
         // channel warehouse from Settings causes it to reappear the next time this endpoint runs

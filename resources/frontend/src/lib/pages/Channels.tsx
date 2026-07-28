@@ -158,9 +158,11 @@ export default function Channels() {
         queryKey: ['purchases-summary-by-location'],
         queryFn: () => api.getArray('/purchases/smart-import/summary/by-location'),
     });
-    const { data: channelMetrics = {} } = useQuery<Record<string, ChannelInventoryMetrics>>({
+    const { data: channelMetrics = {}, isFetching: fetchingChannelMetrics } = useQuery<Record<string, ChannelInventoryMetrics>>({
         queryKey: ['channels-metrics'],
         queryFn: () => api.get('/channels/metrics'),
+        placeholderData: (prev) => prev,
+        staleTime: 15_000,
     });
 
     const warehouseMetrics = useMemo(() => {
@@ -436,7 +438,11 @@ export default function Channels() {
                                     </div>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="mb-3 rounded-md border bg-muted/20 px-3 py-2 text-xs space-y-1">
+                                    <div
+                                        className={`mb-3 rounded-md border bg-muted/20 px-3 py-2 text-xs space-y-1 transition-opacity ${
+                                            fetchingChannelMetrics ? 'opacity-70' : 'opacity-100'
+                                        }`}
+                                    >
                                         <div className="flex items-center justify-between">
                                             <span className="text-muted-foreground">{isAr ? "منتجات" : "Products"}</span>
                                             <span className="font-semibold">

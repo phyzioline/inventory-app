@@ -77,6 +77,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('master-products/{id}/ensure-channel-listing', [MasterProductController::class, 'ensureChannelListing']);
 
         Route::apiResource('inventory-offers', InventoryOfferController::class);
+        Route::get('skus/channel-summary', [SkuController::class, 'channelSummary']);
         Route::apiResource('skus', SkuController::class);
         Route::get('channels/metrics', [ChannelController::class, 'metrics']);
         Route::get('channels/slug/{slug}', [ChannelController::class, 'getBySlug']);

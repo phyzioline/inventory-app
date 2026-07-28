@@ -37,6 +37,21 @@ final class StockUpdateBroadcaster
     }
 
     /**
+     * One lightweight ping so open channel/KPI pages refetch (batch imports, catalog edits).
+     */
+    public static function notifyUser(int $userId, string $type = 'adjust'): void
+    {
+        if ($userId <= 0) {
+            return;
+        }
+        if (config('broadcasting.default') === 'log' || config('broadcasting.default') === 'null') {
+            return;
+        }
+
+        event(new StockUpdated(0, 0, 0, $type, $userId));
+    }
+
+    /**
      * @param  array<int, array{sku_id: int, location_id: int}>  $pairs
      */
     public static function broadcastTransferPairs(array $pairs): void
