@@ -42,6 +42,7 @@ import {
   SettingsSecurityPanel,
   SettingsSubscriptionSummary,
 } from '@/components/settings/SettingsAccountPanels';
+import { ProductWorkflowGuide } from '@/components/settings/ProductWorkflowGuide';
 
 type EditMode = { type: 'warehouse' | 'supplier' | 'product'; id?: string; data?: any } | null;
 
@@ -493,11 +494,15 @@ export default function Settings() {
 
           {/* Products */}
           <TabsContent value="products" className="space-y-6">
+            <ProductWorkflowGuide />
+
             <Card className="glass-card">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Product Settings</CardTitle>
-                  <CardDescription>Configure product-level settings and defaults</CardDescription>
+                  <CardTitle>{isAr ? 'إعدادات المنتجات' : 'Product Settings'}</CardTitle>
+                  <CardDescription>
+                    {isAr ? 'حدود المخزون الافتراضية وإدارة المنتجات الأساسية' : 'Configure product-level settings and defaults'}
+                  </CardDescription>
                 </div>
                 <div className="flex gap-2">
                   {selectedProducts.size > 0 && (
@@ -608,7 +613,9 @@ export default function Settings() {
                 )}
                 {masterProducts.length > 20 && (
                   <p className="text-sm text-muted-foreground mt-4">
-                    Showing 20 of {masterProducts.length} products. View all in Master Products page.
+                    {isAr
+                      ? `عرض 20 من ${masterProducts.length} منتج. لعرض الكل انتقل إلى صفحة المنتجات الأساسية.`
+                      : `Showing 20 of ${masterProducts.length} products. View all in Master Products page.`}
                   </p>
                 )}
               </CardContent>
