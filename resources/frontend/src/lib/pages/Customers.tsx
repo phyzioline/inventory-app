@@ -30,7 +30,6 @@ type SortField =
   | 'total_received'
   | 'outstanding'
   | 'invoice_count'
-  | 'avg_collection_days'
   | 'status';
 
 function rowSummary(c: any, summaryMap: Record<string, any>) {
@@ -190,7 +189,7 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
   const filteredCustomers = customers;
 
   const handleSort = (field: SortField) => {
-    if (['status', 'avg_collection_days'].includes(field)) return; // not supported server-side yet
+    if (['status'].includes(field)) return; // not supported server-side yet
     if (sortField === field) {
       setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
@@ -560,17 +559,17 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
         <CardHeader className={embedded ? 'space-y-2 p-4' : undefined}>
           <CardTitle className={embedded ? 'text-base' : undefined}>{t('customers.tableTitle')}</CardTitle>
           <div className="flex flex-wrap gap-2">
-            <div className="relative w-full md:w-72">
+            <div className={cn('relative w-full', embedded ? 'md:w-full' : 'md:w-72')}>
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder={t('customers.searchPlaceholder')}
-                className="ps-9"
+                className={cn('ps-9', embedded && 'h-8 text-xs')}
                 value={searchQuery}
                 onChange={(e) => handleSearchChange(e.target.value)}
               />
             </div>
-            <Input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setCurrentPage(1); }} className="w-44" />
-            <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setCurrentPage(1); }} className="w-44" />
+            <Input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setCurrentPage(1); }} className={cn(embedded ? 'h-8 w-32 text-xs' : 'w-44')} />
+            <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setCurrentPage(1); }} className={cn(embedded ? 'h-8 w-32 text-xs' : 'w-44')} />
           </div>
         </CardHeader>
         <CardContent className={embedded ? 'p-4 pt-0' : undefined}>
@@ -580,52 +579,46 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
             </div>
           ) : (
             <div className={embedded ? 'overflow-x-auto' : undefined}>
-            <Table>
+            <Table className={cn(embedded && 'table-fixed w-full text-xs')}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('name')}>
+                  <TableHead className={cn(embedded && 'w-[26%]')}>
+                    <Button type="button" variant="ghost" size="sm" className={cn('font-semibold', embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('name')}>
                       {t('customers.colCustomer')}
                       {sortIcon('name')}
                     </Button>
                   </TableHead>
-                  <TableHead className="text-end">
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('total_sales')}>
+                  <TableHead className={cn('text-end', embedded && 'w-[14%]')}>
+                    <Button type="button" variant="ghost" size="sm" className={cn('font-semibold', embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('total_sales')}>
                       {t('customers.colTotalSales')}
                       {sortIcon('total_sales')}
                     </Button>
                   </TableHead>
-                  <TableHead className="text-end">
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('total_received')}>
+                  <TableHead className={cn('text-end', embedded && 'w-[14%]')}>
+                    <Button type="button" variant="ghost" size="sm" className={cn('font-semibold', embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('total_received')}>
                       {t('customers.colCollected')}
                       {sortIcon('total_received')}
                     </Button>
                   </TableHead>
-                  <TableHead className="text-end">
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('outstanding')}>
+                  <TableHead className={cn('text-end', embedded && 'w-[14%]')}>
+                    <Button type="button" variant="ghost" size="sm" className={cn('font-semibold', embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('outstanding')}>
                       {t('customers.colOutstanding')}
                       {sortIcon('outstanding')}
                     </Button>
                   </TableHead>
-                  <TableHead className="text-end">
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('invoice_count')}>
+                  <TableHead className={cn('text-end', embedded && 'w-[10%]')}>
+                    <Button type="button" variant="ghost" size="sm" className={cn('font-semibold', embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('invoice_count')}>
                       {t('customers.colInvoices')}
                       {sortIcon('invoice_count')}
                     </Button>
                   </TableHead>
-                  <TableHead className="text-end">
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('avg_collection_days')}>
-                      {t('customers.colAvgCollection')}
-                      {sortIcon('avg_collection_days')}
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort('status')}>
+                  <TableHead className={cn(embedded && 'w-[14%]')}>
+                    <Button type="button" variant="ghost" size="sm" className={cn('font-semibold', embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('status')}>
                       {t('customers.colStatus')}
                       {sortIcon('status')}
                     </Button>
                   </TableHead>
-                  <TableHead className="w-[1%]">{t('customers.colActions')}</TableHead>
+                  <TableHead className={cn('w-[1%]', embedded && 'w-[12%]')}>{t('customers.colActions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -636,20 +629,20 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
                   const stKey = Number(s.outstanding) <= 0 ? 'settled' : Number(s.total_received) > 0 ? 'partial' : 'pending';
                   return (
                     <TableRow key={c.id} className="cursor-pointer" onClick={() => openDetails(String(c.id))}>
-                      <TableCell>{c.name}</TableCell>
+                      <TableCell className="truncate font-medium">{c.name}</TableCell>
                       <TableCell className="text-end tabular-nums">{Number(s.total_sales).toLocaleString()}</TableCell>
                       <TableCell className="text-end tabular-nums">{Number(s.total_received).toLocaleString()}</TableCell>
                       <TableCell className={outstandingCell.className}>{outstandingCell.text}</TableCell>
                       <TableCell className="text-end tabular-nums">{s.invoice_count}</TableCell>
-                      <TableCell className="text-end tabular-nums">{s.avg_collection_days}</TableCell>
                       <TableCell>
-                        <Badge variant={stKey === 'settled' ? 'secondary' : stKey === 'partial' ? 'outline' : 'destructive'}>{stLabel}</Badge>
+                        <Badge variant={stKey === 'settled' ? 'secondary' : stKey === 'partial' ? 'outline' : 'destructive'} className={embedded ? 'text-[10px]' : undefined}>{stLabel}</Badge>
                       </TableCell>
                       <TableCell className="text-end">
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
+                          className={embedded ? 'h-7 px-2 text-[10px]' : undefined}
                           onClick={(ev) => {
                             ev.stopPropagation();
                             openReceiveDialog(c);

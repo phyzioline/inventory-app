@@ -13,7 +13,7 @@ export default function CustomersSuppliersPage() {
     <div
       className={cn(
         'h-full min-h-0 overflow-auto',
-        !isMobile && 'p-4',
+        !isMobile && 'p-3',
         !isMobile && (dir === 'rtl' ? 'border-s border-border' : 'border-e border-border'),
         isMobile && 'p-4 pb-6',
       )}
@@ -23,7 +23,7 @@ export default function CustomersSuppliersPage() {
   );
 
   const suppliersPanel = (
-    <div className={cn('h-full min-h-0 overflow-auto', isMobile ? 'p-4' : 'p-4')}>
+    <div className={cn('h-full min-h-0 overflow-auto', isMobile ? 'p-4' : 'p-3')}>
       <SuppliersPage embedded />
     </div>
   );

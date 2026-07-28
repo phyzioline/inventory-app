@@ -169,6 +169,13 @@ export function Sidebar({
     }
   }, [isMobile, collapsed]);
 
+  useEffect(() => {
+    const autoCollapseRoutes = ['/inventory/transfers', '/customers-suppliers'];
+    if (!isMobile && autoCollapseRoutes.some((path) => location.pathname.startsWith(path))) {
+      setCollapsed(true);
+    }
+  }, [location.pathname, isMobile]);
+
   const toggleExpanded = (key: string) => {
     setExpandedItems(prev =>
       prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]

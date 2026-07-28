@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Plus,
     Search,
@@ -15,19 +16,17 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { QuotationDialog } from '@/components/quotations/QuotationDialog';
 import { cn } from '@/lib/utils';
 import api from '@/lib/api';
 import { buildQuotationPrintLabels, getDefaultPrintBranding, printQuotationProfessional } from '@/lib/printUtils';
 
 export default function Quotations() {
+    const navigate = useNavigate();
     const { t, dir } = useLanguage();
     const rtl = dir === 'rtl';
     const { data: quotations, isLoading } = useQuotations();
     const { mutate: convertToOrder, isPending: isConverting } = useConvertQuotation();
     const [searchTerm, setSearchTerm] = useState('');
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [editingQuotationId, setEditingQuotationId] = useState<string | null>(null);
 
     const filteredQuotations = Array.isArray(quotations)
         ? quotations.filter((q) => {
@@ -68,10 +67,7 @@ export default function Quotations() {
                 </div>
                 <Button
                     className="bg-emerald-600 hover:bg-emerald-500 text-white gap-2 shrink-0"
-                    onClick={() => {
-                        setEditingQuotationId(null);
-                        setIsDialogOpen(true);
-                    }}
+                    onClick={() => navigate('/quotations/new')}
                 >
                     <Plus className="w-4 h-4" />
                     {t('quotations.newButton')}
@@ -172,10 +168,7 @@ export default function Quotations() {
                                                         variant="outline"
                                                         className="gap-1 text-xs border-amber-600/40 bg-amber-500/10 text-amber-800 hover:bg-amber-600 hover:text-white dark:text-amber-400"
                                                         title={t('quotations.edit')}
-                                                        onClick={() => {
-                                                            setEditingQuotationId(String(q.id));
-                                                            setIsDialogOpen(true);
-                                                        }}
+                                                        onClick={() => navigate(`/quotations/${q.id}/edit`)}
                                                     >
                                                         <Pencil size={12} />
                                                         {t('quotations.edit')}
@@ -206,15 +199,6 @@ export default function Quotations() {
                     </div>
                 )}
             </div>
-
-            <QuotationDialog
-                open={isDialogOpen}
-                onOpenChange={(open) => {
-                    setIsDialogOpen(open);
-                    if (!open) setEditingQuotationId(null);
-                }}
-                quotationId={editingQuotationId}
-            />
         </div>
     );
 }

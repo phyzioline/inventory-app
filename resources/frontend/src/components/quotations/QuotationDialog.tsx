@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Loader2, Search, UserPlus, FileSpreadsheet, Printer, ArrowRight, ChevronsUpDown, Check, PlusCircle } from 'lucide-react';
+import { Trash2, Loader2, Search, UserPlus, FileSpreadsheet, Printer, ArrowRight, ChevronsUpDown, Check, PlusCircle, ArrowLeft } from 'lucide-react';
+import { clearQuotationDraft, loadQuotationDraft, saveQuotationDraft } from '@/lib/quotationDraftStorage';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -46,9 +47,11 @@ interface QuotationItem {
     description?: string;
 }
 
-interface QuotationDialogProps {
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
+interface QuotationEditorProps {
+    mode?: 'dialog' | 'page';
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    onClose?: () => void;
     quotationId?: string | null;
 }
 
@@ -110,13 +113,21 @@ function resolveQuotationItemImage(item: any, products: any[] = []): string | nu
     return null;
 }
 
-export function QuotationDialog({ open, onOpenChange, quotationId = null }: QuotationDialogProps) {
+export function QuotationEditor({
+    mode = 'dialog',
+    open = false,
+    onOpenChange,
+    onClose,
+    quotationId = null,
+}: QuotationEditorProps) {
     const { t, dir } = useLanguage();
     const rtl = dir === 'rtl';
     const isAr = rtl;
+    const isPageMode = mode === 'page';
+    const isActive = isPageMode || open;
     const queryClient = useQueryClient();
     const { data: products = [] } = useProducts();
-    const { data: customers = [], isLoading: customersLoading } = useCustomers({ enabled: open });
+    const { data: customers = [], isLoading: customersLoading } = useCustomers({ enabled: isActive });
     const { data: warehouses = [] } = useWarehouses();
     const { mutate: convertToOrder, isPending: isConverting } = useConvertQuotation();
 
@@ -138,9 +149,45 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearching, setIsSearching] = useState(false);
+    const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
     const wasOpenRef = useRef(false);
     const loadedQuotationIdRef = useRef<string | null>(null);
+    const draftRestoredRef = useRef(false);
+
+    const persistDraftToLocal = useCallback(() => {
+        if (quotationId) return;
+        if (!customerName.trim() && items.length === 0 && !storeId) {
+            clearQuotationDraft();
+            return;
+        }
+        saveQuotationDraft({
+            customerId,
+            customerName,
+            customerEmail,
+            customerPhone,
+            storeId,
+            items,
+            editingQuotationId,
+            savedQuotation,
+            updatedAt: new Date().toISOString(),
+        });
+    }, [customerId, customerEmail, customerName, customerPhone, editingQuotationId, items, quotationId, savedQuotation, storeId]);
+
+    const applyDraft = useCallback((draft: ReturnType<typeof loadQuotationDraft>) => {
+        if (!draft) return;
+        setCustomerId(draft.customerId || '');
+        setCustomerName(draft.customerName || '');
+        setCustomerEmail(draft.customerEmail || '');
+        setCustomerPhone(draft.customerPhone || '');
+        setStoreId(draft.storeId || '');
+        setItems(Array.isArray(draft.items) ? draft.items : []);
+        setEditingQuotationId(draft.editingQuotationId);
+        setSavedQuotation(draft.savedQuotation);
+        if (draft.editingQuotationId) {
+            loadedQuotationIdRef.current = draft.editingQuotationId;
+        }
+    }, []);
 
     const selectedStore = useMemo(
         () => (warehouses || []).find((w: any) => String(w.id) === String(storeId)),
@@ -211,14 +258,18 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
             );
         } catch {
             toast.error(t('quotations.loadFailed') || (isAr ? 'تعذر تحميل عرض السعر' : 'Failed to load quotation'));
-            onOpenChange(false);
+            if (isPageMode) {
+                onClose?.();
+            } else {
+                onOpenChange?.(false);
+            }
         } finally {
             setLoadingQuotation(false);
         }
-    }, [isAr, onOpenChange, products, t]);
+    }, [isAr, isPageMode, onClose, onOpenChange, products, t]);
 
     useEffect(() => {
-        if (!open) {
+        if (!isActive) {
             wasOpenRef.current = false;
             return;
         }
@@ -227,12 +278,27 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
                 if (loadedQuotationIdRef.current !== quotationId) {
                     void loadQuotation(quotationId);
                 }
-            } else {
+            } else if (isPageMode && !draftRestoredRef.current) {
+                const draft = loadQuotationDraft();
+                if (draft && (draft.customerName.trim() || draft.items.length > 0)) {
+                    applyDraft(draft);
+                    draftRestoredRef.current = true;
+                    toast.info(t('quotations.draftRestored') || (isAr ? 'تم استرجاع آخر مسودة كنت تعمل عليها' : 'Restored your last draft'));
+                } else {
+                    resetForm();
+                }
+            } else if (!isPageMode) {
                 resetForm();
             }
         }
-        wasOpenRef.current = open;
-    }, [open, quotationId, resetForm, loadQuotation]);
+        wasOpenRef.current = isActive;
+    }, [isActive, quotationId, isPageMode, resetForm, loadQuotation, applyDraft, t, isAr]);
+
+    useEffect(() => {
+        if (!isActive || quotationId) return;
+        const timer = window.setTimeout(() => persistDraftToLocal(), 600);
+        return () => window.clearTimeout(timer);
+    }, [isActive, quotationId, persistDraftToLocal, customerId, customerName, customerEmail, customerPhone, items, storeId, editingQuotationId, savedQuotation]);
 
     const filteredCustomers = useMemo(() => {
         const q = customerPickQuery.trim().toLowerCase();
@@ -534,6 +600,8 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
             if (!editingQuotationId && data?.id) {
                 setEditingQuotationId(String(data.id));
             }
+            clearQuotationDraft();
+            setAutoSaveStatus('saved');
         },
         onError: (error: any) => {
             if (error?.message === 'missing_store' || error?.message === 'missing_sku') return;
@@ -541,8 +609,38 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
         },
     });
 
+    const canSave = items.length > 0 && !!customerName.trim() && isEditable;
+
+    const autoSaveBeforeAction = useCallback(
+        async (opts?: { silent?: boolean }): Promise<string | null> => {
+            if (!canSave || !isEditable) {
+                persistDraftToLocal();
+                return savedQuotation?.id ?? editingQuotationId ?? null;
+            }
+            setAutoSaveStatus('saving');
+            try {
+                const data: any = await mutation.mutateAsync();
+                setAutoSaveStatus('saved');
+                if (!opts?.silent) {
+                    toast.success(t('quotations.autoSaved') || (isAr ? 'تم الحفظ تلقائياً' : 'Saved automatically'));
+                }
+                return String(data?.id ?? editingQuotationId ?? savedQuotation?.id ?? '');
+            } catch (error: any) {
+                if (error?.message === 'missing_store' || error?.message === 'missing_sku') {
+                    persistDraftToLocal();
+                    return null;
+                }
+                persistDraftToLocal();
+                setAutoSaveStatus('idle');
+                return null;
+            }
+        },
+        [canSave, isEditable, mutation, persistDraftToLocal, savedQuotation?.id, editingQuotationId, t, isAr],
+    );
+
     const handlePrint = async () => {
         if (items.length === 0) return;
+        const quoteId = await autoSaveBeforeAction({ silent: true });
         const labels = buildQuotationPrintLabels(t);
         const tryOpen = (quotation: any, opts?: { itemsOverride?: any[]; metaExtraLine?: string }) => {
             const ok = printQuotationProfessional({
@@ -558,9 +656,9 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
             }
         };
 
-        if (savedQuotation?.id) {
+        if (quoteId) {
             try {
-                const quotation = await api.get(`quotations/${savedQuotation.id}`);
+                const quotation = await api.get(`quotations/${quoteId}`);
                 tryOpen(quotation);
             } catch {
                 toast.error('Failed to print quotation');
@@ -593,23 +691,39 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
         );
     };
 
-    const handleConvert = () => {
-        if (!savedQuotation?.id || savedQuotation.status === 'converted') return;
-        convertToOrder(savedQuotation.id, {
+    const handleConvert = async () => {
+        const quoteId = await autoSaveBeforeAction({ silent: true });
+        if (!quoteId) return;
+        if (savedQuotation?.status === 'converted') return;
+        convertToOrder(quoteId, {
             onSuccess: () => {
-                setSavedQuotation((prev) => (prev ? { ...prev, status: 'converted' } : null));
+                setSavedQuotation((prev) => (prev ? { ...prev, status: 'converted' } : { id: quoteId, status: 'converted' }));
+                clearQuotationDraft();
             },
         });
     };
 
-    const handleDialogOpenChange = (next: boolean) => {
-        if (!next) {
-            resetForm();
+    const handleClose = async () => {
+        if (isEditable && canSave) {
+            await autoSaveBeforeAction({ silent: true });
+        } else {
+            persistDraftToLocal();
         }
-        onOpenChange(next);
+        if (isPageMode) {
+            onClose?.();
+            return;
+        }
+        resetForm();
+        onOpenChange?.(false);
     };
 
-    const canSave = items.length > 0 && !!customerName.trim() && isEditable;
+    const handleDialogOpenChange = (next: boolean) => {
+        if (!next) {
+            void handleClose();
+            return;
+        }
+        onOpenChange?.(next);
+    };
 
     const openCreateProductDialog = () => {
         if (!storeId) {
@@ -620,53 +734,68 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
         setIsProductCreateOpen(true);
     };
 
-    if (loadingQuotation) {
-        return (
-            <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-                <DialogContent className="max-w-md">
-                    <div className="flex flex-col items-center gap-3 py-10">
-                        <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
-                        <p className="text-sm text-muted-foreground">{t('quotations.loadingOne') || (isAr ? 'جارٍ التحميل…' : 'Loading…')}</p>
-                    </div>
-                </DialogContent>
-            </Dialog>
-        );
-    }
-
-    return (
-        <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-            <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto bg-card text-card-foreground border-border p-0 gap-0">
-                <div className="p-6 border-b border-border bg-muted/40 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start sticky top-0 z-10 backdrop-blur-md">
-                    <div>
+    const editorHeader = (
+        <div className="p-6 border-b border-border bg-muted/40 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start sticky top-0 z-10 backdrop-blur-md shrink-0">
+            <div className="flex items-start gap-3 min-w-0">
+                {isPageMode ? (
+                    <Button type="button" variant="ghost" size="icon" className="shrink-0 mt-0.5" onClick={() => void handleClose()}>
+                        <ArrowLeft className="h-5 w-5" />
+                    </Button>
+                ) : null}
+                <div className="min-w-0">
+                    {isPageMode ? (
+                        <div className="space-y-1 text-start">
+                            <h1 className="flex items-center gap-2 text-xl font-bold text-foreground">
+                                <FileSpreadsheet className="w-6 h-6 text-emerald-600 shrink-0" />
+                                {editingQuotationId ? (t('quotations.editDialogTitle') || (isAr ? 'تعديل عرض السعر' : 'Edit quotation')) : t('quotations.dialogTitle')}
+                            </h1>
+                            <p className="text-muted-foreground text-sm">
+                                {editingQuotationId ? (t('quotations.editDialogSubtitle') || (isAr ? 'عدّل الأصناف والكميات والأسعار.' : 'Adjust items, quantities, and prices.')) : t('quotations.dialogSubtitle')}
+                            </p>
+                        </div>
+                    ) : (
                         <DialogHeader className="space-y-1 text-start p-0 sm:text-start">
                             <DialogTitle className="flex items-center gap-2 text-xl font-bold text-foreground">
                                 <FileSpreadsheet className="w-6 h-6 text-emerald-600 shrink-0" />
                                 {editingQuotationId ? (t('quotations.editDialogTitle') || (isAr ? 'تعديل عرض السعر' : 'Edit quotation')) : t('quotations.dialogTitle')}
                             </DialogTitle>
+                            <p className="text-muted-foreground text-sm mt-1">
+                                {editingQuotationId ? (t('quotations.editDialogSubtitle') || (isAr ? 'عدّل الأصناف والكميات والأسعار.' : 'Adjust items, quantities, and prices.')) : t('quotations.dialogSubtitle')}
+                            </p>
                         </DialogHeader>
-                        <p className="text-muted-foreground text-sm mt-1">
-                            {editingQuotationId ? (t('quotations.editDialogSubtitle') || (isAr ? 'عدّل الأصناف والكميات والأسعار.' : 'Adjust items, quantities, and prices.')) : t('quotations.dialogSubtitle')}
+                    )}
+                    {autoSaveStatus === 'saving' ? (
+                        <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            {t('quotations.autoSaving') || (isAr ? 'جاري الحفظ التلقائي…' : 'Auto-saving…')}
                         </p>
-                    </div>
-                    <div className="flex flex-col items-start sm:items-end">
-                        <span className="text-muted-foreground text-xs uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
-                        <span className="text-3xl font-bold text-foreground tracking-tight">
-                            {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
-                            <span className="text-sm text-emerald-600 font-normal">EGP</span>
-                        </span>
-                    </div>
+                    ) : autoSaveStatus === 'saved' ? (
+                        <p className="text-xs text-emerald-600 mt-2">{t('quotations.autoSavedHint') || (isAr ? 'تم الحفظ تلقائياً' : 'Auto-saved')}</p>
+                    ) : null}
                 </div>
+            </div>
+            <div className="flex flex-col items-start sm:items-end shrink-0">
+                <span className="text-muted-foreground text-xs uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
+                <span className="text-3xl font-bold text-foreground tracking-tight">
+                    {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
+                    <span className="text-sm text-emerald-600 font-normal">EGP</span>
+                </span>
+            </div>
+        </div>
+    );
 
-                {savedQuotation && (
-                    <div className="mx-6 mt-4 rounded-lg border border-emerald-600/30 bg-emerald-500/10 px-4 py-3 text-sm text-foreground">
-                        {editingQuotationId ? (t('quotations.editingHint') || (isAr ? 'تعديل عرض السعر' : 'Editing quotation')) : t('quotations.savedHint')}
-                        {savedQuotation.reference_number ? (
-                            <span className="ms-2 font-mono text-emerald-700 dark:text-emerald-400">#{savedQuotation.reference_number}</span>
-                        ) : null}
-                    </div>
-                )}
+    const editorBody = (
+        <>
+            {savedQuotation && (
+                <div className={cn('rounded-lg border border-emerald-600/30 bg-emerald-500/10 px-4 py-3 text-sm text-foreground', isPageMode ? 'mx-6 mt-4' : 'mx-6 mt-4')}>
+                    {editingQuotationId ? (t('quotations.editingHint') || (isAr ? 'تعديل عرض السعر' : 'Editing quotation')) : t('quotations.savedHint')}
+                    {savedQuotation.reference_number ? (
+                        <span className="ms-2 font-mono text-emerald-700 dark:text-emerald-400">#{savedQuotation.reference_number}</span>
+                    ) : null}
+                </div>
+            )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-0 min-h-[500px]">
+            <div className={cn('grid grid-cols-1 lg:grid-cols-4 gap-0 flex-1 min-h-0', isPageMode ? 'overflow-hidden' : 'min-h-[500px]')}>
                     <div className="lg:col-span-1 border-b lg:border-b-0 lg:border-e border-border bg-muted/20 p-6 space-y-8">
                         <div className="space-y-4">
                             <h3 className="text-sm font-semibold flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
@@ -973,14 +1102,14 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
                             )}
                         </div>
 
-                        <DialogFooter className="flex-col gap-3 border-t border-border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex-col gap-3 border-t border-border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between flex shrink-0">
                             <div className="flex flex-wrap gap-2">
                                 <Button
                                     type="button"
                                     variant="outline"
                                     className="gap-2 border-border"
                                     title={t('quotations.printHelp')}
-                                    onClick={handlePrint}
+                                    onClick={() => void handlePrint()}
                                     disabled={items.length === 0}
                                 >
                                     <Printer className="h-4 w-4" />
@@ -990,7 +1119,7 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
                                     type="button"
                                     variant="outline"
                                     className="gap-2 border-emerald-600/40 bg-emerald-600/5 text-emerald-800 hover:bg-emerald-600/10 dark:text-emerald-400"
-                                    onClick={handleConvert}
+                                    onClick={() => void handleConvert()}
                                     disabled={!savedQuotation?.id || savedQuotation.status === 'converted' || isConverting}
                                 >
                                     {isConverting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
@@ -998,8 +1127,8 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
                                 </Button>
                             </div>
                             <div className="flex flex-wrap justify-end gap-2">
-                                <Button type="button" variant="outline" className="border-border" onClick={() => handleDialogOpenChange(false)}>
-                                    {savedQuotation ? t('quotations.close') : t('quotations.cancel')}
+                                <Button type="button" variant="outline" className="border-border" onClick={() => void handleClose()}>
+                                    {isPageMode ? (t('quotations.back') || (isAr ? 'رجوع' : 'Back')) : savedQuotation ? t('quotations.close') : t('quotations.cancel')}
                                 </Button>
                                 {isEditable && (
                                     <Button
@@ -1021,46 +1150,95 @@ export function QuotationDialog({ open, onOpenChange, quotationId = null }: Quot
                                     </Button>
                                 )}
                             </div>
-                        </DialogFooter>
+                        </div>
                     </div>
                 </div>
-            </DialogContent>
+        </>
+    );
 
-            <Dialog open={isProductCreateOpen} onOpenChange={setIsProductCreateOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{t('quotations.addNewProductTitle') || (isAr ? 'إضافة منتج جديد' : 'Add New Product')}</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                        <div className="space-y-1">
-                            <Label>{isAr ? 'اسم المنتج' : 'Product Name'}</Label>
-                            <Input value={newProductName} onChange={(e) => setNewProductName(e.target.value)} />
-                        </div>
-                        <div className="space-y-1">
-                            <Label>SKU</Label>
-                            <Input value={newProductSku} onChange={(e) => setNewProductSku(e.target.value)} />
-                        </div>
-                        {selectedStore ? (
-                            <p className="text-xs text-muted-foreground">
-                                {isAr ? 'سيُضاف المنتج إلى: ' : 'Product will be listed at: '}
-                                <span className="font-medium text-foreground">{selectedStore.name}</span>
-                            </p>
-                        ) : null}
+    const productCreateDialog = (
+        <Dialog open={isProductCreateOpen} onOpenChange={setIsProductCreateOpen}>
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>{t('quotations.addNewProductTitle') || (isAr ? 'إضافة منتج جديد' : 'Add New Product')}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                    <div className="space-y-1">
+                        <Label>{isAr ? 'اسم المنتج' : 'Product Name'}</Label>
+                        <Input value={newProductName} onChange={(e) => setNewProductName(e.target.value)} />
                     </div>
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => setIsProductCreateOpen(false)}>
-                            {isAr ? 'إلغاء' : 'Cancel'}
-                        </Button>
-                        <Button
-                            type="button"
-                            disabled={createProductMutation.isPending || !newProductName.trim() || !storeId}
-                            onClick={() => createProductMutation.mutate({ name: newProductName.trim(), sku: newProductSku.trim() || undefined })}
-                        >
-                            {createProductMutation.isPending ? (isAr ? 'جاري الحفظ...' : 'Saving...') : (isAr ? 'حفظ' : 'Save')}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                    <div className="space-y-1">
+                        <Label>SKU</Label>
+                        <Input value={newProductSku} onChange={(e) => setNewProductSku(e.target.value)} />
+                    </div>
+                    {selectedStore ? (
+                        <p className="text-xs text-muted-foreground">
+                            {isAr ? 'سيُضاف المنتج إلى: ' : 'Product will be listed at: '}
+                            <span className="font-medium text-foreground">{selectedStore.name}</span>
+                        </p>
+                    ) : null}
+                </div>
+                <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsProductCreateOpen(false)}>
+                        {isAr ? 'إلغاء' : 'Cancel'}
+                    </Button>
+                    <Button
+                        type="button"
+                        disabled={createProductMutation.isPending || !newProductName.trim() || !storeId}
+                        onClick={() => createProductMutation.mutate({ name: newProductName.trim(), sku: newProductSku.trim() || undefined })}
+                    >
+                        {createProductMutation.isPending ? (isAr ? 'جاري الحفظ...' : 'Saving...') : (isAr ? 'حفظ' : 'Save')}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
         </Dialog>
     );
+
+    if (loadingQuotation) {
+        if (isPageMode) {
+            return (
+                <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background">
+                    <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+                    <p className="text-sm text-muted-foreground">{t('quotations.loadingOne') || (isAr ? 'جارٍ التحميل…' : 'Loading…')}</p>
+                </div>
+            );
+        }
+        return (
+            <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+                <DialogContent className="max-w-md">
+                    <div className="flex flex-col items-center gap-3 py-10">
+                        <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+                        <p className="text-sm text-muted-foreground">{t('quotations.loadingOne') || (isAr ? 'جارٍ التحميل…' : 'Loading…')}</p>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        );
+    }
+
+    if (isPageMode) {
+        return (
+            <div className="fixed inset-0 z-50 flex flex-col bg-background text-foreground overflow-hidden">
+                {editorHeader}
+                <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+                    {editorBody}
+                </div>
+                {productCreateDialog}
+            </div>
+        );
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+            <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto bg-card text-card-foreground border-border p-0 gap-0">
+                {editorHeader}
+                {editorBody}
+            </DialogContent>
+            {productCreateDialog}
+        </Dialog>
+    );
+}
+
+/** @deprecated Use QuotationEditor with mode="page" or navigate to /quotations/new */
+export function QuotationDialog(props: { open: boolean; onOpenChange: (open: boolean) => void; quotationId?: string | null }) {
+    return <QuotationEditor mode="dialog" {...props} />;
 }

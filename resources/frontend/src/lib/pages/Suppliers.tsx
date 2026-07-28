@@ -109,7 +109,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     payment_date: todayIso,
     notes: '',
   });
-  const [sortField, setSortField] = useState<'total_purchases' | 'total_paid' | 'outstanding' | 'invoice_count' | 'avg_payment_days' | null>(null);
+  const [sortField, setSortField] = useState<'total_purchases' | 'total_paid' | 'outstanding' | 'invoice_count' | null>(null);
   const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
   const [statementIncludeLineItems, setStatementIncludeLineItems] = useState(true);
   const [expandedLedgerRows, setExpandedLedgerRows] = useState<Set<string>>(new Set());
@@ -193,7 +193,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     });
   };
 
-  const handleSort = (field: 'total_purchases' | 'total_paid' | 'outstanding' | 'invoice_count' | 'avg_payment_days') => {
+  const handleSort = (field: 'total_purchases' | 'total_paid' | 'outstanding' | 'invoice_count') => {
     if (sortField === field) {
       setSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'));
       return;
@@ -482,59 +482,54 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
         <CardHeader className={embedded ? 'space-y-2 p-4' : 'space-y-3'}>
           <CardTitle className={embedded ? 'text-base' : undefined}>{isAr ? 'جدول الموردين' : 'Suppliers Table'}</CardTitle>
           <div className="flex flex-wrap gap-2">
-            <div className="relative w-full md:w-72">
+            <div className={cn('relative w-full', embedded ? 'md:w-full' : 'md:w-72')}>
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isAr ? 'بحث عن مورد...' : 'Search supplier...'} />
+              <Input className={cn('pl-9', embedded && 'h-8 text-xs')} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isAr ? 'بحث عن مورد...' : 'Search supplier...'} />
             </div>
-            <select className="h-10 rounded-md border bg-background px-3 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
+            <select className={cn('rounded-md border bg-background px-3', embedded ? 'h-8 text-xs' : 'h-10 text-sm')} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
               <option value="all">{isAr ? 'كل الحالات' : 'All statuses'}</option>
               <option value="paid">{isAr ? 'مسدد' : 'Paid'}</option>
               <option value="partial">{isAr ? 'جزئي' : 'Partial'}</option>
               <option value="unpaid">{isAr ? 'غير مسدد' : 'Unpaid'}</option>
             </select>
-            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-44" />
-            <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-44" />
+            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={cn(embedded ? 'h-8 w-32 text-xs' : 'w-44')} />
+            <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={cn(embedded ? 'h-8 w-32 text-xs' : 'w-44')} />
           </div>
         </CardHeader>
         <CardContent className={embedded ? 'p-4 pt-0' : undefined}>
           <div className={embedded ? 'overflow-x-auto' : undefined}>
-          <Table>
+          <Table className={cn(embedded && 'table-fixed w-full text-xs')}>
             <TableHeader>
               <TableRow>
-                <TableHead>{isAr ? 'المورد' : 'Supplier'}</TableHead>
-                <TableHead className="text-right">
-                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => handleSort('total_purchases')}>
+                <TableHead className={cn(embedded && 'w-[26%]')}>{isAr ? 'المورد' : 'Supplier'}</TableHead>
+                <TableHead className={cn('text-right', embedded && 'w-[14%]')}>
+                  <Button type="button" variant="ghost" size="sm" className={cn(embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('total_purchases')}>
                     {isAr ? 'إجمالي المشتريات' : 'Total Purchases'} {sortField === 'total_purchases' ? (sortDirection === 'desc' ? <ArrowDownWideNarrow className="w-3 h-3 ms-1" /> : <ArrowUpWideNarrow className="w-3 h-3 ms-1" />) : null}
                   </Button>
                 </TableHead>
-                <TableHead className="text-right">
-                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => handleSort('total_paid')}>
+                <TableHead className={cn('text-right', embedded && 'w-[14%]')}>
+                  <Button type="button" variant="ghost" size="sm" className={cn(embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('total_paid')}>
                     {isAr ? 'المدفوع' : 'Paid'} {sortField === 'total_paid' ? (sortDirection === 'desc' ? <ArrowDownWideNarrow className="w-3 h-3 ms-1" /> : <ArrowUpWideNarrow className="w-3 h-3 ms-1" />) : null}
                   </Button>
                 </TableHead>
-                <TableHead className="text-right">
-                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => handleSort('outstanding')}>
+                <TableHead className={cn('text-right', embedded && 'w-[14%]')}>
+                  <Button type="button" variant="ghost" size="sm" className={cn(embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('outstanding')}>
                     {isAr ? 'الرصيد المستحق' : 'Outstanding'} {sortField === 'outstanding' ? (sortDirection === 'desc' ? <ArrowDownWideNarrow className="w-3 h-3 ms-1" /> : <ArrowUpWideNarrow className="w-3 h-3 ms-1" />) : null}
                   </Button>
                 </TableHead>
-                <TableHead className="text-right">
-                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => handleSort('invoice_count')}>
+                <TableHead className={cn('text-right', embedded && 'w-[10%]')}>
+                  <Button type="button" variant="ghost" size="sm" className={cn(embedded ? 'h-6 px-1 text-xs' : 'h-7 px-2')} onClick={() => handleSort('invoice_count')}>
                     {isAr ? 'الفواتير' : 'Invoices'} {sortField === 'invoice_count' ? (sortDirection === 'desc' ? <ArrowDownWideNarrow className="w-3 h-3 ms-1" /> : <ArrowUpWideNarrow className="w-3 h-3 ms-1" />) : null}
                   </Button>
                 </TableHead>
-                <TableHead className="text-right">
-                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => handleSort('avg_payment_days')}>
-                    {isAr ? 'متوسط أيام السداد' : 'Avg Payment Days'} {sortField === 'avg_payment_days' ? (sortDirection === 'desc' ? <ArrowDownWideNarrow className="w-3 h-3 ms-1" /> : <ArrowUpWideNarrow className="w-3 h-3 ms-1" />) : null}
-                  </Button>
-                </TableHead>
-                <TableHead>{isAr ? 'الحالة' : 'Status'}</TableHead>
-                <TableHead className="text-right">{isAr ? 'الإجراءات' : 'Actions'}</TableHead>
+                <TableHead className={cn(embedded && 'w-[14%]')}>{isAr ? 'الحالة' : 'Status'}</TableHead>
+                <TableHead className={cn('text-right', embedded && 'w-[12%]')}>{isAr ? 'الإجراءات' : 'Actions'}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {!summariesReady && suppliers.length > 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                     <Loader2 className="w-6 h-6 animate-spin inline-block align-middle me-2" />
                     {isAr ? 'جاري تحميل أرصدة الموردين…' : 'Loading supplier balances…'}
                   </TableCell>
@@ -546,14 +541,13 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                 const status = Number(summary.outstanding) <= 0 ? 'paid' : Number(summary.total_paid) > 0 ? 'partial' : 'unpaid';
                 return (
                   <TableRow key={s.id} className="cursor-pointer" onClick={() => openDetails(String(s.id))}>
-                    <TableCell>{s.name}</TableCell>
-                    <TableCell className="text-right">{Number(summary.total_purchases).toLocaleString()}</TableCell>
-                    <TableCell className="text-right">{Number(summary.total_paid).toLocaleString()}</TableCell>
+                    <TableCell className="truncate font-medium">{s.name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{Number(summary.total_purchases).toLocaleString()}</TableCell>
+                    <TableCell className="text-right tabular-nums">{Number(summary.total_paid).toLocaleString()}</TableCell>
                     <TableCell className={outstandingCell.className}>{outstandingCell.text}</TableCell>
-                    <TableCell className="text-right">{summary.invoice_count}</TableCell>
-                    <TableCell className="text-right">{summary.avg_payment_days}</TableCell>
+                    <TableCell className="text-right tabular-nums">{summary.invoice_count}</TableCell>
                     <TableCell>
-                      <Badge variant={status === 'paid' ? 'secondary' : status === 'partial' ? 'outline' : 'destructive'}>
+                      <Badge variant={status === 'paid' ? 'secondary' : status === 'partial' ? 'outline' : 'destructive'} className={embedded ? 'text-[10px]' : undefined}>
                         {status === 'paid' ? (isAr ? 'مسدد' : 'Paid') : status === 'partial' ? (isAr ? 'جزئي' : 'Partial') : (isAr ? 'غير مسدد' : 'Unpaid')}
                       </Badge>
                     </TableCell>

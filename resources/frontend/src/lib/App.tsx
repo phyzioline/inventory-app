@@ -50,6 +50,7 @@ const InventoryTransactions = lazy(() => import("./pages/InventoryTransactions")
 const Orders = lazy(() => import("./pages/Orders"));
 const SalesInvoices = lazy(() => import("./pages/SalesInvoices"));
 const Quotations = lazy(() => import("./pages/Quotations"));
+const QuotationEditorPage = lazy(() => import("./pages/QuotationEditorPage"));
 const OrderProfitView = lazy(() => import("./pages/OrderProfitView"));
 
 // Purchases
@@ -182,6 +183,8 @@ const App = () => (
                   {/* ── Orders ─────────────────────────────── */}
                   <Route path="/orders" element={<Orders />} />
                   <Route path="/sales" element={<SalesInvoices />} />
+                  <Route path="/quotations/new" element={<QuotationEditorPage />} />
+                  <Route path="/quotations/:id/edit" element={<QuotationEditorPage />} />
                   <Route path="/quotations" element={<Quotations />} />
                   <Route path="/orders/profit" element={<OrderProfitView />} />
 

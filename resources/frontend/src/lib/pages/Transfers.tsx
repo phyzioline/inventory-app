@@ -11,8 +11,9 @@ import { BulkTransferUploadDialog } from '@/components/inventory/BulkTransferUpl
 import NoonAsnTransferDialog from '@/components/inventory/NoonAsnTransferDialog';
 import FbaRequestTransferDialog from '@/components/inventory/FbaRequestTransferDialog';
 import { TransferDetailsDialog } from '@/components/inventory/TransferDetailsDialog';
+import { TransferBatchPreviewDialog } from '@/components/inventory/TransferBatchPreviewDialog';
 import { TransferLaneColumn } from '@/components/inventory/TransferLaneColumn';
-import { buildTransferBatches, batchMatchesSearch } from '@/lib/transferBatchUtils';
+import { buildTransferBatches, batchMatchesSearch, type TransferBatch } from '@/lib/transferBatchUtils';
 import { TRANSFER_LANES, groupBatchesByLane } from '@/lib/transferLanes';
 
 export default function Transfers() {
@@ -25,7 +26,7 @@ export default function Transfers() {
   const [isFbaRequestOpen, setIsFbaRequestOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTransferId, setSelectedTransferId] = useState<string | null>(null);
-  const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
+  const [previewBatch, setPreviewBatch] = useState<TransferBatch | null>(null);
 
   const { data: transfers, isLoading } = useQuery({
     queryKey: ['transfers'],
@@ -65,6 +66,14 @@ export default function Transfers() {
     [filteredBatches, locations, locationNameById],
   );
 
+  const txById = useMemo(() => {
+    const map = new Map<string, any>();
+    (transfers || []).forEach((tx: any) => {
+      if (tx?.id != null) map.set(String(tx.id), tx);
+    });
+    return map;
+  }, [transfers]);
+
   const unassignedCount = useMemo(() => {
     const assigned = TRANSFER_LANES.reduce((sum, lane) => sum + batchesByLane[lane.id].length, 0);
     return filteredBatches.length - assigned;
@@ -85,7 +94,7 @@ export default function Transfers() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="-mx-2 space-y-4 sm:-mx-4 lg:-mx-6">
       <TransferModal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} />
       <TransferDetailsDialog
         open={!!selectedTransferId}
@@ -93,6 +102,16 @@ export default function Transfers() {
         onOpenChange={(open) => {
           if (!open) setSelectedTransferId(null);
         }}
+      />
+      <TransferBatchPreviewDialog
+        open={!!previewBatch}
+        batch={previewBatch}
+        txById={txById}
+        resolveLocationName={resolveLocationName}
+        onOpenChange={(open) => {
+          if (!open) setPreviewBatch(null);
+        }}
+        onSelectItem={(txId) => setSelectedTransferId(txId)}
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -159,7 +178,7 @@ export default function Transfers() {
         )}
       </Card>
 
-      <div className="grid min-h-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 xl:items-stretch [&>div]:max-h-[calc(100vh-260px)]">
+      <div className="flex flex-col gap-3">
         {TRANSFER_LANES.map((lane) => (
           <TransferLaneColumn
             key={lane.id}
@@ -167,11 +186,8 @@ export default function Transfers() {
             batches={batchesByLane[lane.id]}
             isAr={isAr}
             t={t}
-            expandedBatches={expandedBatches}
-            onToggleBatch={(key) =>
-              setExpandedBatches((prev) => ({ ...prev, [key]: !prev[key] }))
-            }
-            onSelectTransfer={setSelectedTransferId}
+            layout="row"
+            onOpenBatch={setPreviewBatch}
             resolveLocationName={resolveLocationName}
           />
         ))}

@@ -11,6 +11,8 @@ export interface TransferLane {
   shortEn: string;
   accentClass: string;
   headerBgClass: string;
+  /** large = FBA lanes with many transfers; compact = Noon/Jumia */
+  sizeTier: 'large' | 'compact';
   matchesFrom: (name: string) => boolean;
   matchesTo: (name: string) => boolean;
 }
@@ -31,6 +33,7 @@ export const TRANSFER_LANES: TransferLane[] = [
     shortEn: 'FBA Phyzioline',
     accentClass: 'border-t-orange-500',
     headerBgClass: 'bg-orange-500/10',
+    sizeTier: 'large',
     matchesFrom: isShopLocationName,
     matchesTo: (name) => {
       const n = normalize(name);
@@ -45,6 +48,7 @@ export const TRANSFER_LANES: TransferLane[] = [
     shortEn: 'Art FBA',
     accentClass: 'border-t-violet-500',
     headerBgClass: 'bg-violet-500/10',
+    sizeTier: 'large',
     matchesFrom: isShopLocationName,
     matchesTo: (name) => {
       const n = normalize(name);
@@ -60,6 +64,7 @@ export const TRANSFER_LANES: TransferLane[] = [
     shortEn: 'Noon',
     accentClass: 'border-t-amber-500',
     headerBgClass: 'bg-amber-500/10',
+    sizeTier: 'compact',
     matchesFrom: isShopLocationName,
     matchesTo: (name) => {
       const n = normalize(name);
@@ -74,6 +79,7 @@ export const TRANSFER_LANES: TransferLane[] = [
     shortEn: 'Jumia',
     accentClass: 'border-t-sky-500',
     headerBgClass: 'bg-sky-500/10',
+    sizeTier: 'compact',
     matchesFrom: isShopLocationName,
     matchesTo: (name) => {
       const n = normalize(name);

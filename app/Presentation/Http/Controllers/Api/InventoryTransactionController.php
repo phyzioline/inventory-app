@@ -205,7 +205,12 @@ class InventoryTransactionController extends Controller
      */
     public function index(Request $request)
     {
-        $query = InventoryTransaction::with(['sku', 'location']);
+        $relations = ['sku', 'location'];
+        if ($request->has('type') && strtoupper((string) $request->type) === 'TRANSFER') {
+            $relations = ['sku.offer.masterProduct', 'sku.channel', 'location'];
+        }
+
+        $query = InventoryTransaction::with($relations);
 
         if ($request->has('sku_id')) {
             $query->where('sku_id', $request->sku_id);
