@@ -1,11 +1,13 @@
 import type { TransferBatch } from '@/lib/transferBatchUtils';
-import { resolveProductLabel } from '@/lib/transferBatchUtils';
+import { resolveSkuListingLabel } from '@/lib/transferBatchUtils';
 import type { FbaTransferSummary, FbaTransferSummaryRow } from '@/components/inventory/FbaTransferSummaryTable';
 
 export type TransferBatchSummaryRow = FbaTransferSummaryRow & {
   tx_id?: string;
   source_image_url?: string | null;
   dest_image_url?: string | null;
+  source_product_name?: string;
+  dest_product_name?: string;
 };
 
 export type TransferBatchSummary = FbaTransferSummary & {
@@ -22,6 +24,14 @@ function isOutTransferTx(tx: any): boolean {
   const notes = String(tx?.notes || '');
   if (type === 'OUT') return true;
   return type === 'TRANSFER' && /Transfer\s+OUT/i.test(notes);
+}
+
+function isInTransferTx(tx: any): boolean {
+  const type = String(tx?.type || '').toUpperCase();
+  const notes = String(tx?.notes || '');
+  const ref = String(tx?.reference_type || '');
+  if (type === 'IN' && (/Transfer\s+IN/i.test(notes) || /^transfer_in/i.test(ref))) return true;
+  return type === 'TRANSFER' && /Transfer\s+IN/i.test(notes);
 }
 
 function parseMskuFromReferenceType(referenceType: unknown): string {
@@ -44,10 +54,16 @@ function parseFbaMeta(notes: string): { shipmentId?: string; shipToFc?: string; 
 }
 
 function resolveTxImage(tx: any): string | null {
+  if (!tx) return null;
   const sku = tx?.sku;
   const offer = sku?.offer;
   const master = offer?.master_product ?? offer?.masterProduct;
-  const raw = sku?.image_url || master?.image_url || master?.image || null;
+  const raw =
+    sku?.image_url ||
+    master?.image_url ||
+    master?.image ||
+    sku?.product?.image_url ||
+    null;
   return raw ? String(raw) : null;
 }
 
@@ -63,7 +79,59 @@ function deriveShipmentLabel(batch: TransferBatch, fbaShipmentId?: string): stri
 
 export function parseBatchShipmentLabel(batch: TransferBatch): string {
   const fba = parseFbaMeta(batch.userNotes);
-  return deriveShipmentLabel(batch, fba.shipmentId);
+  if (fba.shipmentId) return fba.shipmentId;
+  const notes = String(batch.userNotes || '').trim();
+  if (notes && !/^Transfer\s+(IN|OUT)/i.test(notes)) {
+    return notes.length > 48 ? `${notes.slice(0, 48)}…` : notes;
+  }
+  const created = new Date(batch.created_at || 0);
+  if (!Number.isNaN(created.getTime())) {
+    const datePart = created.toLocaleDateString('en-GB');
+    return `Batch ${datePart}`;
+  }
+  return '—';
+}
+
+export function getBatchShipmentMeta(batch: TransferBatch) {
+  const fba = parseFbaMeta(batch.userNotes);
+  const outItems = batch.items.filter(isOutTransferTx);
+  const sourceItems = outItems.length > 0 ? outItems : batch.items.filter((tx) => !isInTransferTx(tx));
+  return {
+    shipmentId: parseBatchShipmentLabel(batch),
+    shipToFc: fba.shipToFc,
+    skuCount: sourceItems.length,
+    totalUnits: sourceItems.reduce((sum, tx) => sum + Number(tx.quantity || 0), 0) || batch.totalQty,
+    isFba: Boolean(fba.shipmentId),
+  };
+}
+
+function findPairedInTx(outTx: any, txById: Map<string, any>): any | null {
+  if (!outTx) return null;
+
+  // Preferred: OUT.reference_id → IN.id
+  if (outTx.reference_id != null) {
+    const byRef = txById.get(String(outTx.reference_id));
+    if (byRef) return byRef;
+  }
+
+  // Reverse: IN.reference_id → OUT.id
+  const outId = String(outTx.id);
+  for (const tx of txById.values()) {
+    if (!isInTransferTx(tx)) continue;
+    if (String(tx.reference_id || '') === outId) return tx;
+  }
+
+  // Same client transfer id: transfer_out:xxx ↔ transfer_in:xxx
+  const outRef = String(outTx.reference_type || '');
+  const clientMatch = outRef.match(/^transfer_out:(.+)$/i);
+  if (clientMatch?.[1]) {
+    const inRef = `transfer_in:${clientMatch[1]}`;
+    for (const tx of txById.values()) {
+      if (String(tx.reference_type || '') === inRef) return tx;
+    }
+  }
+
+  return null;
 }
 
 export function buildBatchFbaSummary(
@@ -91,27 +159,38 @@ export function buildBatchFbaSummary(
       : '—';
 
   const outItems = batch.items.filter(isOutTransferTx);
-  const sourceItems = outItems.length > 0 ? outItems : batch.items;
+  const sourceItems =
+    outItems.length > 0
+      ? outItems
+      : batch.items.filter((tx) => !isInTransferTx(tx));
   const fba = parseFbaMeta(batch.userNotes);
 
   const rows: TransferBatchSummaryRow[] = sourceItems.map((outTx) => {
-    const inTx = outTx?.reference_id != null ? txById.get(String(outTx.reference_id)) : null;
+    const inTx = findPairedInTx(outTx, txById);
     const sourceSku = String(outTx?.sku?.sku || outTx?.sku?.name || '—');
-    const destSku = String(inTx?.sku?.sku || inTx?.sku?.name || '—');
-    const msku = parseMskuFromReferenceType(outTx?.reference_type) || destSku || sourceSku;
+    const msku = parseMskuFromReferenceType(outTx?.reference_type);
+    const destFromIn = inTx?.sku?.sku || inTx?.sku?.name;
+    const destSku = String(destFromIn || msku || '—');
     const qty = Number(outTx.quantity || 0);
+    const sourceName = resolveSkuListingLabel(outTx);
+    const destName = inTx ? resolveSkuListingLabel(inTx) : '—';
+    const sourceImage = resolveTxImage(outTx);
+    // Never borrow the other side's image — each column shows its own SKU media only.
+    const destImage = resolveTxImage(inTx);
 
     return {
-      amazon_msku: msku,
+      amazon_msku: msku || destSku || sourceSku,
       source_sku: sourceSku,
       dest_sku: destSku,
-      product_name: resolveProductLabel(outTx),
+      product_name: sourceName,
+      source_product_name: sourceName,
+      dest_product_name: destName,
       required: qty,
       actual: qty,
       status: qty > 0 ? 'transferred' : 'skipped',
       tx_id: String(outTx.id),
-      source_image_url: resolveTxImage(outTx),
-      dest_image_url: resolveTxImage(inTx),
+      source_image_url: sourceImage,
+      dest_image_url: destImage,
     };
   });
 

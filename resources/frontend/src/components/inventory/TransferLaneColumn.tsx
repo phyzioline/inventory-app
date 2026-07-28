@@ -1,31 +1,27 @@
-import {
-  Calendar,
-  Clock,
-  Eye,
-  Package,
-} from 'lucide-react';
+import { useState } from 'react';
+import { Clock, Package } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { TransferBatch } from '@/lib/transferBatchUtils';
-import { resolveProductLabel } from '@/lib/transferBatchUtils';
-import { parseBatchShipmentLabel } from '@/lib/transferBatchPreview';
 import type { TransferLane } from '@/lib/transferLanes';
+import { TransferShipmentRow } from '@/components/inventory/TransferShipmentRow';
 
 interface TransferLaneColumnProps {
   lane: TransferLane;
   batches: TransferBatch[];
   isAr: boolean;
   t: (key: string) => string;
+  txById: Map<string, any>;
   onOpenBatch: (batch: TransferBatch) => void;
+  onEditItem?: (txId: string) => void;
   resolveLocationName: (id: string) => string;
   layout?: 'column' | 'row';
 }
@@ -47,10 +43,13 @@ export function TransferLaneColumn({
   batches,
   isAr,
   t,
+  txById,
   onOpenBatch,
+  onEditItem,
   resolveLocationName,
   layout = 'row',
 }: TransferLaneColumnProps) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const isCompact = lane.sizeTier === 'compact';
   const isRow = layout === 'row';
   const title = isAr ? lane.titleAr : lane.titleEn;
@@ -71,10 +70,10 @@ export function TransferLaneColumn({
     ? isCompact
       ? batches.length === 0
         ? undefined
-        : 'max-h-[180px]'
-      : 'max-h-[min(42vh,420px)]'
+        : 'max-h-[220px]'
+      : 'max-h-[min(52vh,520px)]'
     : isCompact
-      ? 'max-h-[200px]'
+      ? 'max-h-[220px]'
       : 'max-h-[calc(100vh-320px)]';
 
   const header = (
@@ -118,111 +117,47 @@ export function TransferLaneColumn({
     ) : (
       <Table>
         <TableHeader className="sticky top-0 z-10 bg-card">
-          <TableRow>
+          <TableRow className="hover:bg-transparent">
             <TableHead className="w-8" />
-            <TableHead className={cn(isCompact ? 'w-[110px]' : 'w-[130px]', 'text-xs')}>
-              {t('common.date')}
-            </TableHead>
-            <TableHead className={cn(isCompact ? 'w-[120px]' : 'w-[150px]', 'text-xs')}>
+            <TableHead className={cn('text-xs', isCompact ? 'min-w-[120px]' : 'min-w-[160px]')}>
               {isAr ? 'رقم الشحنة' : 'Shipment #'}
             </TableHead>
-            <TableHead className="text-xs">{t('table.product')}</TableHead>
-            <TableHead className={cn('text-xs text-end', isCompact ? 'w-[72px]' : 'w-[88px]')}>
-              {t('sales.qty')}
+            {!isCompact && (
+              <TableHead className="w-[100px] text-xs">{isAr ? 'الحالة' : 'Status'}</TableHead>
+            )}
+            <TableHead className={cn('text-xs', isCompact ? 'w-[100px]' : 'w-[130px]')}>
+              {t('common.date')}
             </TableHead>
-            {!isCompact && <TableHead className="w-[min(180px,18vw)] text-xs">{t('adjustments.notes')}</TableHead>}
+            {!isCompact && (
+              <TableHead className="w-[90px] text-xs">{isAr ? 'الشحن إلى' : 'Ship to'}</TableHead>
+            )}
+            <TableHead className={cn('text-xs text-center', isCompact ? 'w-[70px]' : 'w-[80px]')}>
+              {isAr ? 'SKU' : 'SKUs'}
+            </TableHead>
+            <TableHead className={cn('text-xs text-center', isCompact ? 'w-[70px]' : 'w-[80px]')}>
+              {isAr ? 'الوحدات' : 'Units'}
+            </TableHead>
+            <TableHead className="w-[90px] text-center text-xs">{isAr ? 'عرض' : 'View'}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {batches.map((batch, index) => {
-            const createdAt = new Date(batch.created_at || 0);
-            const isLatest = index === 0;
-            const shipmentLabel = parseBatchShipmentLabel(batch);
-            const toName =
-              batch.direction === 'IN'
-                ? batch.location?.name || ''
-                : resolveLocationName(batch.toLocationId);
-
-            return (
-              <TableRow
-                key={batch.key}
-                className={cn(
-                  'cursor-pointer hover:bg-muted/50',
-                  isLatest && 'bg-primary/5 hover:bg-primary/10',
-                  isCompact && 'text-xs',
-                )}
-                onClick={() => onOpenBatch(batch)}
-                title={isAr ? 'اضغط لمعاينة التحويل' : 'Click to preview transfer'}
-              >
-                <TableCell className="px-2">
-                  <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                </TableCell>
-                <TableCell className={cn('py-2', isCompact && 'py-1.5')}>
-                  <div className="flex items-center gap-1 text-xs font-medium">
-                    <Calendar className="h-3 w-3 text-muted-foreground" />
-                    {Number.isNaN(createdAt.getTime())
-                      ? '—'
-                      : createdAt.toLocaleDateString(isAr ? 'ar-EG' : 'en-US')}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {Number.isNaN(createdAt.getTime())
-                      ? ''
-                      : createdAt.toLocaleTimeString(isAr ? 'ar-EG' : 'en-US', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                    {isLatest && (
-                      <Badge variant="outline" className="ms-1 h-4 px-1 text-[9px]">
-                        {t('transfers.lane.latest')}
-                      </Badge>
-                    )}
-                  </div>
-                  {!isCompact && !Number.isNaN(createdAt.getTime()) && (
-                    <div className="text-[10px] text-muted-foreground/80">
-                      {formatRelativeTime(createdAt, isAr)}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell className={cn('py-2 font-mono text-[10px]', isCompact && 'py-1.5')}>
-                  <span className="line-clamp-2 font-semibold" title={shipmentLabel}>
-                    {shipmentLabel}
-                  </span>
-                </TableCell>
-                <TableCell className={cn('py-2', isCompact && 'py-1.5')}>
-                  <span className="text-xs font-semibold">
-                    {batch.items.length} {t('table.product')}
-                  </span>
-                  <p
-                    className={cn(
-                      'text-[10px] leading-snug text-muted-foreground',
-                      isCompact ? 'line-clamp-1' : 'line-clamp-2',
-                    )}
-                  >
-                    {batch.items
-                      .slice(0, isCompact ? 1 : 2)
-                      .map((tx) => `${tx.sku?.sku || '-'} · ${resolveProductLabel(tx)}`)
-                      .join(' ، ')}
-                    {batch.items.length > (isCompact ? 1 : 2)
-                      ? ` +${batch.items.length - (isCompact ? 1 : 2)}`
-                      : ''}
-                  </p>
-                  {toName ? (
-                    <p className="mt-0.5 text-[10px] text-muted-foreground/80 truncate">{toName}</p>
-                  ) : null}
-                </TableCell>
-                <TableCell className={cn('py-2 text-end', isCompact && 'py-1.5')}>
-                  <Badge variant="outline" className="px-1.5 py-0 text-xs font-bold tabular-nums">
-                    {batch.totalQty}
-                  </Badge>
-                </TableCell>
-                {!isCompact && (
-                  <TableCell className="max-w-[180px] truncate py-2 text-[10px] text-muted-foreground">
-                    {batch.userNotes || '—'}
-                  </TableCell>
-                )}
-              </TableRow>
-            );
-          })}
+          {batches.map((batch, index) => (
+            <TransferShipmentRow
+              key={batch.key}
+              batch={batch}
+              isAr={isAr}
+              isCompact={isCompact}
+              isLatest={index === 0}
+              isOpen={expandedKey === batch.key}
+              t={t}
+              txById={txById}
+              resolveLocationName={resolveLocationName}
+              onToggle={() => setExpandedKey(expandedKey === batch.key ? null : batch.key)}
+              onOpenBatch={onOpenBatch}
+              onEditItem={onEditItem}
+              formatRelativeTime={formatRelativeTime}
+            />
+          ))}
         </TableBody>
       </Table>
     );

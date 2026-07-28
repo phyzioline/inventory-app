@@ -102,7 +102,8 @@ function ProductThumb({
   size?: 'sm' | 'md';
 }) {
   const dim = size === 'sm' ? 'w-8 h-8' : 'w-10 h-10';
-  const imgSrc = getProductImageSrc(src || '');
+  const [failed, setFailed] = useState(false);
+  const imgSrc = !failed ? getProductImageSrc(src || '') : '';
   return (
     <div
       className={cn(
@@ -117,6 +118,7 @@ function ProductThumb({
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
           loading="lazy"
+          onError={() => setFailed(true)}
         />
       ) : (
         <Package
@@ -532,7 +534,7 @@ export default function Returns() {
   }
 
   return (
-    <div className="p-4 sm:p-6 w-full max-w-full mx-auto min-w-0 space-y-6">
+    <div className="-mx-2 space-y-4 p-3 sm:-mx-4 sm:p-4 lg:-mx-6 lg:p-5 w-full max-w-none min-w-0">
       {isFetching && returnsArray.length > 0 ? (
         <div className="flex items-center gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
@@ -867,7 +869,7 @@ export default function Returns() {
         </Card>
       </Collapsible>
 
-      <div className="bg-card border border-border rounded-xl overflow-x-auto shadow-sm">
+      <div className="w-full min-w-0 bg-card border border-border rounded-xl overflow-hidden shadow-sm">
         {orderGroups.length === 0 ? (
           <div className="py-20 text-center space-y-4">
             <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto border border-border">
@@ -876,28 +878,43 @@ export default function Returns() {
             <p className="text-muted-foreground">{t('returns.empty') || 'No return records found matching your filters.'}</p>
           </div>
         ) : (
-          <table className="w-full min-w-[1100px] text-left border-collapse table-auto">
+          <div className="w-full overflow-x-auto">
+          <table className="w-full min-w-[980px] table-fixed text-[11px] leading-tight text-start border-collapse">
+            <colgroup>
+              <col className="w-[18%]" />
+              <col className="w-[11%]" />
+              <col className="w-[12%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[8%]" />
+              <col className="w-[9%]" />
+              <col className="w-[5%]" />
+              <col className="w-[5%]" />
+              <col className="w-[5%]" />
+              <col className="w-[40px]" />
+            </colgroup>
             <thead>
-              <tr className="bg-muted/40 border-b border-border text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap w-14">{t('returns.table.image') || (isAr ? 'صورة' : 'Image')}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap">{t('returns.table.returnRef') || 'Return # / Ref'}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap">{t('returns.table.orderInfo') || 'Order Info'}</th>
-                <th className="px-3 sm:px-4 py-3 text-center whitespace-nowrap">{t('returns.table.orderChannel') || 'Channel'}</th>
-                <th className="px-3 sm:px-4 py-3 text-center whitespace-nowrap">{t('common.status') || 'Status'}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap">{t('returns.table.reason') || (isAr ? 'سبب الإرجاع' : 'Return reason')}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap">{t('returns.table.externalStatus') || 'External Status'}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap">{t('returns.table.returnLocation') || 'Return Location'}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap font-mono">{t('returns.table.sku') || 'SKU'}</th>
-                <th className="px-3 sm:px-4 py-3 whitespace-nowrap align-top min-w-[140px]">
+              <tr className="bg-muted/40 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                <th className="px-2 py-2.5 whitespace-nowrap">{isAr ? 'المنتج / SKU' : 'Product / SKU'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{t('returns.table.returnRef') || 'Return # / Ref'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{t('returns.table.orderInfo') || 'Order Info'}</th>
+                <th className="px-2 py-2.5 text-center whitespace-nowrap">{t('returns.table.orderChannel') || 'Channel'}</th>
+                <th className="px-2 py-2.5 text-center whitespace-nowrap">{t('common.status') || 'Status'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{t('returns.table.reason') || (isAr ? 'سبب الإرجاع' : 'Return reason')}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{t('returns.table.externalStatus') || 'External Status'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap">{t('returns.table.returnLocation') || 'Return Location'}</th>
+                <th className="px-2 py-2.5 whitespace-nowrap align-top min-w-0">
                   <div className="flex flex-col gap-1">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                       {t('returns.table.reimbursement') || 'Reimbursement'}
                     </span>
                     <Select
                       value={reimbursementFilter}
                       onValueChange={(v) => setReimbursementFilter(v as 'all' | 'ready' | 'pending' | 'paid')}
                     >
-                      <SelectTrigger className="h-8 min-h-8 text-[10px] font-semibold normal-case tracking-normal border-border bg-muted/30">
+                      <SelectTrigger className="h-7 min-h-7 text-[10px] font-semibold normal-case tracking-normal border-border bg-muted/30">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-popover border-border text-popover-foreground">
@@ -909,10 +926,10 @@ export default function Returns() {
                     </Select>
                   </div>
                 </th>
-                <th className="px-3 sm:px-4 py-3 text-right whitespace-nowrap">{t('returns.table.refund') || 'Refund'}</th>
-                <th className="px-3 sm:px-4 py-3 text-right whitespace-nowrap">{t('returns.table.net') || 'Net'}</th>
-                <th className="px-3 sm:px-4 py-3 text-right whitespace-nowrap">{t('common.date') || 'Date'}</th>
-                <th className={cn('px-3 sm:px-4 py-3 w-12', STICKY_ACTIONS_CELL)}></th>
+                <th className="px-2 py-2.5 text-end whitespace-nowrap">{t('returns.table.refund') || 'Refund'}</th>
+                <th className="px-2 py-2.5 text-end whitespace-nowrap">{t('returns.table.net') || 'Net'}</th>
+                <th className="px-2 py-2.5 text-end whitespace-nowrap">{t('common.date') || 'Date'}</th>
+                <th className={cn('px-1 py-2.5 w-10', STICKY_ACTIONS_CELL)}></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -946,96 +963,101 @@ export default function Returns() {
                         }
                       }}
                     >
-                      <td className="px-3 sm:px-4 py-4 align-top">
-                        <GroupProductThumbs rows={group.rows} />
+                      <td className="px-2 py-2.5 align-top min-w-0">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <GroupProductThumbs rows={group.rows} />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-mono text-[10px] font-semibold truncate" title={skuSummary || undefined}>
+                              {skuSummary || '—'}
+                            </div>
+                            <div
+                              className="text-[10px] text-muted-foreground line-clamp-2 leading-snug"
+                              title={group.rows.map((x: any) => x.product_name).filter(Boolean).join(' · ') || undefined}
+                            >
+                              {group.rows.map((x: any) => x.product_name).filter(Boolean).slice(0, 2).join(' · ') || '—'}
+                              {group.rows.filter((x: any) => x.product_name).length > 2
+                                ? ` +${group.rows.filter((x: any) => x.product_name).length - 2}`
+                                : ''}
+                            </div>
+                          </div>
+                        </div>
                       </td>
-                      <td className="px-3 sm:px-4 py-4 align-top min-w-[140px] max-w-[min(28vw,260px)]">
-                        <div className="flex items-start gap-2">
+                      <td className="px-2 py-2.5 align-top min-w-0">
+                        <div className="flex items-start gap-1.5">
                           <ChevronDown
                             className={cn(
-                              'w-4 h-4 mt-0.5 shrink-0 text-muted-foreground transition-transform',
+                              'w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground transition-transform',
                               expanded ? 'rotate-180' : '',
                             )}
                             aria-hidden
                           />
                           <div className="min-w-0">
                             <div
-                              className="text-sm font-semibold text-foreground font-mono truncate"
+                              className="text-[11px] font-semibold text-foreground font-mono truncate"
                               title={group.orderKey}
                             >
                               {group.orderKey}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-[9px] text-muted-foreground">
                               {group.rows.length > 1
                                 ? (isAr
-                                  ? `${group.rows.length} حركات مرتبطة — اضغط للتفاصيل`
-                                  : `${group.rows.length} linked lines — expand for details`)
+                                  ? `${group.rows.length} حركات — اضغط للتفاصيل`
+                                  : `${group.rows.length} lines — expand`)
                                 : (isAr ? 'حركة واحدة' : 'Single line')}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 sm:px-4 py-4 align-top min-w-[160px] max-w-[min(32vw,280px)]">
-                        <div className="text-sm text-foreground font-medium truncate" title={head?.order?.order_number || ''}>
+                      <td className="px-2 py-2.5 align-top min-w-0">
+                        <div className="text-[11px] text-foreground font-medium truncate" title={head?.order?.order_number || ''}>
                           {head?.order?.order_number || '—'}
                         </div>
-                        <div className="text-xs text-muted-foreground truncate" title={head?.customer_name || ''}>
+                        <div className="text-[10px] text-muted-foreground truncate" title={head?.customer_name || ''}>
                           {head?.customer_name || (t('returns.walkIn') || 'Walk-in')}
                         </div>
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-center align-top">
-                        <Badge variant="outline" className="text-[10px] font-normal max-w-[min(28vw,200px)] truncate" title={channelSummary}>
+                      <td className="px-2 py-2.5 text-center align-top min-w-0">
+                        <Badge variant="outline" className="text-[9px] font-normal max-w-full truncate" title={channelSummary}>
                           {channelSummary}
                         </Badge>
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-center align-top">
+                      <td className="px-2 py-2.5 text-center align-top min-w-0">
                         <ReturnStatusBadgeGroup rows={group.rows} isAr={isAr} t={t} />
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-xs text-foreground align-top min-w-[100px] max-w-[min(22vw,200px)]">
+                      <td className="px-2 py-2.5 text-[10px] text-foreground align-top min-w-0">
                         <div className="truncate" title={reasonSummary.join(', ')}>
                           {reasonSummary.length ? reasonSummary.join(' · ') : '—'}
                         </div>
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-xs text-foreground align-top min-w-[120px] max-w-[min(24vw,220px)]">
+                      <td className="px-2 py-2.5 text-[10px] text-foreground align-top min-w-0">
                         <div className="truncate" title={extLabels.join(', ')}>
                           {extLabels.length ? extLabels.join(', ') : '—'}
                         </div>
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-xs text-foreground align-top min-w-[120px] max-w-[min(24vw,220px)]">
+                      <td className="px-2 py-2.5 text-[10px] text-foreground align-top min-w-0">
                         <div className="font-medium text-foreground truncate" title={locationSummary || undefined}>
                           {locationSummary || '—'}
                         </div>
-                        {locationSummary ? (
-                          <div className="text-[10px] text-muted-foreground mt-0.5">
-                            {t('returns.table.returnLocationHint') || (isAr ? 'مركز / وجهة الإرجاع' : 'FC / return dock')}
-                          </div>
-                        ) : null}
                       </td>
-                      <td className="px-3 sm:px-4 py-4 align-top font-mono text-[11px] text-foreground">
-                        <div className="truncate max-w-[min(28vw,200px)]" title={skuSummary || undefined}>
-                          {skuSummary || '—'}
-                        </div>
-                      </td>
-                      <td className="px-3 sm:px-4 py-4 align-top text-[11px]">
+                      <td className="px-2 py-2.5 align-top text-[10px] min-w-0">
                         <ReimbursementBadge rows={group.rows} isAr={isAr} t={t} mode="group" />
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-right font-bold text-red-500 align-top whitespace-nowrap">
-                        {group.totalRefund > 0 ? formatSignedCurrency(-group.totalRefund) : '0 EGP'}
-                        <div className="text-[10px] text-muted-foreground font-normal">{t('returns.table.refundHint') || 'Refunded to customer'}</div>
+                      <td className="px-2 py-2.5 text-end font-bold text-red-500 align-top whitespace-nowrap">
+                        {group.totalRefund > 0 ? formatSignedCurrency(-group.totalRefund) : '0'}
                       </td>
                       <td
                         className={cn(
-                          'px-3 sm:px-4 py-4 text-right font-bold align-top whitespace-nowrap',
+                          'px-2 py-2.5 text-end font-bold align-top whitespace-nowrap',
                           group.totalNet >= 0 ? 'text-emerald-500' : 'text-red-500',
                         )}
                       >
                         {formatSignedCurrency(group.totalNet)}
                       </td>
-                      <td className="px-3 sm:px-4 py-4 text-right text-xs text-muted-foreground align-top whitespace-nowrap">
+                      <td className="px-2 py-2.5 text-end text-[10px] text-muted-foreground align-top whitespace-nowrap">
                         {formatReturnDate(head)}
                       </td>
                       <td
-                        className={cn('px-3 sm:px-4 py-4 text-right align-top', STICKY_ACTIONS_CELL)}
+                        className={cn('px-1 py-2.5 text-end align-top', STICKY_ACTIONS_CELL)}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <ReturnGroupActionsMenu
@@ -1070,35 +1092,45 @@ export default function Returns() {
                                 }
                               }}
                             >
-                              <td className="px-3 sm:px-4 py-3 align-top">
-                                <ProductThumb
-                                  src={resolveReturnImage(r)}
-                                  alt={r.product_name || r.sku_code || ''}
-                                  size="sm"
-                                />
-                              </td>
-                              <td className="px-3 sm:px-4 py-3 align-top pl-10 min-w-[140px]">
-                                <div className="text-xs font-mono text-muted-foreground truncate" title={String(r.return_number || r.id)}>
-                                  #{String(r.return_number || r.id).slice(0, 14)}…
+                              <td className="px-2 py-2 align-top min-w-0 bg-muted/5">
+                                <div className="flex items-start gap-2 min-w-0 ps-2">
+                                  <ProductThumb
+                                    src={resolveReturnImage(r)}
+                                    alt={r.product_name || r.sku_code || ''}
+                                    size="sm"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-mono text-[10px] font-semibold truncate" title={r.sku_code || undefined}>
+                                      {r.sku_code || '—'}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground line-clamp-2" title={r.product_name || undefined}>
+                                      {r.product_name || '—'}
+                                    </div>
+                                  </div>
                                 </div>
                               </td>
-                              <td className="px-3 sm:px-4 py-3 align-top min-w-[140px]">
-                                <div className="text-[11px] text-foreground font-medium truncate" title={r.order?.order_number || ''}>
+                              <td className="px-2 py-2 align-top min-w-0 bg-muted/5">
+                                <div className="text-[10px] font-mono text-muted-foreground truncate" title={String(r.return_number || r.id)}>
+                                  #{String(r.return_number || r.id).slice(0, 16)}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2 align-top min-w-0 bg-muted/5">
+                                <div className="text-[10px] text-foreground font-medium truncate" title={r.order?.order_number || ''}>
                                   {r.order?.order_number || '—'}
                                 </div>
-                                <div className="text-[10px] text-muted-foreground truncate">{r.customer_name || (t('returns.walkIn') || 'Walk-in')}</div>
+                                <div className="text-[9px] text-muted-foreground truncate">{r.customer_name || (t('returns.walkIn') || 'Walk-in')}</div>
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-center align-top">
+                              <td className="px-2 py-2 text-center align-top bg-muted/5">
                                 <Badge
                                   variant="outline"
-                                  className="text-[10px] font-normal max-w-[min(28vw,200px)] truncate mx-auto block w-fit"
+                                  className="text-[9px] font-normal max-w-full truncate mx-auto block w-fit"
                                   title={channelLabelFromReturn(r)}
                                 >
                                   {channelLabelFromReturn(r)}
                                 </Badge>
                                 <div
                                   className={cn(
-                                    'text-[9px] mt-1 font-medium',
+                                    'text-[9px] mt-0.5 font-medium',
                                     r.return_type === 'stock' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
                                   )}
                                 >
@@ -1107,49 +1139,40 @@ export default function Returns() {
                                     : t('returns.type.damaged') || 'Damaged'}
                                 </div>
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-center align-top">
+                              <td className="px-2 py-2 text-center align-top bg-muted/5">
                                 <ReturnStatusBadges row={r} isAr={isAr} t={t} />
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-xs align-top max-w-[min(22vw,200px)]">
+                              <td className="px-2 py-2 text-[10px] align-top min-w-0 bg-muted/5">
                                 <div className="truncate" title={r.reason || undefined}>
                                   {formatReturnReasonLabel(r.reason, isAr)}
                                 </div>
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-xs align-top">
-                                <div className="truncate max-w-[min(24vw,220px)]">{r.external_status || '—'}</div>
+                              <td className="px-2 py-2 text-[10px] align-top min-w-0 bg-muted/5">
+                                <div className="truncate">{r.external_status || '—'}</div>
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-xs align-top">
-                                <div className="font-medium text-foreground truncate max-w-[min(24vw,220px)]" title={formatPhysicalReturnLocation(r) || undefined}>
+                              <td className="px-2 py-2 text-[10px] align-top min-w-0 bg-muted/5">
+                                <div className="font-medium text-foreground truncate" title={formatPhysicalReturnLocation(r) || undefined}>
                                   {formatPhysicalReturnLocation(r) || '—'}
                                 </div>
-                                {String(r.external_status || '').toLowerCase().includes('fba_returns') ? (
-                                  <div className="text-[9px] text-muted-foreground mt-0.5">FBA</div>
-                                ) : null}
                               </td>
-                              <td className="px-3 sm:px-4 py-3 align-top font-mono text-[11px]">
-                                <span className="truncate block max-w-[min(28vw,200px)]" title={r.sku_code || undefined}>
-                                  {r.sku_code || '—'}
-                                </span>
-                              </td>
-                              <td className="px-3 sm:px-4 py-3 align-top text-[11px]">
+                              <td className="px-2 py-2 align-top text-[10px] bg-muted/5">
                                 <ReimbursementBadge rows={[r]} isAr={isAr} t={t} mode="row" />
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-right text-sm text-red-500 font-semibold whitespace-nowrap">
-                                {refundAmount > 0 ? formatSignedCurrency(-refundAmount) : '0 EGP'}
+                              <td className="px-2 py-2 text-end text-[10px] text-red-500 font-semibold whitespace-nowrap bg-muted/5">
+                                {refundAmount > 0 ? formatSignedCurrency(-refundAmount) : '0'}
                               </td>
                               <td
                                 className={cn(
-                                  'px-3 sm:px-4 py-3 text-right text-sm font-semibold whitespace-nowrap',
+                                  'px-2 py-2 text-end text-[10px] font-semibold whitespace-nowrap bg-muted/5',
                                   netSettlement >= 0 ? 'text-emerald-500' : 'text-red-500',
                                 )}
                               >
                                 {formatSignedCurrency(netSettlement)}
                               </td>
-                              <td className="px-3 sm:px-4 py-3 text-right text-[10px] text-muted-foreground align-top whitespace-nowrap">
-                                <div>{t('returns.table.transactionDate') || 'Transaction'}: {formatTimestamp(txDate)}</div>
-                                <div>{t('returns.table.lastUpdate') || 'Updated'}: {formatTimestamp(r.last_update_date)}</div>
+                              <td className="px-2 py-2 text-end text-[9px] text-muted-foreground align-top whitespace-nowrap bg-muted/5">
+                                <div>{formatTimestamp(txDate)}</div>
                               </td>
-                              <td className={cn('px-3 sm:px-4 py-3 text-right align-top', STICKY_ACTIONS_CELL)} />
+                              <td className={cn('px-1 py-2 text-end align-top bg-muted/5', STICKY_ACTIONS_CELL)} />
                             </tr>
                           );
                         })
@@ -1159,6 +1182,7 @@ export default function Returns() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

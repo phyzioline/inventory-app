@@ -1,36 +1,47 @@
-import { Fragment } from 'react';
-import { Calendar, ChevronDown, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
 import type { TransferBatch } from '@/lib/transferBatchUtils';
-import { getBatchEndpoints, resolveProductLabel } from '@/lib/transferBatchUtils';
+import { TransferShipmentRow } from '@/components/inventory/TransferShipmentRow';
 
 type Props = {
   batches: TransferBatch[];
   isAr: boolean;
   t: (key: string) => string;
+  txById: Map<string, any>;
   resolveLocationName: (id: string) => string;
-  expandedBatches: Record<string, boolean>;
-  onToggleBatch: (key: string) => void;
-  onSelectTransfer: (id: string) => void;
+  onOpenBatch: (batch: TransferBatch) => void;
+  onEditItem?: (txId: string) => void;
 };
+
+function formatRelativeTime(date: Date, isAr: boolean): string {
+  const diffMs = Date.now() - date.getTime();
+  if (Number.isNaN(diffMs) || diffMs < 0) return '';
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return isAr ? 'الآن' : 'Just now';
+  if (mins < 60) return isAr ? `منذ ${mins} د` : `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return isAr ? `منذ ${hours} س` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return isAr ? `منذ ${days} ي` : `${days}d ago`;
+}
 
 export function TransferBatchesTable({
   batches,
   isAr,
   t,
+  txById,
   resolveLocationName,
-  expandedBatches,
-  onToggleBatch,
-  onSelectTransfer,
+  onOpenBatch,
+  onEditItem,
 }: Props) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
   if (batches.length === 0) {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground">
@@ -42,124 +53,35 @@ export function TransferBatchesTable({
   return (
     <Table>
       <TableHeader>
-        <TableRow>
-          <TableHead>{t('common.date')}</TableHead>
-          <TableHead>{t('table.product')}</TableHead>
-          <TableHead>{t('sales.qty')}</TableHead>
-          <TableHead>{t('table.warehouse')}</TableHead>
-          <TableHead>{t('adjustments.notes')}</TableHead>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="w-8" />
+          <TableHead className="min-w-[160px] text-xs">{isAr ? 'رقم الشحنة' : 'Shipment #'}</TableHead>
+          <TableHead className="w-[100px] text-xs">{isAr ? 'الحالة' : 'Status'}</TableHead>
+          <TableHead className="w-[130px] text-xs">{t('common.date')}</TableHead>
+          <TableHead className="w-[90px] text-xs">{isAr ? 'الشحن إلى' : 'Ship to'}</TableHead>
+          <TableHead className="w-[80px] text-center text-xs">{isAr ? 'SKU' : 'SKUs'}</TableHead>
+          <TableHead className="w-[80px] text-center text-xs">{isAr ? 'الوحدات' : 'Units'}</TableHead>
+          <TableHead className="w-[90px] text-center text-xs">{isAr ? 'عرض' : 'View'}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {batches.map((batch) => {
-          const open = !!expandedBatches[batch.key];
-          const Icon = open ? ChevronDown : ChevronRight;
-          const createdAt = new Date(batch.created_at || 0);
-          const dateStr = Number.isNaN(createdAt.getTime())
-            ? '—'
-            : createdAt.toLocaleDateString(isAr ? 'ar-EG' : 'en-US');
-          const timeStr = Number.isNaN(createdAt.getTime())
-            ? ''
-            : createdAt.toLocaleTimeString(isAr ? 'ar-EG' : 'en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-          const { fromName, toName } = getBatchEndpoints(batch, resolveLocationName);
-
-          const mainRow = (
-            <TableRow
-              key={batch.key}
-              className="cursor-pointer hover:bg-muted/50"
-              onClick={() => onToggleBatch(batch.key)}
-            >
-              <TableCell className="font-medium">
-                <div className="flex items-center gap-2">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
-                  <Calendar className="h-3 w-3 text-muted-foreground" />
-                  {dateStr}
-                </div>
-                {timeStr ? <div className="text-xs text-muted-foreground">{timeStr}</div> : null}
-              </TableCell>
-              <TableCell>
-                <span className="font-semibold">
-                  {batch.items.length} {t('table.product')}
-                </span>
-                <p className="text-xs text-muted-foreground">
-                  {batch.items
-                    .slice(0, 2)
-                    .map((tx) => `${tx.sku?.sku || '-'} · ${resolveProductLabel(tx)}`)
-                    .join(' ، ')}
-                  {batch.items.length > 2 ? ` +${batch.items.length - 2}` : ''}
-                </p>
-              </TableCell>
-              <TableCell>
-                <Badge variant="outline" className="px-2 py-0.5 text-base font-bold">
-                  {batch.totalQty}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <div className="flex flex-col gap-1 text-sm">
-                  <div className="flex items-center gap-1 text-muted-foreground">
-                    {t('transfers.from')}:{' '}
-                    <span className="font-medium text-foreground">{fromName || '—'}</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-muted-foreground">
-                    {t('transfers.to')}:{' '}
-                    <span className="font-medium text-foreground">{toName || '—'}</span>
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell className="max-w-[260px] truncate text-sm text-muted-foreground">
-                {batch.userNotes || '—'}
-              </TableCell>
-            </TableRow>
-          );
-
-          if (!open) return mainRow;
-
-          return (
-            <Fragment key={`${batch.key}-group`}>
-              {mainRow}
-              <TableRow className="bg-muted/10">
-                <TableCell colSpan={5} className="p-0">
-                  <div className="px-6 py-4">
-                    <Table className="rounded-md border bg-background shadow-sm">
-                      <TableHeader className="bg-muted/30">
-                        <TableRow>
-                          <TableHead>SKU</TableHead>
-                          <TableHead>{t('table.product')}</TableHead>
-                          <TableHead className="text-end">{t('sales.qty')}</TableHead>
-                          <TableHead>{t('transfers.from')}</TableHead>
-                          <TableHead>{t('transfers.to')}</TableHead>
-                          <TableHead>{t('adjustments.notes')}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {batch.items.map((tx) => (
-                          <TableRow
-                            key={tx.id}
-                            className="cursor-pointer hover:bg-muted/20"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectTransfer(String(tx.id));
-                            }}
-                          >
-                            <TableCell className="font-mono text-xs">{tx.sku?.sku || '—'}</TableCell>
-                            <TableCell className="text-xs">{resolveProductLabel(tx)}</TableCell>
-                            <TableCell className="text-end font-mono text-xs">{tx.quantity}</TableCell>
-                            <TableCell className="text-xs">{fromName || '—'}</TableCell>
-                            <TableCell className="text-xs">{toName || '—'}</TableCell>
-                            <TableCell className="text-xs text-muted-foreground">{tx.notes || '—'}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </TableCell>
-              </TableRow>
-            </Fragment>
-          );
-        })}
+        {batches.map((batch, index) => (
+          <TransferShipmentRow
+            key={batch.key}
+            batch={batch}
+            isAr={isAr}
+            isCompact={false}
+            isLatest={index === 0}
+            isOpen={expandedKey === batch.key}
+            t={t}
+            txById={txById}
+            resolveLocationName={resolveLocationName}
+            onToggle={() => setExpandedKey(expandedKey === batch.key ? null : batch.key)}
+            onOpenBatch={onOpenBatch}
+            onEditItem={onEditItem}
+            formatRelativeTime={formatRelativeTime}
+          />
+        ))}
       </TableBody>
     </Table>
   );

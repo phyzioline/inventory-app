@@ -28,7 +28,6 @@ export default function Transfers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTransferId, setSelectedTransferId] = useState<string | null>(null);
   const [previewBatch, setPreviewBatch] = useState<TransferBatch | null>(null);
-  const [expandedOtherBatches, setExpandedOtherBatches] = useState<Record<string, boolean>>({});
 
   const { data: transfers, isLoading } = useQuery({
     queryKey: ['transfers'],
@@ -56,7 +55,18 @@ export default function Transfers() {
     return locationNameById.get(s) || `Location #${s}`;
   };
 
-  const batches = useMemo(() => buildTransferBatches(transfers), [transfers]);
+  const batches = useMemo(() => {
+    const rows = Array.isArray(transfers) ? transfers : [];
+    // Lane list uses OUT legs only; IN legs stay in txById for dest SKU/image pairing.
+    const outOnly = rows.filter((tx: any) => {
+      const type = String(tx?.type || '').toUpperCase();
+      const notes = String(tx?.notes || '');
+      if (type === 'IN' && /Transfer\s+IN/i.test(notes)) return false;
+      if (type === 'IN' && /^transfer_in/i.test(String(tx?.reference_type || ''))) return false;
+      return true;
+    });
+    return buildTransferBatches(outOnly);
+  }, [transfers]);
 
   const filteredBatches = useMemo(
     () => batches.filter((batch) => batchMatchesSearch(batch, searchQuery, resolveLocationName)),
@@ -183,8 +193,10 @@ export default function Transfers() {
             batches={batchesByLane[lane.id]}
             isAr={isAr}
             t={t}
+            txById={txById}
             layout="row"
             onOpenBatch={setPreviewBatch}
+            onEditItem={(txId) => setSelectedTransferId(txId)}
             resolveLocationName={resolveLocationName}
           />
         ))}
@@ -203,12 +215,10 @@ export default function Transfers() {
               batches={unassignedBatches}
               isAr={isAr}
               t={t}
+              txById={txById}
               resolveLocationName={resolveLocationName}
-              expandedBatches={expandedOtherBatches}
-              onToggleBatch={(key) =>
-                setExpandedOtherBatches((prev) => ({ ...prev, [key]: !prev[key] }))
-              }
-              onSelectTransfer={setSelectedTransferId}
+              onOpenBatch={setPreviewBatch}
+              onEditItem={(txId) => setSelectedTransferId(txId)}
             />
           </CardContent>
         </Card>

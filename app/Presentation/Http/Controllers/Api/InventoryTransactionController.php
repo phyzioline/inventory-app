@@ -206,7 +206,9 @@ class InventoryTransactionController extends Controller
     public function index(Request $request)
     {
         $relations = ['sku', 'location'];
-        if ($request->has('type') && strtoupper((string) $request->type) === 'TRANSFER') {
+        $typeFilter = $request->has('type') ? strtoupper((string) $request->type) : null;
+        if ($typeFilter === 'TRANSFER') {
+            // Include both legs: OUT (type=TRANSFER) and matching IN receipts.
             $relations = ['sku.offer.masterProduct', 'sku.channel', 'location'];
         }
 
@@ -218,7 +220,18 @@ class InventoryTransactionController extends Controller
         if ($request->has('location_id')) {
             $query->where('location_id', $request->location_id);
         }
-        if ($request->has('type')) {
+        if ($typeFilter === 'TRANSFER') {
+            $query->where(function ($q) {
+                $q->where('type', 'TRANSFER')
+                    ->orWhere(function ($q2) {
+                        $q2->where('type', 'IN')
+                            ->where(function ($q3) {
+                                $q3->where('notes', 'ilike', 'Transfer IN%')
+                                    ->orWhere('reference_type', 'ilike', 'transfer_in%');
+                            });
+                    });
+            });
+        } elseif ($request->has('type')) {
             $query->where('type', $request->type);
         }
 

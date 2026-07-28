@@ -170,7 +170,7 @@ export function Sidebar({
   }, [isMobile, collapsed]);
 
   useEffect(() => {
-    const autoCollapseRoutes = ['/inventory/transfers', '/customers-suppliers'];
+    const autoCollapseRoutes = ['/inventory/transfers', '/customers-suppliers', '/returns'];
     if (!isMobile && autoCollapseRoutes.some((path) => location.pathname.startsWith(path))) {
       setCollapsed(true);
     }

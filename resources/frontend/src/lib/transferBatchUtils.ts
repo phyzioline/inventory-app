@@ -102,6 +102,13 @@ export function resolveProductLabel(tx: any): string {
   );
 }
 
+/** Prefer the channel listing name (SKU.name) — critical for FBA/Amazon review. */
+export function resolveSkuListingLabel(tx: any): string {
+  const listing = String(tx?.sku?.name || '').trim();
+  if (listing) return listing;
+  return resolveProductLabel(tx);
+}
+
 export function batchMatchesSearch(
   batch: TransferBatch,
   query: string,
