@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { TransferBatch } from '@/lib/transferBatchUtils';
 import { resolveProductLabel } from '@/lib/transferBatchUtils';
+import { parseBatchShipmentLabel } from '@/lib/transferBatchPreview';
 import type { TransferLane } from '@/lib/transferLanes';
 
 interface TransferLaneColumnProps {
@@ -122,6 +123,9 @@ export function TransferLaneColumn({
             <TableHead className={cn(isCompact ? 'w-[110px]' : 'w-[130px]', 'text-xs')}>
               {t('common.date')}
             </TableHead>
+            <TableHead className={cn(isCompact ? 'w-[120px]' : 'w-[150px]', 'text-xs')}>
+              {isAr ? 'رقم الشحنة' : 'Shipment #'}
+            </TableHead>
             <TableHead className="text-xs">{t('table.product')}</TableHead>
             <TableHead className={cn('text-xs text-end', isCompact ? 'w-[72px]' : 'w-[88px]')}>
               {t('sales.qty')}
@@ -133,6 +137,7 @@ export function TransferLaneColumn({
           {batches.map((batch, index) => {
             const createdAt = new Date(batch.created_at || 0);
             const isLatest = index === 0;
+            const shipmentLabel = parseBatchShipmentLabel(batch);
             const toName =
               batch.direction === 'IN'
                 ? batch.location?.name || ''
@@ -177,6 +182,11 @@ export function TransferLaneColumn({
                       {formatRelativeTime(createdAt, isAr)}
                     </div>
                   )}
+                </TableCell>
+                <TableCell className={cn('py-2 font-mono text-[10px]', isCompact && 'py-1.5')}>
+                  <span className="line-clamp-2 font-semibold" title={shipmentLabel}>
+                    {shipmentLabel}
+                  </span>
                 </TableCell>
                 <TableCell className={cn('py-2', isCompact && 'py-1.5')}>
                   <span className="text-xs font-semibold">

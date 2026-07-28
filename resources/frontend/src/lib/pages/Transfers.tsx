@@ -14,7 +14,8 @@ import { TransferDetailsDialog } from '@/components/inventory/TransferDetailsDia
 import { TransferBatchPreviewDialog } from '@/components/inventory/TransferBatchPreviewDialog';
 import { TransferLaneColumn } from '@/components/inventory/TransferLaneColumn';
 import { buildTransferBatches, batchMatchesSearch, type TransferBatch } from '@/lib/transferBatchUtils';
-import { TRANSFER_LANES, groupBatchesByLane } from '@/lib/transferLanes';
+import { TransferBatchesTable } from '@/components/inventory/TransferBatchesTable';
+import { TRANSFER_LANES, getUnassignedBatches, groupBatchesByLane } from '@/lib/transferLanes';
 
 export default function Transfers() {
   const { t, language } = useLanguage();
@@ -27,6 +28,7 @@ export default function Transfers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTransferId, setSelectedTransferId] = useState<string | null>(null);
   const [previewBatch, setPreviewBatch] = useState<TransferBatch | null>(null);
+  const [expandedOtherBatches, setExpandedOtherBatches] = useState<Record<string, boolean>>({});
 
   const { data: transfers, isLoading } = useQuery({
     queryKey: ['transfers'],
@@ -74,10 +76,12 @@ export default function Transfers() {
     return map;
   }, [transfers]);
 
-  const unassignedCount = useMemo(() => {
-    const assigned = TRANSFER_LANES.reduce((sum, lane) => sum + batchesByLane[lane.id].length, 0);
-    return filteredBatches.length - assigned;
-  }, [filteredBatches, batchesByLane]);
+  const unassignedBatches = useMemo(
+    () => getUnassignedBatches(filteredBatches, locations, resolveLocationName),
+    [filteredBatches, locations, locationNameById],
+  );
+
+  const unassignedCount = unassignedBatches.length;
 
   const invalidateTransferQueries = () => {
     queryClient.invalidateQueries({ queryKey: ['transfers'] });
@@ -111,7 +115,7 @@ export default function Transfers() {
         onOpenChange={(open) => {
           if (!open) setPreviewBatch(null);
         }}
-        onSelectItem={(txId) => setSelectedTransferId(txId)}
+        onEditItem={(txId) => setSelectedTransferId(txId)}
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -169,13 +173,6 @@ export default function Transfers() {
             />
           </div>
         </CardHeader>
-        {unassignedCount > 0 && !searchQuery && (
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">
-              {t('transfers.lane.unassigned').replace('{count}', String(unassignedCount))}
-            </p>
-          </CardContent>
-        )}
       </Card>
 
       <div className="flex flex-col gap-3">
@@ -192,6 +189,30 @@ export default function Transfers() {
           />
         ))}
       </div>
+
+      {unassignedBatches.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle>{t('transfers.otherRoutesTitle')}</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {t('transfers.otherRoutesHint').replace('{count}', String(unassignedCount))}
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <TransferBatchesTable
+              batches={unassignedBatches}
+              isAr={isAr}
+              t={t}
+              resolveLocationName={resolveLocationName}
+              expandedBatches={expandedOtherBatches}
+              onToggleBatch={(key) =>
+                setExpandedOtherBatches((prev) => ({ ...prev, [key]: !prev[key] }))
+              }
+              onSelectTransfer={setSelectedTransferId}
+            />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

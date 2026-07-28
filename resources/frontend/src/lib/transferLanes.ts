@@ -141,3 +141,18 @@ export function groupBatchesByLane(
 
   return grouped;
 }
+
+export function getUnassignedBatches(
+  batches: TransferBatch[],
+  locations: any[],
+  resolveLocationName: (id: string) => string,
+): TransferBatch[] {
+  const assignedKeys = new Set<string>();
+  const grouped = groupBatchesByLane(batches, locations, resolveLocationName);
+  for (const lane of TRANSFER_LANES) {
+    for (const batch of grouped[lane.id]) {
+      assignedKeys.add(batch.key);
+    }
+  }
+  return batches.filter((batch) => !assignedKeys.has(batch.key));
+}

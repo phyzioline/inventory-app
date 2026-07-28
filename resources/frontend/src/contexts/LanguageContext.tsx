@@ -1238,6 +1238,8 @@ const translations: Record<Language, Record<string, string>> = {
     'transfers.lane.lastUpload': 'Last upload',
     'transfers.lane.empty': 'No transfers in this lane yet',
     'transfers.lane.unassigned': '{count} transfer(s) from other routes are not shown in these lanes',
+    'transfers.otherRoutesTitle': 'Other transfer routes',
+    'transfers.otherRoutesHint': '{count} transfer(s) from routes outside the four lanes above',
     'transfers.fbaRequest': 'FBA request transactions',
     'transfers.fbaRequestDesc':
       'Upload the Amazon shipment TSV, match MSKU/ASIN to your store SKUs, preview quantities, then transfer stock to the selected FBA warehouse.',
@@ -2698,6 +2700,8 @@ const translations: Record<Language, Record<string, string>> = {
     'transfers.lane.lastUpload': 'آخر رفع',
     'transfers.lane.empty': 'لا توجد تحويلات في هذا المسار بعد',
     'transfers.lane.unassigned': '{count} تحويل من مسارات أخرى غير معروضة هنا',
+    'transfers.otherRoutesTitle': 'تحويلات مسارات أخرى',
+    'transfers.otherRoutesHint': '{count} تحويل من مسارات خارج الأعمدة الأربعة أعلاه',
     'transfers.fbaRequest': 'تحويل طلب FBA',
     'transfers.fbaRequestDesc':
       'ارفع ملف شحنة Amazon (TSV)، طابق MSKU/ASIN مع منتجات المتجر، راجع الكميات، ثم سجّل التحويل إلى مستودع FBA المختار.',
