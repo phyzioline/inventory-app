@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { GlobalFetchingIndicator } from '@/components/GlobalFetchingIndicator';
 
 export function AppLayout() {
   const isMobile = useIsMobile();
@@ -16,6 +17,7 @@ export function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      <GlobalFetchingIndicator />
       {/* Sidebar */}
       <Sidebar
         isMobile={isMobile}

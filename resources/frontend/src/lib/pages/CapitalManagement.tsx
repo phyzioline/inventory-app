@@ -733,18 +733,13 @@ export default function CapitalManagement() {
     deleteMutation.mutate(source.id);
   };
 
-  if (
-    loadingSources
-    || financialSnapshotPending
-    || cashFlowStatsPending
-    || supplierSummariesPending
-    || customerSummariesPending
-  ) {
+  /** Only block on lightweight treasury truth — heavy lists (orders, purchases, N+1 summaries) load in background. */
+  if (cashFlowStatsPending) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-muted-foreground">
         <Loader2 className="w-12 h-12 animate-spin text-primary" />
         <p className="text-sm">
-          {isAr ? 'جاري تحميل بيانات اللوحة المالية…' : 'Loading financial dashboard data…'}
+          {isAr ? 'جاري تحميل بيانات الخزنة…' : 'Loading treasury data…'}
         </p>
       </div>
     );
@@ -816,6 +811,12 @@ export default function CapitalManagement() {
 
         {/* ===== OVERVIEW TAB ===== */}
         <TabsContent value="overview" className="space-y-6 mt-6">
+          {(financialSnapshotPending || loadingSources) && (
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
+              {isAr ? 'جاري تحميل تفاصيل اللوحة المالية…' : 'Loading financial details…'}
+            </p>
+          )}
           {/* Net Real Capital Banner */}
           <Card className="glass-card border-2 border-primary/30">
             <CardContent className="pt-6">

@@ -9,6 +9,7 @@ import {
   resolveMasterProduct,
   resolvePurchaseUnitCost,
 } from '@/lib/channelInventoryMetrics';
+import { DataLoadingState } from '@/components/DataLoadingState';
 import { productService } from '@/lib/supabase-services';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
@@ -186,7 +187,7 @@ export default function ChannelDetail() {
   });
 
   // 2. KPI totals (cheap count — do not load all SKUs)
-  const { data: channelSummary, isFetching: fetchingSummary } = useQuery({
+  const { data: channelSummary, isFetching: fetchingSummary, isLoading: loadingSummary } = useQuery({
     queryKey: ['channel-sku-summary', channel?.id],
     queryFn: async () => api.get(`/skus/channel-summary?channel_id=${channel.id}`),
     enabled: !!channel?.id && !includeGeneral,
@@ -289,6 +290,8 @@ export default function ChannelDetail() {
     };
   }, [includeGeneral, skus, channelSummary, skuPage?.total]);
 
+  const summaryPending = !includeGeneral && (loadingSummary || (fetchingSummary && !channelSummary));
+
   const filteredSkus = useMemo(() => {
     // Search + link filter are applied server-side; keep client sort on the current page.
     return [...skus].sort((a: any, b: any) => {
@@ -315,6 +318,7 @@ export default function ChannelDetail() {
   const totalFiltered = Number(skuPage?.total ?? filteredSkus.length);
   const totalPages = Math.max(1, Number(skuPage?.last_page ?? 1));
   const pagedSkus = filteredSkus;
+  const listPending = Boolean(fetchingSkus && pagedSkus.length === 0);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -551,8 +555,17 @@ export default function ChannelDetail() {
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{stat.title}</p>
                   <h3 className="text-2xl font-bold mt-1 font-mono">
-                    {stat.value} 
-                    {stat.unit && <span className="text-sm font-normal text-muted-foreground ml-1">{stat.unit}</span>}
+                    {summaryPending ? (
+                      <span className="inline-flex items-center gap-2 text-base font-medium text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        جاري التحميل...
+                      </span>
+                    ) : (
+                      <>
+                        {stat.value}
+                        {stat.unit && <span className="text-sm font-normal text-muted-foreground ml-1">{stat.unit}</span>}
+                      </>
+                    )}
                   </h3>
                 </div>
                 <stat.icon className={`h-8 w-8 text-${stat.color}-500 opacity-20`} />
@@ -731,21 +744,21 @@ export default function ChannelDetail() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pagedSkus.length === 0 ? (
+              {listPending ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-center py-10">
+                    <DataLoadingState />
+                  </TableCell>
+                </TableRow>
+              ) : pagedSkus.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3">
                       <Package className="w-12 h-12 text-slate-200" />
-                      <p className="text-muted-foreground">
-                        {fetchingSkus
-                          ? 'جاري تحميل المنتجات...'
-                          : 'لا توجد منتجات مطابقة في هذه القناة.'}
-                      </p>
-                      {!fetchingSkus && (
-                        <Button variant="outline" onClick={() => setIsImportSkusOpen(true)}>
-                          ابدأ بالاستيراد
-                        </Button>
-                      )}
+                      <p className="text-muted-foreground">لا توجد منتجات مطابقة في هذه القناة.</p>
+                      <Button variant="outline" onClick={() => setIsImportSkusOpen(true)}>
+                        ابدأ بالاستيراد
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>

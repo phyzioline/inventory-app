@@ -870,7 +870,14 @@ export default function Returns() {
       </Collapsible>
 
       <div className="w-full min-w-0 bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-        {orderGroups.length === 0 ? (
+        {isFetching && orderGroups.length === 0 ? (
+          <div className="py-20">
+            <div className="flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              <p className="text-sm animate-pulse">{t('common.loading') || (isAr ? 'جاري التحميل...' : 'Loading...')}</p>
+            </div>
+          </div>
+        ) : orderGroups.length === 0 ? (
           <div className="py-20 text-center space-y-4">
             <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto border border-border">
               <RotateCw className="w-8 h-8 text-muted-foreground" />

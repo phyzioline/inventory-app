@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Application\Services\ChannelStockResolver;
+use App\Application\Services\InventoryValuationService;
+use App\Application\Services\ProfitEngineService;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryAdjustment;
 use App\Domain\Models\Wms\InventoryLocation;
@@ -15,6 +17,11 @@ use App\Domain\Models\Wms\SkuInventory;
 
 class SkuController extends Controller
 {
+    public function __construct(
+        private readonly InventoryValuationService $valuation,
+        private readonly ProfitEngineService $profitEngine,
+    ) {}
+
     /**
      * Quantity for channel SKU listing: this channel's warehouse only.
      *
@@ -100,41 +107,7 @@ class SkuController extends Controller
             return response()->json(['message' => 'channel_id is required'], 422);
         }
 
-        $base = Sku::query()->where('channel_id', $channelId);
-        $products = (clone $base)->count();
-        $unlinked = (clone $base)->where(function ($q) {
-            $q->whereNull('offer_id')->orWhere('offer_id', 0);
-        })->count();
-
-        $pieces = 0.0;
-        $purchaseCost = 0.0;
-        $sellingValue = 0.0;
-
-        // Merchant listings show store sellable in the row UI; KPI "pieces" stays 0 (virtual channel).
-        if (! ChannelStockResolver::deductsFromMainStoreBucket($channelId)) {
-            $locationIds = ChannelStockResolver::resolveLocationIdsForChannel($channelId);
-            if ($locationIds !== []) {
-                $agg = DB::table('skus')
-                    ->join('sku_inventory as si', 'si.sku_id', '=', 'skus.id')
-                    ->where('skus.channel_id', $channelId)
-                    ->whereIn('si.location_id', $locationIds)
-                    ->selectRaw('COALESCE(SUM(si.quantity), 0) as pieces')
-                    ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(skus.cost_price, 0)), 0) as purchase_cost')
-                    ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(skus.selling_price, 0)), 0) as selling_value')
-                    ->first();
-                $pieces = (float) ($agg->pieces ?? 0);
-                $purchaseCost = (float) ($agg->purchase_cost ?? 0);
-                $sellingValue = (float) ($agg->selling_value ?? 0);
-            }
-        }
-
-        return response()->json([
-            'products' => $products,
-            'unlinked' => $unlinked,
-            'pieces' => $pieces,
-            'purchaseCost' => $purchaseCost,
-            'sellingValue' => $sellingValue,
-        ]);
+        return response()->json($this->valuation->channelCardMetrics($channelId));
     }
 
     /**
@@ -155,6 +128,14 @@ class SkuController extends Controller
         $storeAvailByListingId = $deductsFromStore
             ? ChannelStockResolver::batchStoreAvailableForListingSkus($rows)
             : [];
+
+        $masterIds = $rows
+            ->map(fn (Sku $sku) => (int) ($sku->offer?->master_product_id ?? 0))
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $batchCosts = $this->profitEngine->averagePurchaseUnitCostByMasterProductIds($masterIds);
 
         $masterTotalsById = [];
         if ($channelId > 0 && $scopedLocationId >= 0 && ! $deductsFromStore) {
@@ -192,9 +173,15 @@ class SkuController extends Controller
             $channelId,
             $linkedLocationByChannelId,
             $deductsFromStore,
-            $storeAvailByListingId
+            $storeAvailByListingId,
+            $batchCosts
         ) {
             $data = $sku->toArray();
+            $master = $sku->offer?->masterProduct;
+            $effectiveUnit = $this->profitEngine->resolveEffectiveUnitCost($master, $sku, $batchCosts);
+            if ($effectiveUnit > 0) {
+                $data['effective_purchase_unit_cost'] = round($effectiveUnit, 4);
+            }
             if ($sku->offer && $sku->offer->master_product_id) {
                 if (! isset($data['offer']) || ! is_array($data['offer'])) {
                     $data['offer'] = $sku->offer->toArray();

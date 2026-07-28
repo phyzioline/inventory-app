@@ -647,8 +647,9 @@ export default function Orders() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
         <Loader2 className="w-12 h-12 animate-spin text-primary" />
+        <p className="text-muted-foreground animate-pulse">{isAr ? 'جاري التحميل...' : 'Loading...'}</p>
       </div>
     );
   }
