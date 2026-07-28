@@ -535,11 +535,11 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
             <p className="text-xs text-muted-foreground">{t('customers.collected')}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-green-200 bg-green-50/80 dark:border-green-900 dark:bg-green-950/40">
           <CardContent className={cn('space-y-1', embedded ? 'pt-4' : 'pt-6')}>
-            <p className={cn('font-bold tabular-nums', embedded ? 'text-base' : 'text-xl')}>{totals.outstanding.toLocaleString()} EGP</p>
-            <p className="text-xs text-muted-foreground">{t('customers.outstanding')}</p>
-            {!embedded && <p className="text-[11px] text-muted-foreground leading-snug pt-1">{t('customers.outstandingHint')}</p>}
+            <p className={cn('font-bold tabular-nums text-green-700 dark:text-green-400', embedded ? 'text-base' : 'text-xl')}>{totals.outstanding.toLocaleString()} EGP</p>
+            <p className="text-xs text-green-700/80 dark:text-green-400/80">{t('customers.outstanding')}</p>
+            {!embedded && <p className="text-[11px] text-green-700/70 dark:text-green-400/70 leading-snug pt-1">{t('customers.outstandingHint')}</p>}
           </CardContent>
         </Card>
         <Card>

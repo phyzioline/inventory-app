@@ -12,6 +12,27 @@ alwaysApply: true
 | Remote | `inventory-app.git` | `laravel-phyzio.git` |
 | URL | `inventory.phyzioline.com` | `phyzioline.com` |
 
+## Git clone / remote (inventory-app)
+
+| Method | Command / URL |
+|--------|----------------|
+| **HTTPS** | `https://github.com/phyzioline/inventory-app.git` |
+| **SSH** | `git@github.com:phyzioline/inventory-app.git` |
+| **GitHub CLI** | `gh repo clone phyzioline/inventory-app` |
+
+Server path: `/home/phyzioline-inventory/htdocs/inventory.phyzioline.com`
+
+```bash
+# HTTPS (current origin)
+git remote set-url origin https://github.com/phyzioline/inventory-app.git
+
+# SSH (needs deploy key on this server)
+git remote set-url origin git@github.com:phyzioline/inventory-app.git
+
+# Fresh clone
+gh repo clone phyzioline/inventory-app
+```
+
 Before `git commit` / `git push` / claims about `Modules/Ecommerce` / clinics:
 
 ```bash
