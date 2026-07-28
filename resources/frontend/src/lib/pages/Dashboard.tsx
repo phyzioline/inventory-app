@@ -319,7 +319,7 @@ export default function Dashboard() {
       subtitle: isAr ? 'مين عليه فلوس؟' : 'Who owes you?',
       icon: Users,
       tone: 'from-blue-500/15 to-cyan-500/10',
-      onClick: () => navigate('/customers'),
+      onClick: () => navigate('/customers-suppliers'),
     },
     {
       key: 'suppliers',
@@ -327,7 +327,7 @@ export default function Dashboard() {
       subtitle: isAr ? 'مين ليه فلوس؟' : 'Who you owe?',
       icon: Building2,
       tone: 'from-amber-500/15 to-yellow-500/10',
-      onClick: () => navigate('/suppliers'),
+      onClick: () => navigate('/customers-suppliers'),
     },
     {
       key: 'profit-period',

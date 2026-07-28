@@ -22,6 +22,7 @@ import {
 } from '@/lib/statementLedgerLabels';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 type SupplierAccount = {
   supplier: any;
@@ -61,7 +62,11 @@ function getOutstandingCell(summary: SupplierAccountSummary) {
   };
 }
 
-export default function SuppliersPage() {
+interface SuppliersPageProps {
+  embedded?: boolean;
+}
+
+export default function SuppliersPage({ embedded = false }: SuppliersPageProps) {
   const { language, dir, t } = useLanguage();
   const isAr = language === 'ar';
   const queryClient = useQueryClient();
@@ -448,32 +453,34 @@ export default function SuppliersPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className={cn('flex items-center justify-center', embedded ? 'min-h-[200px]' : 'min-h-[400px]')}>
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6" dir={dir}>
-      <div className="flex items-center justify-between">
+    <div className={cn('space-y-6', embedded && 'space-y-3')} dir={dir}>
+      <div className={cn('flex items-center justify-between', embedded && 'gap-2')}>
         <div>
-          <h1 className="text-2xl font-bold">{isAr ? 'الموردين' : 'Suppliers'}</h1>
-          <p className="text-muted-foreground">{isAr ? 'عرض محاسبي: فواتير ومدفوعات ودفتر حساب' : 'Accounting view: invoices, payments, and ledger'}</p>
+          <h1 className={cn('font-bold', embedded ? 'text-lg' : 'text-2xl')}>{isAr ? 'الموردين' : 'Suppliers'}</h1>
+          {!embedded && (
+            <p className="text-muted-foreground">{isAr ? 'عرض محاسبي: فواتير ومدفوعات ودفتر حساب' : 'Accounting view: invoices, payments, and ledger'}</p>
+          )}
         </div>
-        <Button onClick={() => setIsAddSupplierOpen(true)}>{isAr ? 'إضافة مورد' : 'Add Supplier'}</Button>
+        <Button size={embedded ? 'sm' : 'default'} onClick={() => setIsAddSupplierOpen(true)}>{isAr ? 'إضافة مورد' : 'Add Supplier'}</Button>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">{isAr ? 'إجمالي المشتريات' : 'Total Purchases'}</p><p className="text-xl font-bold">{summariesPending ? '—' : `${totals.totalPurchases.toLocaleString()} EGP`}</p></CardContent></Card>
-        <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">{isAr ? 'إجمالي المدفوع' : 'Total Paid'}</p><p className="text-xl font-bold">{summariesPending ? '—' : `${totals.totalPaid.toLocaleString()} EGP`}</p></CardContent></Card>
-        <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">{isAr ? 'الرصيد المستحق' : 'Outstanding'}</p><p className="text-xl font-bold">{summariesPending ? '—' : `${totals.outstanding.toLocaleString()} EGP`}</p></CardContent></Card>
-        <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">{isAr ? 'عدد الفواتير' : 'Invoices'}</p><p className="text-xl font-bold">{summariesPending ? '—' : totals.invoiceCount}</p></CardContent></Card>
+      <div className={cn('grid gap-4', embedded ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-4')}>
+        <Card><CardContent className={embedded ? 'pt-4' : 'pt-6'}><p className="text-xs text-muted-foreground">{isAr ? 'إجمالي المشتريات' : 'Total Purchases'}</p><p className={cn('font-bold', embedded ? 'text-base' : 'text-xl')}>{summariesPending ? '—' : `${totals.totalPurchases.toLocaleString()} EGP`}</p></CardContent></Card>
+        <Card><CardContent className={embedded ? 'pt-4' : 'pt-6'}><p className="text-xs text-muted-foreground">{isAr ? 'إجمالي المدفوع' : 'Total Paid'}</p><p className={cn('font-bold', embedded ? 'text-base' : 'text-xl')}>{summariesPending ? '—' : `${totals.totalPaid.toLocaleString()} EGP`}</p></CardContent></Card>
+        <Card><CardContent className={embedded ? 'pt-4' : 'pt-6'}><p className="text-xs text-muted-foreground">{isAr ? 'الرصيد المستحق' : 'Outstanding'}</p><p className={cn('font-bold', embedded ? 'text-base' : 'text-xl')}>{summariesPending ? '—' : `${totals.outstanding.toLocaleString()} EGP`}</p></CardContent></Card>
+        <Card><CardContent className={embedded ? 'pt-4' : 'pt-6'}><p className="text-xs text-muted-foreground">{isAr ? 'عدد الفواتير' : 'Invoices'}</p><p className={cn('font-bold', embedded ? 'text-base' : 'text-xl')}>{summariesPending ? '—' : totals.invoiceCount}</p></CardContent></Card>
       </div>
 
       <Card>
-        <CardHeader className="space-y-3">
-          <CardTitle>{isAr ? 'جدول الموردين' : 'Suppliers Table'}</CardTitle>
+        <CardHeader className={embedded ? 'space-y-2 p-4' : 'space-y-3'}>
+          <CardTitle className={embedded ? 'text-base' : undefined}>{isAr ? 'جدول الموردين' : 'Suppliers Table'}</CardTitle>
           <div className="flex flex-wrap gap-2">
             <div className="relative w-full md:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -489,7 +496,8 @@ export default function SuppliersPage() {
             <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-44" />
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className={embedded ? 'p-4 pt-0' : undefined}>
+          <div className={embedded ? 'overflow-x-auto' : undefined}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -595,6 +603,7 @@ export default function SuppliersPage() {
               })}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
 

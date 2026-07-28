@@ -187,7 +187,7 @@ export function TreasuryDashboard({
             ? 'Sum of «Due» from the Customers page (invoice remaining per contact).'
             : 'From orders: local/shop channel sold-like orders still unpaid. Not the Customers page «Due» total.',
         value: roundMoneyUi(customerShopReceivable),
-        path: '/customers',
+        path: '/customers-suppliers',
         icon: Users,
       },
     ];
@@ -238,7 +238,7 @@ export function TreasuryDashboard({
                 ? 'رصيد مستحق للموردين من شاشة الموردين. لا يُحسب في إجمالي الصادر أعلاه (الصادر النقدي = مصروفات + إجمالي المدفوع فقط).'
                 : 'Open AP from Suppliers. Not included in total outbound above (cash outflow = expenses + total paid only).',
               value: supplierPayablesAmt,
-              path: '/suppliers',
+              path: '/customers-suppliers',
               icon: Truck,
               isOutflowLine: false,
             },

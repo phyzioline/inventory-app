@@ -429,7 +429,7 @@ export function ProfitSnapshotKpis({ showReceivablesRow = true, onBeforeScrollTo
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.22 }}
               className="stat-card text-start hover:border-primary/50 transition-colors h-full min-h-[122px]"
-              onClick={() => navigate('/suppliers')}
+              onClick={() => navigate('/customers-suppliers')}
             >
               <div className="flex items-center gap-3">
                 <div className="p-3 rounded-xl bg-rose-500/10">

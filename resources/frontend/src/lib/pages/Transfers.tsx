@@ -2,32 +2,22 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useLanguage } from '@/contexts/LanguageContext';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Loader2, ArrowRightLeft, Calendar, Upload, Search, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, ArrowRightLeft, Upload, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import TransferModal from '@/components/inventory/TransferModal';
 import { BulkTransferUploadDialog } from '@/components/inventory/BulkTransferUploadDialog';
 import NoonAsnTransferDialog from '@/components/inventory/NoonAsnTransferDialog';
 import FbaRequestTransferDialog from '@/components/inventory/FbaRequestTransferDialog';
 import { TransferDetailsDialog } from '@/components/inventory/TransferDetailsDialog';
+import { TransferLaneColumn } from '@/components/inventory/TransferLaneColumn';
+import { buildTransferBatches, batchMatchesSearch } from '@/lib/transferBatchUtils';
+import { TRANSFER_LANES, groupBatchesByLane } from '@/lib/transferLanes';
 
 export default function Transfers() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const isAr = language === 'ar';
   const queryClient = useQueryClient();
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
@@ -63,114 +53,40 @@ export default function Transfers() {
     return locationNameById.get(s) || `Location #${s}`;
   };
 
-  const resolveProductLabel = (tx: any) => {
-    return (
-      tx?.sku?.offer?.master_product?.internal_name ||
-      tx?.sku?.offer?.masterProduct?.internal_name ||
-      tx?.sku?.offer?.name ||
-      tx?.sku?.product?.name ||
-      tx?.sku?.name ||
-      '-'
-    );
+  const batches = useMemo(() => buildTransferBatches(transfers), [transfers]);
+
+  const filteredBatches = useMemo(
+    () => batches.filter((batch) => batchMatchesSearch(batch, searchQuery, resolveLocationName)),
+    [batches, searchQuery, locationNameById],
+  );
+
+  const batchesByLane = useMemo(
+    () => groupBatchesByLane(filteredBatches, locations, resolveLocationName),
+    [filteredBatches, locations, locationNameById],
+  );
+
+  const unassignedCount = useMemo(() => {
+    const assigned = TRANSFER_LANES.reduce((sum, lane) => sum + batchesByLane[lane.id].length, 0);
+    return filteredBatches.length - assigned;
+  }, [filteredBatches, batchesByLane]);
+
+  const invalidateTransferQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ['transfers'] });
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory-by-location'] });
   };
-
-  const parseTransferNotes = (raw: any) => {
-    const text = String(raw || '').trim();
-    const outMatch = text.match(/Transfer\s+OUT\s+to\s+Location\s+#(\d+)/i);
-    const inMatch = text.match(/Transfer\s+IN\s+from\s+Location\s+#(\d+)/i);
-    const toLocationId = outMatch ? String(outMatch[1]) : '';
-    const fromExternalLocationId = inMatch ? String(inMatch[1]) : '';
-    const userNotes = text
-      .replace(/^Transfer\s+OUT\s+to\s+Location\s+#\d+\.\s*/i, '')
-      .replace(/^Transfer\s+IN\s+from\s+Location\s+#\d+\.\s*/i, '')
-      .replace(/\s*\[cross-SKU:[^\]]+\]\s*$/i, '')
-      .trim();
-    return { toLocationId, fromExternalLocationId, userNotes };
-  };
-
-  const batches = (() => {
-    const rows = Array.isArray(transfers) ? transfers : [];
-    const map = new Map<string, any>();
-
-    for (const tx of rows) {
-      const created = new Date(tx.created_at || tx.updated_at || 0);
-      const minuteKey = Number.isNaN(created.getTime())
-        ? 'unknown'
-        : `${created.getFullYear()}-${created.getMonth() + 1}-${created.getDate()} ${created.getHours()}:${created.getMinutes()}`;
-      const fromLocationId = String(tx.location_id || tx.location?.id || '');
-      const { toLocationId, fromExternalLocationId, userNotes } = parseTransferNotes(tx.notes);
-      const direction = String(tx.type || '').toUpperCase() === 'IN' ? 'IN' : 'OUT';
-
-      const remoteId = direction === 'IN' ? fromExternalLocationId : toLocationId;
-      const key = [minuteKey, direction, fromLocationId, remoteId, userNotes].join('|');
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
-          minuteKey,
-          direction,
-          fromLocationId,
-          toLocationId,
-          fromExternalLocationId,
-          userNotes,
-          created_at: tx.created_at,
-          location: tx.location,
-          items: [],
-          totalQty: 0,
-        });
-      }
-      const g = map.get(key);
-      g.items.push(tx);
-      g.totalQty += Number(tx.quantity || 0);
-      map.set(key, g);
-    }
-
-    // Sort batches by newest
-    return Array.from(map.values()).sort((a, b) => {
-      const ad = new Date(a.created_at || 0).getTime();
-      const bd = new Date(b.created_at || 0).getTime();
-      return bd - ad;
-    });
-  })();
-
-  const filteredBatches = batches.filter((batch: any) => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    const hay = [
-      batch.userNotes,
-      batch.location?.name,
-      batch.fromLocationId,
-      batch.toLocationId,
-      batch.fromExternalLocationId,
-      resolveLocationName(batch.toLocationId),
-      resolveLocationName(batch.fromExternalLocationId),
-      ...batch.items.flatMap((tx: any) => [
-        tx.sku?.sku,
-        tx.sku?.offer?.name,
-        tx.sku?.product?.name,
-        resolveProductLabel(tx),
-        tx.notes,
-        tx.location?.name,
-      ]),
-    ]
-      .map((v: any) => String(v || '').toLowerCase())
-      .join(' ');
-    return hay.includes(q);
-  });
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-12 h-12 animate-spin text-primary" />
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <TransferModal
-        isOpen={isTransferModalOpen}
-        onClose={() => setIsTransferModalOpen(false)}
-      />
+    <div className="space-y-6">
+      <TransferModal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} />
       <TransferDetailsDialog
         open={!!selectedTransferId}
         transferTxId={selectedTransferId}
@@ -179,12 +95,12 @@ export default function Transfers() {
         }}
       />
 
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold">{t('transfers.title')}</h1>
-          <p className="text-muted-foreground">{t('transfers.subtitle')}</p>
+          <p className="text-muted-foreground">{t('transfers.subtitleLanes')}</p>
         </div>
-        <div className="flex gap-2 flex-wrap justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="outline" onClick={() => setIsFbaRequestOpen(true)}>
             {t('transfers.fbaRequest')}
           </Button>
@@ -192,11 +108,11 @@ export default function Transfers() {
             {t('transfers.noonAsn')}
           </Button>
           <Button variant="outline" onClick={() => setIsBulkUploadOpen(true)}>
-            <Upload className="mr-2 h-4 w-4" />
+            <Upload className="me-2 h-4 w-4" />
             {t('transfers.bulkUpload')}
           </Button>
           <Button onClick={() => setIsTransferModalOpen(true)}>
-            <ArrowRightLeft className="mr-2 h-4 w-4" />
+            <ArrowRightLeft className="me-2 h-4 w-4" />
             {t('transfers.newTransfer')}
           </Button>
         </div>
@@ -205,185 +121,61 @@ export default function Transfers() {
       <BulkTransferUploadDialog
         open={isBulkUploadOpen}
         onOpenChange={setIsBulkUploadOpen}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['transfers'] });
-          queryClient.invalidateQueries({ queryKey: ['transactions'] });
-          queryClient.invalidateQueries({ queryKey: ['inventory-by-location'] });
-        }}
+        onSuccess={invalidateTransferQueries}
       />
-
       <FbaRequestTransferDialog
         open={isFbaRequestOpen}
         onOpenChange={setIsFbaRequestOpen}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['transfers'] });
-          queryClient.invalidateQueries({ queryKey: ['transactions'] });
-          queryClient.invalidateQueries({ queryKey: ['inventory-by-location'] });
-        }}
+        onSuccess={invalidateTransferQueries}
       />
-
       <NoonAsnTransferDialog
         open={isNoonAsnOpen}
         onOpenChange={setIsNoonAsnOpen}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['transfers'] });
-          queryClient.invalidateQueries({ queryKey: ['transactions'] });
-          queryClient.invalidateQueries({ queryKey: ['inventory-by-location'] });
-        }}
+        onSuccess={invalidateTransferQueries}
       />
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle>{t('transfers.history')}</CardTitle>
+        <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle>{t('transfers.lanesTitle')}</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">{t('transfers.lanesHint')}</p>
+          </div>
           <div className="relative w-full max-w-sm">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={t('transfers.searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 h-9"
+              className="h-9 ps-9"
             />
           </div>
         </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                  <TableHead>{t('common.date')}</TableHead>
-                  <TableHead>{t('table.product')}</TableHead>
-                  <TableHead>{t('sales.qty')}</TableHead>
-                  <TableHead>{t('table.warehouse')}</TableHead>
-                  <TableHead>{t('adjustments.notes')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredBatches.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                    {searchQuery ? t('transfers.emptySearch') : t('transfers.empty')}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredBatches.flatMap((batch: any) => {
-                  const open = !!expandedBatches[batch.key];
-                  const Icon = open ? ChevronDown : ChevronRight;
-                  const createdAt = new Date(batch.created_at || 0);
-                  const dateStr = Number.isNaN(createdAt.getTime()) ? '-' : createdAt.toLocaleDateString();
-                  const timeStr = Number.isNaN(createdAt.getTime()) ? '' : createdAt.toLocaleTimeString();
-                  const fromName =
-                    batch.direction === 'IN'
-                      ? resolveLocationName(batch.fromExternalLocationId)
-                      : batch.location?.name || '';
-                  const toName =
-                    batch.direction === 'IN'
-                      ? batch.location?.name || ''
-                      : resolveLocationName(batch.toLocationId);
-
-                  const mainRow = (
-                    <TableRow
-                      key={batch.key}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => setExpandedBatches((prev) => ({ ...prev, [batch.key]: !prev[batch.key] }))}
-                    >
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <Icon className="h-4 w-4 text-muted-foreground" />
-                          <Calendar className="h-3 w-3 text-muted-foreground" />
-                          {dateStr}
-                        </div>
-                        <div className="text-xs text-muted-foreground">{timeStr}</div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-semibold">
-                          {Array.isArray(batch.items) ? `${batch.items.length} ` : ''}{t('table.product')}
-                        </span>
-                        <p className="text-xs text-muted-foreground">
-                          {batch.items?.slice(0, 2).map((tx: any) => `${tx.sku?.sku || '-'} · ${resolveProductLabel(tx)}`).join(' ، ')}
-                          {batch.items?.length > 2 ? ` +${batch.items.length - 2}` : ''}
-                        </p>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-base font-bold px-2 py-0.5">
-                          {batch.totalQty}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1 text-sm">
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            {t('transfers.from')}: <span className="text-foreground font-medium">{fromName || '—'}</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            {t('transfers.to')}:{' '}
-                            <span className="text-foreground font-medium">
-                              {toName || '—'}
-                            </span>
-                          </div>
-                          <div className="text-xs italic text-muted-foreground max-w-[260px] truncate">
-                            {batch.userNotes || '-'}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {batch.userNotes || '-'}
-                      </TableCell>
-                    </TableRow>
-                  );
-
-                  if (!open) return [mainRow];
-
-                  const detailsRow = (
-                    <TableRow key={`${batch.key}-details`} className="bg-muted/10">
-                      <TableCell colSpan={5} className="p-0">
-                        <div className="px-6 py-4">
-                          <Table className="border rounded-md bg-background shadow-sm">
-                            <TableHeader className="bg-muted/30">
-                              <TableRow>
-                                <TableHead>SKU</TableHead>
-                                <TableHead>{t('table.product')}</TableHead>
-                                <TableHead className="text-right">{t('sales.qty')}</TableHead>
-                                <TableHead>{t('transfers.from')}</TableHead>
-                                <TableHead>{t('transfers.to')}</TableHead>
-                                <TableHead>{t('adjustments.notes')}</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {batch.items.map((tx: any) => (
-                                <TableRow
-                                  key={tx.id}
-                                  className="cursor-pointer hover:bg-muted/20"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedTransferId(String(tx.id));
-                                  }}
-                                >
-                                  <TableCell className="font-mono text-xs">{tx.sku?.sku || '-'}</TableCell>
-                                  <TableCell className="text-xs">{resolveProductLabel(tx)}</TableCell>
-                                  <TableCell className="text-right font-mono text-xs">{tx.quantity}</TableCell>
-                                  <TableCell className="text-xs">
-                                    {batch.direction === 'IN'
-                                      ? resolveLocationName(batch.fromExternalLocationId) || '—'
-                                      : tx.location?.name || '—'}
-                                  </TableCell>
-                                  <TableCell className="text-xs">
-                                    {batch.direction === 'IN' ? batch.location?.name || '—' : toName || '—'}
-                                  </TableCell>
-                                  <TableCell className="text-xs text-muted-foreground">{tx.notes || '-'}</TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-
-                  return [mainRow, detailsRow];
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
+        {unassignedCount > 0 && !searchQuery && (
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">
+              {t('transfers.lane.unassigned').replace('{count}', String(unassignedCount))}
+            </p>
+          </CardContent>
+        )}
       </Card>
+
+      <div className="grid min-h-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 xl:items-stretch [&>div]:max-h-[calc(100vh-260px)]">
+        {TRANSFER_LANES.map((lane) => (
+          <TransferLaneColumn
+            key={lane.id}
+            lane={lane}
+            batches={batchesByLane[lane.id]}
+            isAr={isAr}
+            t={t}
+            expandedBatches={expandedBatches}
+            onToggleBatch={(key) =>
+              setExpandedBatches((prev) => ({ ...prev, [key]: !prev[key] }))
+            }
+            onSelectTransfer={setSelectedTransferId}
+            resolveLocationName={resolveLocationName}
+          />
+        ))}
+      </div>
     </div>
   );
 }

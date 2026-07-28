@@ -37,6 +37,9 @@ export type SkuMovementRow = {
     to_location?: { name: string; channel_name?: string | null } | null;
     at_location?: { name: string; channel_name?: string | null } | null;
     order_number?: string | null;
+    purchase_unit_price?: number | null;
+    purchase_supplier_name?: string | null;
+    purchase_invoice_number?: string | null;
     summary_ar: string;
     notes?: string | null;
 };
@@ -52,6 +55,8 @@ type TrackerResponse = {
     sku_ids_resolved: number[];
     movements: SkuMovementRow[];
     current_balances?: CurrentBalance[];
+    total_count?: number;
+    truncated?: boolean;
 };
 
 export type SkuMovementTrackerDialogProps = {
@@ -142,6 +147,7 @@ export function SkuMovementTrackerDialog({
         qs.set('include_related', '0');
     }
     if (masterProductId) qs.set('master_product_id', String(masterProductId));
+    qs.set('limit', masterProductId ? '2000' : '1000');
 
     const scope: 'sku' | 'master' | null = skuId ? 'sku' : masterProductId ? 'master' : null;
 
@@ -153,6 +159,8 @@ export function SkuMovementTrackerDialog({
 
     const movements = data?.movements ?? [];
     const balances  = data?.current_balances ?? [];
+    const totalCount = data?.total_count ?? movements.length;
+    const truncated = data?.truncated ?? false;
 
     // Build balance map: sku_id → current_quantity
     const balanceBySku = new Map<number, number>(balances.map(b => [b.sku_id, b.current_quantity]));
@@ -162,9 +170,9 @@ export function SkuMovementTrackerDialog({
 
     const description =
         scope === 'sku'
-            ? 'حركات هذا الـ SKU فقط'
+            ? 'حركات هذا الـ SKU فقط — تشمل الشراء والتحويل والبيع والمرتجع'
             : scope === 'master'
-              ? 'كل حركات عروض البيع لهذا المنتج الأساسي'
+              ? 'كل حركات المنتج الأساسي عبر كل الـ SKUs وفواتير الشراء المرتبطة'
               : 'اختر صنفاً لعرض حركاته';
 
     return (
@@ -184,6 +192,12 @@ export function SkuMovementTrackerDialog({
                         </DialogTitle>
                         <DialogDescription className="text-xs text-slate-500">
                             {description}
+                            {movements.length > 0 && (
+                                <span className="mt-1 block text-slate-400">
+                                    عرض {movements.length.toLocaleString('ar-EG')}
+                                    {totalCount > movements.length ? ` من ${totalCount.toLocaleString('ar-EG')}` : ''} حركة
+                                </span>
+                            )}
                         </DialogDescription>
                     </DialogHeader>
                 </div>
@@ -214,6 +228,11 @@ export function SkuMovementTrackerDialog({
                 {/* ── Content (table only — no mixed SKU summary strip) ── */}
                 {!isLoading && movements.length > 0 && (
                     <>
+                        {truncated && (
+                            <div className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                يوجد المزيد من الحركات القديمة غير المعروضة. قلّل النطاق أو تواصل مع الدعم لعرض أقدم السجل.
+                            </div>
+                        )}
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto overscroll-contain">
                             <table className="w-full border-collapse text-sm">
                                 <thead className="sticky top-0 z-10">
@@ -224,6 +243,7 @@ export function SkuMovementTrackerDialog({
                                         <th className="px-4 py-2.5 w-[80px] text-center">الرصيد</th>
                                         <th className="px-4 py-2.5">من ← إلى</th>
                                         <th className="px-4 py-2.5 w-[120px]">SKU / قناة</th>
+                                        <th className="px-4 py-2.5 w-[160px]">سعر / مورد</th>
                                         <th className="px-4 py-2.5 w-[180px]">مرجع</th>
                                     </tr>
                                 </thead>
@@ -284,15 +304,44 @@ export function SkuMovementTrackerDialog({
 
                                                 {/* SKU / channel */}
                                                 <td className="px-4 py-2.5 align-top">
-                                                    <div className="font-mono text-xs font-semibold text-slate-700">{m.sku_code}</div>
+                                                    <div className="font-mono text-xs font-semibold text-slate-700">{m.sku_code || '—'}</div>
                                                     {m.listing_channel && (
                                                         <div className="mt-0.5 text-[10px] text-slate-400 leading-tight">{m.listing_channel}</div>
+                                                    )}
+                                                    {scope === 'master' && m.master_product_name && (
+                                                        <div className="mt-0.5 line-clamp-2 text-[10px] text-slate-500 leading-tight">{m.master_product_name}</div>
+                                                    )}
+                                                </td>
+
+                                                {/* Purchase price / supplier */}
+                                                <td className="px-4 py-2.5 align-top">
+                                                    {m.movement_kind === 'purchase' ? (
+                                                        <div className="space-y-0.5 text-xs">
+                                                            {m.purchase_unit_price != null && m.purchase_unit_price > 0 ? (
+                                                                <div className="font-semibold tabular-nums text-emerald-700">
+                                                                    {m.purchase_unit_price.toLocaleString('ar-EG')} ج.م
+                                                                </div>
+                                                            ) : (
+                                                                <div className="text-slate-400">—</div>
+                                                            )}
+                                                            {m.purchase_supplier_name && (
+                                                                <div className="text-[11px] text-slate-600 leading-snug">
+                                                                    من: {m.purchase_supplier_name}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[11px] text-slate-300">—</span>
                                                     )}
                                                 </td>
 
                                                 {/* Reference */}
                                                 <td className="px-4 py-2.5 align-top">
-                                                    {m.order_number ? (
+                                                    {m.purchase_invoice_number ? (
+                                                        <span className="font-mono text-[11px] text-slate-600 break-all leading-snug">
+                                                            {m.purchase_invoice_number}
+                                                        </span>
+                                                    ) : m.order_number ? (
                                                         <span className="font-mono text-[11px] text-slate-600 break-all leading-snug">
                                                             {m.order_number}
                                                         </span>

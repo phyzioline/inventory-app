@@ -22,6 +22,7 @@ const translations: Record<Language, Record<string, string>> = {
     'nav.transactions': 'Transactions',
     'nav.suppliers': 'Suppliers',
     'nav.customers': 'Customers',
+    'nav.customersSuppliers': 'Customers & Suppliers',
     'nav.finance': 'Finance',
     'nav.expenses': 'Expenses',
     'nav.reports': 'Reports',
@@ -1225,6 +1226,13 @@ const translations: Record<Language, Record<string, string>> = {
     // Transfers Page
     'transfers.title': 'Stock Transfers',
     'transfers.subtitle': 'Manage and view stock movements between locations',
+    'transfers.subtitleLanes': 'Track shop transfers by channel — latest uploads at the top of each lane',
+    'transfers.lanesTitle': 'Transfer lanes',
+    'transfers.lanesHint': 'Each column shows transfers from the shop to one destination',
+    'transfers.lane.latest': 'Latest',
+    'transfers.lane.lastUpload': 'Last upload',
+    'transfers.lane.empty': 'No transfers in this lane yet',
+    'transfers.lane.unassigned': '{count} transfer(s) from other routes are not shown in these lanes',
     'transfers.fbaRequest': 'FBA request transactions',
     'transfers.fbaRequestDesc':
       'Upload the Amazon shipment TSV, match MSKU/ASIN to your store SKUs, preview quantities, then transfer stock to the selected FBA warehouse.',
@@ -1469,6 +1477,7 @@ const translations: Record<Language, Record<string, string>> = {
     'nav.transactions': 'الحركات',
     'nav.suppliers': 'الموردين',
     'nav.customers': 'العملاء',
+    'nav.customersSuppliers': 'العملاء والموردين',
     'nav.finance': 'المالية',
     'nav.expenses': 'المصروفات',
     'nav.reports': 'التقارير',
@@ -2672,6 +2681,13 @@ const translations: Record<Language, Record<string, string>> = {
     // Transfers Page
     'transfers.title': 'تحويلات المخزون',
     'transfers.subtitle': 'إدارة وعرض حركات المخزون بين المواقع',
+    'transfers.subtitleLanes': 'متابعة تحويلات المحل حسب القناة — آخر رفع في أعلى كل قسم',
+    'transfers.lanesTitle': 'مسارات التحويل',
+    'transfers.lanesHint': 'كل عمود يعرض التحويلات من المحل إلى وجهة واحدة',
+    'transfers.lane.latest': 'الأحدث',
+    'transfers.lane.lastUpload': 'آخر رفع',
+    'transfers.lane.empty': 'لا توجد تحويلات في هذا المسار بعد',
+    'transfers.lane.unassigned': '{count} تحويل من مسارات أخرى غير معروضة هنا',
     'transfers.fbaRequest': 'تحويل طلب FBA',
     'transfers.fbaRequestDesc':
       'ارفع ملف شحنة Amazon (TSV)، طابق MSKU/ASIN مع منتجات المتجر، راجع الكميات، ثم سجّل التحويل إلى مستودع FBA المختار.',

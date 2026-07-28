@@ -27,7 +27,6 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const MasterProducts = lazy(() => import("./pages/MasterProducts"));
 const MasterProductDetail = lazy(() => import("./pages/MasterProductDetail"));
 const Products = lazy(() => import("./pages/Products"));
-const Suppliers = lazy(() => import("./pages/Suppliers"));
 
 // Channels
 const Channels = lazy(() => import("./pages/Channels"));
@@ -82,7 +81,7 @@ const ProfitEngine = lazy(() => import("./pages/ProfitEngine"));
 // Reports & Settings
 const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
-const Customers = lazy(() => import("./pages/Customers"));
+const CustomersSuppliers = lazy(() => import("./pages/CustomersSuppliers"));
 const Subscription = lazy(() => import("./pages/Subscription"));
 
 // Admin (super-admin only)
@@ -154,7 +153,9 @@ const App = () => (
                   <Route path="/master/products" element={<Navigate to="/master-products" replace />} />
                   <Route path="/master/products/:id" element={<RedirectLegacyMasterProductPath />} />
                   <Route path="/products" element={<Products />} />
-                  <Route path="/suppliers" element={<Suppliers />} />
+                  <Route path="/customers-suppliers" element={<CustomersSuppliers />} />
+                  <Route path="/customers" element={<Navigate to="/customers-suppliers" replace />} />
+                  <Route path="/suppliers" element={<Navigate to="/customers-suppliers" replace />} />
 
                   {/* ── Channels ───────────────────────────── */}
                   <Route path="/channels" element={<Channels />} />
@@ -219,7 +220,6 @@ const App = () => (
                   <Route path="/reports" element={<Reports />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/settings/subscription" element={<Subscription />} />
-                  <Route path="/customers" element={<Customers />} />
                 </Route>
 
                 {/* ── Admin (super-admin only, separate guard from tenant routes) ── */}

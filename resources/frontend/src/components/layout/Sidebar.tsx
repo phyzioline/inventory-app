@@ -11,7 +11,6 @@ import {
   ShoppingCart,
   Receipt,
   RotateCcw,
-  Users,
   UserCircle,
   Wallet,
   CreditCard,
@@ -39,6 +38,7 @@ import {
   Percent,
   RefreshCw,
   Truck,
+  Contact,
   Calculator,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -80,7 +80,6 @@ const navItems: NavItem[] = [
       { key: 'nav.purchaseReturns', path: '/purchases/returns' },
       { key: 'nav.smartImport', path: '/purchases/smart-import' },
       { key: 'nav.sulfa', path: '/finance/sulfa' },
-      { key: 'nav.suppliers', path: '/suppliers' },
     ],
   },
 
@@ -103,8 +102,7 @@ const navItems: NavItem[] = [
       { key: 'nav.quotations', path: '/quotations' },
     ],
   },
-  { key: 'nav.suppliers', icon: Truck, path: '/suppliers' },
-  { key: 'nav.customers', icon: Users, path: '/customers' },
+  { key: 'nav.customersSuppliers', icon: Contact, path: '/customers-suppliers' },
   { key: 'nav.returns', icon: RotateCcw, path: '/returns' },
 
   // ── 6. Sales (المبيعات) ──

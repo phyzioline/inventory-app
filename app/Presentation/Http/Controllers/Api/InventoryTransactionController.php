@@ -10,6 +10,8 @@ use Illuminate\Validation\Rule;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\InventoryTransaction;
+use App\Domain\Models\Wms\PurchaseBatch;
+use App\Domain\Models\Wms\PurchaseBatchItem;
 use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
 use App\Infrastructure\Support\StockUpdateBroadcaster;
@@ -249,49 +251,63 @@ class InventoryTransactionController extends Controller
             'sku_id' => ['nullable', 'integer', Rule::exists('skus', 'id')->where('user_id', auth()->id())],
             'master_product_id' => ['nullable', 'integer', Rule::exists('master_products', 'id')->where('user_id', auth()->id())],
             'include_related' => 'nullable|boolean',
-            'limit' => 'nullable|integer|min:1|max:500',
+            'limit' => 'nullable|integer|min:1|max:2000',
         ]);
 
         if (empty($validated['sku_id']) && empty($validated['master_product_id'])) {
             return response()->json(['message' => 'Provide sku_id or master_product_id'], 422);
         }
 
-        $limit = (int) ($validated['limit'] ?? 200);
-        $skuIds = [];
+        $masterProductId = ! empty($validated['master_product_id']) ? (int) $validated['master_product_id'] : null;
+        $defaultLimit = $masterProductId ? 1000 : 500;
+        $limit = (int) ($validated['limit'] ?? $defaultLimit);
 
-        if (! empty($validated['master_product_id'])) {
-            $skuIds = Sku::query()
-                ->whereHas('offer', function ($q) use ($validated) {
-                    $q->where('master_product_id', (int) $validated['master_product_id']);
-                })
-                ->pluck('id')
+        $skuIds = $this->resolveSkuTrackerSkuIds(
+            ! empty($validated['sku_id']) ? (int) $validated['sku_id'] : null,
+            $masterProductId,
+            $request->boolean('include_related', false),
+        );
+
+        $relatedBatchIds = $masterProductId
+            ? PurchaseBatchItem::query()
+                ->where('master_product_id', $masterProductId)
+                ->pluck('purchase_batch_id')
                 ->map(fn ($id) => (int) $id)
                 ->unique()
                 ->values()
-                ->all();
-        } else {
-            $skuIds = [(int) $validated['sku_id']];
-            // Opt-in only: single-SKU tracking must not mix sibling listings by default.
-            if ($request->boolean('include_related', false)) {
-                $sku = Sku::query()->select(['id', 'offer_id'])->find((int) $validated['sku_id']);
-                if ($sku && $sku->offer_id) {
-                    $skuIds = Sku::query()
-                        ->where('offer_id', $sku->offer_id)
-                        ->pluck('id')
-                        ->map(fn ($id) => (int) $id)
-                        ->unique()
-                        ->values()
-                        ->all();
+                ->all()
+            : [];
+
+        if ($skuIds === [] && $relatedBatchIds === []) {
+            return response()->json([
+                'sku_ids_resolved' => [],
+                'movements' => [],
+                'current_balances' => [],
+                'total_count' => 0,
+                'truncated' => false,
+            ]);
+        }
+
+        $baseQuery = InventoryTransaction::query()
+            ->where(function ($q) use ($skuIds, $relatedBatchIds) {
+                $hasSkuFilter = $skuIds !== [];
+                $hasBatchFilter = $relatedBatchIds !== [];
+
+                if ($hasSkuFilter) {
+                    $q->whereIn('sku_id', $skuIds);
                 }
-            }
-        }
+                if ($hasBatchFilter) {
+                    $batchClause = function ($q2) use ($relatedBatchIds) {
+                        $q2->where('reference_type', PurchaseBatch::class)
+                            ->whereIn('reference_id', $relatedBatchIds);
+                    };
+                    $hasSkuFilter ? $q->orWhere($batchClause) : $q->where($batchClause);
+                }
+            });
 
-        if ($skuIds === []) {
-            return response()->json(['sku_ids_resolved' => [], 'movements' => []]);
-        }
+        $totalCount = (clone $baseQuery)->count();
 
-        $transactions = InventoryTransaction::query()
-            ->whereIn('sku_id', $skuIds)
+        $transactions = (clone $baseQuery)
             ->with([
                 'sku.channel',
                 'sku.offer.masterProduct',
@@ -323,6 +339,7 @@ class InventoryTransactionController extends Controller
         }
 
         $orderIds = [];
+        $purchaseBatchIds = [];
         foreach ($transactions as $tx) {
             $rt = (string) ($tx->reference_type ?? '');
             $rid = (string) ($tx->reference_id ?? '');
@@ -332,21 +349,36 @@ class InventoryTransactionController extends Controller
             if (in_array($rt, ['Order', 'ImportedOrder', 'OrderEdit'], true)) {
                 $orderIds[] = (int) $rid;
             }
+            if ($this->skuTrackerReferencesPurchaseBatch($rt)) {
+                $purchaseBatchIds[] = (int) $rid;
+            }
         }
         $orderIds = array_values(array_unique(array_filter($orderIds)));
+        $purchaseBatchIds = array_values(array_unique(array_filter($purchaseBatchIds)));
+
         $ordersById = $orderIds === [] ? collect() : InventoryOrder::query()
             ->whereIn('id', $orderIds)
             ->get(['id', 'platform_order_id'])
             ->keyBy('id');
 
+        $batchesById = $purchaseBatchIds === [] ? collect() : PurchaseBatch::query()
+            ->with(['vendor:id,name', 'items:id,purchase_batch_id,sku_id,master_product_id,unit_price,raw_description'])
+            ->whereIn('id', $purchaseBatchIds)
+            ->get()
+            ->keyBy('id');
+
         $movements = [];
         foreach ($transactions as $tx) {
-            $movements[] = $this->formatSkuTrackerRow($tx, $locationMap, $ordersById);
+            $movements[] = $this->formatSkuTrackerRow($tx, $locationMap, $ordersById, $batchesById);
         }
 
-        // Current per-SKU balances across all locations (for running-balance calculation in the UI).
+        $balanceSkuIds = array_values(array_unique(array_merge(
+            $skuIds,
+            $transactions->pluck('sku_id')->map(fn ($id) => (int) $id)->all(),
+        )));
+
         $currentBalances = [];
-        foreach ($skuIds as $sid) {
+        foreach ($balanceSkuIds as $sid) {
             $totalQty = SkuInventory::query()->where('sku_id', $sid)->sum('quantity');
             $sku = Sku::query()->select(['id', 'sku', 'channel_id'])->with('channel:id,name')->find($sid);
             $currentBalances[] = [
@@ -361,10 +393,64 @@ class InventoryTransactionController extends Controller
             'sku_ids_resolved' => $skuIds,
             'movements' => $movements,
             'current_balances' => $currentBalances,
+            'total_count' => $totalCount,
+            'truncated' => $totalCount > $limit,
         ]);
     }
 
-    private function formatSkuTrackerRow(InventoryTransaction $tx, $locationMap, $ordersById): array
+    /**
+     * @return list<int>
+     */
+    private function resolveSkuTrackerSkuIds(?int $skuId, ?int $masterProductId, bool $includeRelated): array
+    {
+        if ($masterProductId) {
+            $fromOffers = Sku::query()
+                ->whereHas('offer', function ($q) use ($masterProductId) {
+                    $q->where('master_product_id', $masterProductId);
+                })
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            $fromPurchaseItems = PurchaseBatchItem::query()
+                ->where('master_product_id', $masterProductId)
+                ->whereNotNull('sku_id')
+                ->pluck('sku_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            return array_values(array_unique(array_merge($fromOffers, $fromPurchaseItems)));
+        }
+
+        if (! $skuId) {
+            return [];
+        }
+
+        $skuIds = [$skuId];
+        if ($includeRelated) {
+            $sku = Sku::query()->select(['id', 'offer_id'])->find($skuId);
+            if ($sku && $sku->offer_id) {
+                $skuIds = Sku::query()
+                    ->where('offer_id', $sku->offer_id)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->unique()
+                    ->values()
+                    ->all();
+            }
+        }
+
+        return $skuIds;
+    }
+
+    private function skuTrackerReferencesPurchaseBatch(?string $refType): bool
+    {
+        $t = (string) ($refType ?? '');
+
+        return str_contains($t, 'PurchaseBatch') || str_contains($t, 'Purchase');
+    }
+
+    private function formatSkuTrackerRow(InventoryTransaction $tx, $locationMap, $ordersById, $batchesById): array
     {
         $loc = $tx->relationLoaded('location') ? $tx->location : $tx->location()->with('channel')->first();
         $atLocation = $this->skuTrackerLocationPayload($loc);
@@ -400,6 +486,28 @@ class InventoryTransactionController extends Controller
 
         $qty = (int) $tx->quantity;
 
+        $purchaseUnitPrice = null;
+        $purchaseSupplierName = null;
+        $purchaseInvoiceNumber = null;
+        if ($this->skuTrackerReferencesPurchaseBatch($refType) && $refId !== '' && $typeUpper === 'IN') {
+            $batch = $batchesById->get((int) $refId);
+            if ($batch) {
+                $purchaseInvoiceNumber = (string) ($batch->invoice_number ?: $batch->batch_number ?: '');
+                $purchaseSupplierName = (string) ($batch->vendor?->name ?: $batch->supplier_name_raw ?: '');
+                $batchItem = $batch->items->first(
+                    fn ($item) => (int) ($item->sku_id ?? 0) === (int) $tx->sku_id
+                );
+                if (! $batchItem && $master) {
+                    $batchItem = $batch->items->first(
+                        fn ($item) => (int) ($item->master_product_id ?? 0) === (int) $master->id
+                    );
+                }
+                if ($batchItem) {
+                    $purchaseUnitPrice = (float) ($batchItem->unit_price ?? 0);
+                }
+            }
+        }
+
         return [
             'id' => (int) $tx->id,
             'created_at' => $tx->created_at?->toIso8601String(),
@@ -417,10 +525,23 @@ class InventoryTransactionController extends Controller
             'reference_type' => $refType !== '' ? $refType : null,
             'reference_id' => $refId !== '' ? $refId : null,
             'order_number' => $orderNumber,
+            'purchase_unit_price' => $purchaseUnitPrice,
+            'purchase_supplier_name' => $purchaseSupplierName !== '' ? $purchaseSupplierName : null,
+            'purchase_invoice_number' => $purchaseInvoiceNumber !== '' ? $purchaseInvoiceNumber : null,
             'label_ar' => $labelAr,
             'label_en' => $labelEn,
             'notes' => $notes !== '' ? $notes : null,
-            'summary_ar' => $this->skuTrackerSummaryAr($kind, $qty, $fromLoc, $toLoc, $atLocation, $orderNumber, (string) ($sku->sku ?? '')),
+            'summary_ar' => $this->skuTrackerSummaryAr(
+                $kind,
+                $qty,
+                $fromLoc,
+                $toLoc,
+                $atLocation,
+                $orderNumber,
+                (string) ($sku->sku ?? ''),
+                $purchaseUnitPrice,
+                $purchaseSupplierName,
+            ),
         ];
     }
 
@@ -473,8 +594,13 @@ class InventoryTransactionController extends Controller
         if ($refType === 'Return' && $typeUpper === 'IN') {
             return ['return_in', 'مرتجع (إرجاع للمخزون)', 'Return (restock)'];
         }
-        if (str_contains($refType, 'PurchaseBatch') || str_contains($refType, 'Purchase')) {
-            return ['purchase', 'استلام شراء', 'Purchase receipt'];
+        if ($this->skuTrackerReferencesPurchaseBatch($refType)) {
+            if ($typeUpper === 'IN') {
+                return ['purchase', 'استلام شراء', 'Purchase receipt'];
+            }
+            if ($typeUpper === 'OUT') {
+                return ['out', 'صادر (تعديل شراء)', 'Purchase adjustment out'];
+            }
         }
         if ($refType === 'Adjustment' || $typeUpper === 'SET') {
             return ['adjustment', 'تسوية / تعديل', 'Adjustment'];
@@ -496,7 +622,9 @@ class InventoryTransactionController extends Controller
         ?array $toLoc,
         ?array $atLoc,
         ?string $orderNumber,
-        string $skuCode
+        string $skuCode,
+        ?float $purchaseUnitPrice = null,
+        ?string $purchaseSupplierName = null,
     ): string {
         $fromName = $fromLoc['name'] ?? ($atLoc['name'] ?? '—');
         $toName = $toLoc['name'] ?? '—';
@@ -512,7 +640,14 @@ class InventoryTransactionController extends Controller
             return "إرجاع {$qty} إلى «".($toLoc['name'] ?? $atLoc['name'] ?? '—')."» — SKU {$skuCode}";
         }
         if ($kind === 'purchase' || $kind === 'in') {
-            return "إضافة {$qty} إلى «".($toLoc['name'] ?? $atLoc['name'] ?? '—')."» — SKU {$skuCode}";
+            $pricePart = $purchaseUnitPrice !== null && $purchaseUnitPrice > 0
+                ? ' بسعر '.number_format($purchaseUnitPrice, 2).' ج.م'
+                : '';
+            $supplierPart = $purchaseSupplierName
+                ? " من «{$purchaseSupplierName}»"
+                : '';
+
+            return "إضافة {$qty} إلى «".($toLoc['name'] ?? $atLoc['name'] ?? '—')."»{$pricePart}{$supplierPart} — SKU {$skuCode}";
         }
 
         return "{$qty} قطعة — «".($atLoc['name'] ?? '—')."» — SKU {$skuCode}";

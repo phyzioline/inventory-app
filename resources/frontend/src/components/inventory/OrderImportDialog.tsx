@@ -572,25 +572,25 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
             <DialogContent
                 className={
                     results || preview
-                        ? 'flex h-[96vh] max-h-[96vh] w-[99vw] max-w-[99vw] flex-col gap-0 overflow-hidden p-3 sm:p-4'
-                        : 'max-w-2xl'
+                        ? 'flex h-[90vh] max-h-[90vh] w-[min(96vw,1200px)] max-w-[1200px] flex-col gap-0 overflow-hidden p-3 sm:p-4'
+                        : 'flex max-h-[min(88vh,720px)] w-[min(94vw,36rem)] max-w-xl flex-col gap-0 overflow-hidden p-4 sm:p-5'
                 }
             >
-                <DialogHeader className="shrink-0 space-y-1 pb-2">
-                    <DialogTitle className="flex items-center gap-2">
-                        <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
+                <DialogHeader className="shrink-0 space-y-0.5 pb-1.5">
+                    <DialogTitle className="flex items-center gap-2 text-base">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
                         {isAr ? 'استيراد الطلبات' : 'Import Orders'}
                     </DialogTitle>
                 </DialogHeader>
 
-                <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overscroll-contain py-2 pe-0.5">
+                <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain py-1 pe-0.5">
                     {!results && !preview ? (
                         <>
-                            <div className="space-y-3">
-                                <Label className="text-sm font-semibold">
+                            <div className="space-y-2">
+                                <Label className="text-xs font-semibold text-muted-foreground">
                                     {isAr ? 'كيف نحدد قناة البيع؟' : 'How should we assign the sales channel?'}
                                 </Label>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -600,29 +600,29 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                             }
                                         }}
                                         className={cn(
-                                            'rounded-xl border-2 p-4 text-start transition-all hover:border-emerald-500/50',
+                                            'rounded-lg border p-2.5 text-start transition-all hover:border-emerald-500/50',
                                             channelMode === 'auto'
-                                                ? 'border-emerald-500 bg-emerald-500/10 shadow-sm'
+                                                ? 'border-emerald-500 bg-emerald-500/10'
                                                 : 'border-border bg-muted/20',
                                         )}
                                     >
-                                        <div className="flex items-start gap-3">
+                                        <div className="flex items-start gap-2">
                                             <div
                                                 className={cn(
-                                                    'rounded-lg p-2 shrink-0',
+                                                    'rounded-md p-1.5 shrink-0',
                                                     channelMode === 'auto' ? 'bg-emerald-500/20 text-emerald-600' : 'bg-muted text-muted-foreground',
                                                 )}
                                             >
-                                                <ScanLine className="w-5 h-5" />
+                                                <ScanLine className="w-4 h-4" />
                                             </div>
-                                            <div className="min-w-0 space-y-1">
-                                                <p className="font-semibold text-sm text-foreground">
+                                            <div className="min-w-0">
+                                                <p className="font-semibold text-xs text-foreground">
                                                     {isAr ? 'تحديد من الشيت' : 'Detect from sheet'}
                                                 </p>
-                                                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                                <p className="text-[10px] leading-snug text-muted-foreground mt-0.5 line-clamp-2">
                                                     {isAr
-                                                        ? 'مثالي لشيت فيه تاجر + FBA معاً. النظام يقرأ fulfillment-channel ويختار القناة لكل صف تلقائياً — بدون إجبارك تختار قناة واحدة.'
-                                                        : 'Best for mixed merchant + FBA sheets. Reads fulfillment-channel per row — no need to pick one channel upfront.'}
+                                                        ? 'تاجر + FBA معاً — يقرأ fulfillment-channel لكل صف.'
+                                                        : 'Mixed merchant + FBA — reads fulfillment-channel per row.'}
                                                 </p>
                                             </div>
                                         </div>
@@ -632,29 +632,29 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                         type="button"
                                         onClick={() => setChannelMode('manual')}
                                         className={cn(
-                                            'rounded-xl border-2 p-4 text-start transition-all hover:border-sky-500/50',
+                                            'rounded-lg border p-2.5 text-start transition-all hover:border-sky-500/50',
                                             channelMode === 'manual'
-                                                ? 'border-sky-500 bg-sky-500/10 shadow-sm'
+                                                ? 'border-sky-500 bg-sky-500/10'
                                                 : 'border-border bg-muted/20',
                                         )}
                                     >
-                                        <div className="flex items-start gap-3">
+                                        <div className="flex items-start gap-2">
                                             <div
                                                 className={cn(
-                                                    'rounded-lg p-2 shrink-0',
+                                                    'rounded-md p-1.5 shrink-0',
                                                     channelMode === 'manual' ? 'bg-sky-500/20 text-sky-600' : 'bg-muted text-muted-foreground',
                                                 )}
                                             >
-                                                <Pin className="w-5 h-5" />
+                                                <Pin className="w-4 h-4" />
                                             </div>
-                                            <div className="min-w-0 space-y-1">
-                                                <p className="font-semibold text-sm text-foreground">
+                                            <div className="min-w-0">
+                                                <p className="font-semibold text-xs text-foreground">
                                                     {isAr ? 'قناة واحدة محددة' : 'Single fixed channel'}
                                                 </p>
-                                                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                                <p className="text-[10px] leading-snug text-muted-foreground mt-0.5 line-clamp-2">
                                                     {isAr
-                                                        ? 'كل صفوف الشيت تُسجَّل في القناة التي تختارها (مثلاً FBA بولندا فقط).'
-                                                        : 'Every row is saved under the channel you pick (e.g. FBA Poland only).'}
+                                                        ? 'كل الصفوف على القناة اللي تختارها.'
+                                                        : 'Every row under the channel you pick.'}
                                                 </p>
                                             </div>
                                         </div>
@@ -662,10 +662,10 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                 </div>
 
                                 {channelMode === 'manual' ? (
-                                    <div className="space-y-2 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
-                                        <Label>{isAr ? 'قناة الرفع' : 'Upload channel'}</Label>
+                                    <div className="space-y-1.5 rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5">
+                                        <Label className="text-xs">{isAr ? 'قناة الرفع' : 'Upload channel'}</Label>
                                         <Select value={channelId} onValueChange={setChannelId}>
-                                            <SelectTrigger>
+                                            <SelectTrigger className="h-9">
                                                 <SelectValue placeholder={isAr ? 'اختر القناة' : 'Select channel'} />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -678,18 +678,13 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                         </Select>
                                     </div>
                                 ) : (
-                                    <div className="space-y-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
-                                        <p className="text-[11px] leading-relaxed text-muted-foreground">
-                                            {isAr
-                                                ? 'النظام يحدد الحساب من SKU في الكتالوج (مثلاً Art مقابل فيزيولاين)، ثم يفرّق تاجر/FBA من fulfillment-channel. اختيار حساب مرجعي اختياري عند الشك.'
-                                                : 'Account is inferred from catalog SKU (e.g. Art vs Phyzioline), then merchant/FBA from fulfillment-channel. Optional anchor if ambiguous.'}
-                                        </p>
+                                    <div className="space-y-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-2.5">
                                         <Label className="text-xs">{isAr ? 'حساب مرجعي (اختياري)' : 'Reference account (optional)'}</Label>
                                         <Select
                                             value={channelId || '__auto__'}
                                             onValueChange={(v) => setChannelId(v === '__auto__' ? '' : v)}
                                         >
-                                            <SelectTrigger>
+                                            <SelectTrigger className="h-9">
                                                 <SelectValue placeholder={isAr ? 'تلقائي من SKU' : 'Auto from SKU'} />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -705,7 +700,7 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                 )}
                             </div>
 
-                            <div className="border-2 border-dashed border-gray-800 rounded-xl p-8 text-center hover:border-emerald-500/50 transition-colors bg-gray-900/50">
+                            <div className="border border-dashed border-border rounded-lg px-3 py-4 text-center hover:border-emerald-500/50 transition-colors bg-muted/30">
                                 <input
                                     type="file"
                                     accept=".xlsx,.xls,.csv,.txt"
@@ -713,70 +708,65 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                     className="hidden"
                                     id="order-upload-input"
                                 />
-                                <label htmlFor="order-upload-input" className="cursor-pointer">
-                                    <Upload className="w-10 h-10 mx-auto mb-4 text-gray-500" />
-                                    <p className="text-sm font-medium">
+                                <label htmlFor="order-upload-input" className="cursor-pointer block">
+                                    <Upload className="w-6 h-6 mx-auto mb-1.5 text-muted-foreground" />
+                                    <p className="text-xs font-medium">
                                         {file ? file.name : (isAr ? 'اضغط لاختيار ملف Excel/CSV/TXT' : 'Click to select Excel/CSV/TXT file')}
                                     </p>
-                                    <p className="text-xs text-muted-foreground mt-2">
-                                        Supports Amazon, Noon exports (CSV/TXT/Excel)
+                                    <p className="text-[10px] text-muted-foreground mt-1">
+                                        Amazon / Noon — CSV · TXT · Excel
                                     </p>
                                 </label>
                             </div>
-                            <div className="rounded-lg border border-border p-3 bg-muted/20 space-y-2">
-                                <p className="text-xs text-muted-foreground">
+                            <div className="rounded-lg border border-border p-2.5 bg-muted/20 space-y-1.5">
+                                <p className="text-[10px] text-muted-foreground leading-snug">
                                     {isAr
-                                        ? 'لو الاستيراد فشل بسبب عدم تطابق الأعمدة، نزّل القالب واملأ عليه ثم ارفعه.'
-                                        : 'If import fails due to column mismatch, download the template, fill it, then upload it.'}
+                                        ? 'لو الأعمدة مش متطابقة: نزّل قالب واملأه ثم ارفعه.'
+                                        : 'Column mismatch? Download a template, fill it, then upload.'}
                                 </p>
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <div className="grid grid-cols-3 gap-1.5">
                                     <Button
                                         type="button"
                                         variant="outline"
-                                        className="h-8 w-full px-3 text-xs font-medium justify-center"
+                                        className="h-7 w-full px-2 text-[11px] font-medium justify-center"
                                         onClick={() => downloadTemplate('all-orders')}
                                     >
-                                        <Download className="w-3.5 h-3.5 me-1.5 shrink-0" />
+                                        <Download className="w-3 h-3 me-1 shrink-0" />
                                         {isAr ? 'كل الطلبات' : 'All Orders'}
                                     </Button>
                                     <Button
                                         type="button"
                                         variant="outline"
-                                        className="h-8 w-full px-3 text-xs font-medium justify-center"
+                                        className="h-7 w-full px-2 text-[11px] font-medium justify-center"
                                         onClick={() => downloadTemplate('amazon-fba')}
                                     >
-                                        <Download className="w-3.5 h-3.5 me-1.5 shrink-0" />
+                                        <Download className="w-3 h-3 me-1 shrink-0" />
                                         {isAr ? 'أمازون FBA' : 'Amazon FBA'}
                                     </Button>
                                     <Button
                                         type="button"
                                         variant="outline"
-                                        className="h-8 w-full px-3 text-xs font-medium justify-center"
+                                        className="h-7 w-full px-2 text-[11px] font-medium justify-center"
                                         onClick={() => downloadTemplate('amazon-fbm')}
                                     >
-                                        <Download className="w-3.5 h-3.5 me-1.5 shrink-0" />
+                                        <Download className="w-3 h-3 me-1 shrink-0" />
                                         {isAr ? 'أمازون FBM' : 'Amazon FBM'}
                                     </Button>
                                 </div>
                             </div>
 
-                            <div className="rounded-lg border border-amber-500/35 bg-amber-500/5 p-3 space-y-2">
-                                <p className="text-sm font-medium text-foreground">
+                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1.5">
+                                <p className="text-xs font-medium text-foreground">
                                     {isAr ? 'إعادة خصم النواقص (بدون رفع الشيت)' : 'Retry pending deductions (no sheet)'}
                                 </p>
-                                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                    {isAr
-                                        ? 'للطلبات المسجّلة بنقص مخزون أو بدون خصم سابق. يتحقق من عدم وجود حركة OUT قبل الخصم — لا دبلرة.'
-                                        : 'For shortage / legacy undeducted lines. Checks for an existing OUT before deducting — no double sell.'}
-                                </p>
-                                <div className="flex flex-wrap items-end gap-2">
-                                    <div className="space-y-1">
-                                        <Label className="text-xs">{isAr ? 'آخر كام يوم' : 'Last N days'}</Label>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                        <Label className="text-[10px] whitespace-nowrap">{isAr ? 'آخر كام يوم' : 'Last N days'}</Label>
                                         <Input
                                             type="number"
                                             min={0}
                                             max={366}
-                                            className="w-24 h-8"
+                                            className="w-16 h-7 text-xs"
                                             value={retryDays}
                                             onChange={(e) => setRetryDays(e.target.value)}
                                         />
@@ -784,30 +774,29 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                     <Button
                                         type="button"
                                         variant="outline"
-                                        size="sm"
+                                        className="h-7 text-[11px] px-2"
                                         disabled={retryBusy}
                                         onClick={() => void handleRetryStockPreview()}
                                     >
-                                        {retryBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ScanLine className="w-4 h-4 mr-1" />}
+                                        {retryBusy ? <Loader2 className="w-3 h-3 animate-spin me-1" /> : <ScanLine className="w-3 h-3 me-1" />}
                                         {isAr ? 'معاينة' : 'Preview'}
                                     </Button>
                                     <Button
                                         type="button"
-                                        size="sm"
-                                        className="bg-amber-600 hover:bg-amber-700 text-white"
+                                        className="h-7 text-[11px] px-2 bg-amber-600 hover:bg-amber-700 text-white"
                                         disabled={retryBusy || !retryPreview}
                                         onClick={() => void handleRetryStockRun()}
                                     >
-                                        {retryBusy ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                                        {retryBusy ? <Loader2 className="w-3 h-3 animate-spin me-1" /> : <RefreshCw className="w-3 h-3 me-1" />}
                                         {isAr ? 'تنفيذ الخصم' : 'Run deduction'}
                                     </Button>
                                 </div>
                                 {retryPreview ? (
-                                    <p className="text-[11px] text-muted-foreground">
+                                    <p className="text-[10px] text-muted-foreground leading-snug">
                                         {isAr
-                                            ? `نتيجة: ممسوح ${retryPreview.scanned} · سيُخصم/خُصم ${retryPreview.deducted} · سبق ${retryPreview.already_deducted} · نقص ${retryPreview.shortage} · تجاهل ${retryPreview.skipped}`
-                                            : `Result: scanned ${retryPreview.scanned} · deduct ${retryPreview.deducted} · already ${retryPreview.already_deducted} · shortage ${retryPreview.shortage} · skipped ${retryPreview.skipped}`}
-                                        {retryPreview.dry_run ? (isAr ? ' (معاينة فقط)' : ' (preview only)') : ''}
+                                            ? `ممسوح ${retryPreview.scanned} · خصم ${retryPreview.deducted} · سبق ${retryPreview.already_deducted} · نقص ${retryPreview.shortage}`
+                                            : `scanned ${retryPreview.scanned} · deduct ${retryPreview.deducted} · already ${retryPreview.already_deducted} · shortage ${retryPreview.shortage}`}
+                                        {retryPreview.dry_run ? (isAr ? ' (معاينة)' : ' (preview)') : ''}
                                     </p>
                                 ) : null}
                             </div>
@@ -1170,7 +1159,7 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                     )}
                 </div>
 
-                <DialogFooter className="shrink-0 border-t border-border/60 bg-background pt-3 mt-2">
+                <DialogFooter className="shrink-0 border-t border-border/60 bg-background pt-2.5 mt-1.5 gap-2">
                     {!results && !preview ? (
                         <>
                             <Button variant="ghost" onClick={handleClose}>

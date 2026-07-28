@@ -22,6 +22,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { ChevronsUpDown, Check } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 type SortField =
   | 'name'
@@ -94,7 +95,11 @@ function getCustomerOutstandingCell(summary: {
   };
 }
 
-export default function CustomersPage() {
+interface CustomersPageProps {
+  embedded?: boolean;
+}
+
+export default function CustomersPage({ embedded = false }: CustomersPageProps) {
   const { t, language } = useLanguage();
   const isAr = language === 'ar';
   const dir = isAr ? 'rtl' : 'ltr';
@@ -508,50 +513,52 @@ export default function CustomersPage() {
     sortField === field ? sortDirection === 'desc' ? <ArrowDownWideNarrow className="w-3 h-3 ms-1" /> : <ArrowUpWideNarrow className="w-3 h-3 ms-1" /> : null;
 
   return (
-    <div className="space-y-6" dir={dir}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className={cn('space-y-6', embedded && 'space-y-3')} dir={dir}>
+      <div className={cn('flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between', embedded && 'gap-2')}>
         <div>
-          <h1 className="text-2xl font-bold">{t('customers.title')}</h1>
-          <p className="text-muted-foreground">{t('customers.subtitle')}</p>
+          <h1 className={cn('font-bold', embedded ? 'text-lg' : 'text-2xl')}>{t('customers.title')}</h1>
+          {!embedded && <p className="text-muted-foreground">{t('customers.subtitle')}</p>}
         </div>
-        <Button onClick={() => setIsAddCustomerOpen(true)}>{t('customers.addCustomer')}</Button>
+        <Button size={embedded ? 'sm' : 'default'} onClick={() => setIsAddCustomerOpen(true)}>{t('customers.addCustomer')}</Button>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={cn('grid gap-4', embedded ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-4')}>
         <Card>
-          <CardContent className="space-y-1 pt-6">
-            <p className="text-xl font-bold tabular-nums">{totals.totalSales.toLocaleString()} EGP</p>
-            <p className="text-sm text-muted-foreground">{t('customers.totalSales')}</p>
+          <CardContent className={cn('space-y-1', embedded ? 'pt-4' : 'pt-6')}>
+            <p className={cn('font-bold tabular-nums', embedded ? 'text-base' : 'text-xl')}>{totals.totalSales.toLocaleString()} EGP</p>
+            <p className="text-xs text-muted-foreground">{t('customers.totalSales')}</p>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="space-y-1 pt-6">
-            <p className="text-xl font-bold tabular-nums">{totals.totalReceived.toLocaleString()} EGP</p>
-            <p className="text-sm text-muted-foreground">{t('customers.collected')}</p>
+          <CardContent className={cn('space-y-1', embedded ? 'pt-4' : 'pt-6')}>
+            <p className={cn('font-bold tabular-nums', embedded ? 'text-base' : 'text-xl')}>{totals.totalReceived.toLocaleString()} EGP</p>
+            <p className="text-xs text-muted-foreground">{t('customers.collected')}</p>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="space-y-1 pt-6">
-            <p className="text-xl font-bold tabular-nums">{totals.outstanding.toLocaleString()} EGP</p>
-            <p className="text-sm text-muted-foreground">{t('customers.outstanding')}</p>
-            <p className="text-[11px] text-muted-foreground leading-snug pt-1">{t('customers.outstandingHint')}</p>
+          <CardContent className={cn('space-y-1', embedded ? 'pt-4' : 'pt-6')}>
+            <p className={cn('font-bold tabular-nums', embedded ? 'text-base' : 'text-xl')}>{totals.outstanding.toLocaleString()} EGP</p>
+            <p className="text-xs text-muted-foreground">{t('customers.outstanding')}</p>
+            {!embedded && <p className="text-[11px] text-muted-foreground leading-snug pt-1">{t('customers.outstandingHint')}</p>}
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="space-y-1 pt-6">
-            <p className="text-xl font-bold tabular-nums">{totals.invoiceCount}</p>
-            <p className="text-sm text-muted-foreground">{t('customers.invoices')}</p>
+          <CardContent className={cn('space-y-1', embedded ? 'pt-4' : 'pt-6')}>
+            <p className={cn('font-bold tabular-nums', embedded ? 'text-base' : 'text-xl')}>{totals.invoiceCount}</p>
+            <p className="text-xs text-muted-foreground">{t('customers.invoices')}</p>
           </CardContent>
         </Card>
       </div>
 
-      <Alert className="border-muted bg-muted/20">
-        <AlertDescription className="text-xs leading-relaxed">{t('customers.financeNote')}</AlertDescription>
-      </Alert>
+      {!embedded && (
+        <Alert className="border-muted bg-muted/20">
+          <AlertDescription className="text-xs leading-relaxed">{t('customers.financeNote')}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>{t('customers.tableTitle')}</CardTitle>
+        <CardHeader className={embedded ? 'space-y-2 p-4' : undefined}>
+          <CardTitle className={embedded ? 'text-base' : undefined}>{t('customers.tableTitle')}</CardTitle>
           <div className="flex flex-wrap gap-2">
             <div className="relative w-full md:w-72">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -566,12 +573,13 @@ export default function CustomersPage() {
             <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setCurrentPage(1); }} className="w-44" />
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className={embedded ? 'p-4 pt-0' : undefined}>
           {loadingCustomers ? (
-            <div className="py-12 flex justify-center">
+            <div className={cn('flex justify-center', embedded ? 'py-8' : 'py-12')}>
               <Loader2 className="w-8 h-8 animate-spin" />
             </div>
           ) : (
+            <div className={embedded ? 'overflow-x-auto' : undefined}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -656,6 +664,7 @@ export default function CustomersPage() {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
           {paginationMeta && paginationMeta.last_page > 1 && (
             <div className="flex items-center justify-between pt-3 border-t">

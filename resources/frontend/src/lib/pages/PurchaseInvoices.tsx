@@ -14,6 +14,8 @@ import {
     Eye,
     Loader2,
     RotateCcw,
+    ArrowUpDown,
+    X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,6 +52,29 @@ import {
 } from '@/utils/purchasePaymentStatus';
 import { purchaseInvoiceMatchesSearch } from '@/utils/purchaseInvoiceSearch';
 
+type PurchaseSortField =
+    | 'invoiceNumber'
+    | 'supplier'
+    | 'items'
+    | 'date'
+    | 'status'
+    | 'amount'
+    | 'paid'
+    | 'balance';
+
+const EMPTY_COLUMN_FILTERS = {
+    invoiceNumber: '',
+    supplier: '',
+    itemsMin: '',
+    dateFrom: '',
+    dateTo: '',
+    status: '',
+    amountMin: '',
+    amountMax: '',
+    paidMin: '',
+    balanceMin: '',
+};
+
 export default function PurchaseInvoicesPage() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
@@ -58,6 +83,9 @@ export default function PurchaseInvoicesPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('all');
+    const [columnFilters, setColumnFilters] = useState({ ...EMPTY_COLUMN_FILTERS });
+    const [sortField, setSortField] = useState<PurchaseSortField>('date');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -139,23 +167,120 @@ export default function PurchaseInvoicesPage() {
         return itemCount <= 0 && totalAmount <= 0 && paidAmount <= 0;
     };
 
-    // Filter invoices
-    const filteredInvoices = invoices?.filter((invoice) => {
-        if (isEmptyInvoice(invoice)) return false;
-        const matchesSearch = purchaseInvoiceMatchesSearch(invoice, searchQuery);
+    // Filter + sort invoices (Excel-style column filters)
+    const processedInvoices = useMemo(() => {
+        const normalize = (v: unknown) => String(v ?? '').toLowerCase().trim();
+        const rows = (invoices || []).filter((invoice) => {
+            if (isEmptyInvoice(invoice)) return false;
 
-        // Default view hides cancelled invoices so "deleted" records stop affecting day-to-day list.
-        const matchesStatus = statusFilter === 'all'
-            ? invoice.status !== 'cancelled'
-            : invoice.status === statusFilter;
+            const matchesSearch = purchaseInvoiceMatchesSearch(invoice, searchQuery);
+            const matchesStatus = statusFilter === 'all'
+                ? invoice.status !== 'cancelled'
+                : invoice.status === statusFilter;
+            if (!matchesSearch || !matchesStatus) return false;
 
-        return matchesSearch && matchesStatus;
-    });
+            const invoiceNumber = normalize(invoice.invoice_number);
+            const supplier = normalize(invoice.supplier_name);
+            const itemCount = Number(invoice.item_count || 0);
+            const status = normalize(invoice.status);
+            const amount = Number(invoice.total_amount || 0);
+            const paid = Number(invoice.paid_amount || 0);
+            const balance = amount - paid;
+            const dateStr = invoice.created_at
+                ? new Date(invoice.created_at).toISOString().slice(0, 10)
+                : '';
+
+            if (columnFilters.invoiceNumber && !invoiceNumber.includes(normalize(columnFilters.invoiceNumber))) {
+                return false;
+            }
+            if (columnFilters.supplier && !supplier.includes(normalize(columnFilters.supplier))) {
+                return false;
+            }
+            if (columnFilters.itemsMin && itemCount < Number(columnFilters.itemsMin)) {
+                return false;
+            }
+            if (columnFilters.dateFrom && dateStr < columnFilters.dateFrom) {
+                return false;
+            }
+            if (columnFilters.dateTo && dateStr > columnFilters.dateTo) {
+                return false;
+            }
+            if (columnFilters.status && status !== normalize(columnFilters.status)) {
+                return false;
+            }
+            if (columnFilters.amountMin && amount < Number(columnFilters.amountMin)) {
+                return false;
+            }
+            if (columnFilters.amountMax && amount > Number(columnFilters.amountMax)) {
+                return false;
+            }
+            if (columnFilters.paidMin && paid < Number(columnFilters.paidMin)) {
+                return false;
+            }
+            if (columnFilters.balanceMin && balance < Number(columnFilters.balanceMin)) {
+                return false;
+            }
+
+            return true;
+        });
+
+        const dir = sortDirection === 'asc' ? 1 : -1;
+        const getVal = (inv: any): string | number => {
+            switch (sortField) {
+                case 'invoiceNumber':
+                    return String(inv.invoice_number || '');
+                case 'supplier':
+                    return String(inv.supplier_name || '');
+                case 'items':
+                    return Number(inv.item_count || 0);
+                case 'date':
+                    return new Date(inv.created_at || 0).getTime();
+                case 'status':
+                    return String(inv.status || '');
+                case 'amount':
+                    return Number(inv.total_amount || 0);
+                case 'paid':
+                    return Number(inv.paid_amount || 0);
+                case 'balance':
+                    return Number(inv.total_amount || 0) - Number(inv.paid_amount || 0);
+                default:
+                    return 0;
+            }
+        };
+
+        return [...rows].sort((a, b) => {
+            const av = getVal(a);
+            const bv = getVal(b);
+            if (typeof av === 'number' && typeof bv === 'number') {
+                return (av - bv) * dir;
+            }
+            return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
+        });
+    }, [invoices, searchQuery, statusFilter, columnFilters, sortField, sortDirection]);
+
+    const hasActiveColumnFilters = useMemo(
+        () => Object.values(columnFilters).some((v) => String(v).trim() !== ''),
+        [columnFilters],
+    );
+
+    const sortIndicator = (field: PurchaseSortField) =>
+        sortField === field ? (sortDirection === 'asc' ? '↑' : '↓') : '';
+
+    const handleSort = (field: PurchaseSortField) => {
+        if (sortField === field) {
+            setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+            return;
+        }
+        setSortField(field);
+        setSortDirection(['date', 'amount', 'paid', 'balance', 'items'].includes(field) ? 'desc' : 'asc');
+    };
+
+    const clearColumnFilters = () => setColumnFilters({ ...EMPTY_COLUMN_FILTERS });
 
     const emptyInvoices = (invoices || []).filter((invoice) => isEmptyInvoice(invoice));
 
     // Calculate stats
-    const nonCancelledForStats = (filteredInvoices || []).filter((inv) => inv.status !== 'cancelled');
+    const nonCancelledForStats = (processedInvoices || []).filter((inv) => inv.status !== 'cancelled');
     const stats = {
         total: nonCancelledForStats.length,
         totalAmount: nonCancelledForStats.reduce((sum, inv) => sum + Number(inv.total_amount || 0), 0),
@@ -168,7 +293,7 @@ export default function PurchaseInvoicesPage() {
     };
 
     const handleExport = () => {
-        if (!filteredInvoices || filteredInvoices.length === 0) {
+        if (!processedInvoices || processedInvoices.length === 0) {
             toast.error(t('purchases.export.noInvoices'));
             return;
         }
@@ -759,28 +884,207 @@ export default function PurchaseInvoicesPage() {
                                     <SelectItem value="cancelled">{t('purchases.status.cancelled')}</SelectItem>
                                 </SelectContent>
                             </Select>
+                            {hasActiveColumnFilters && (
+                                <Button variant="ghost" size="sm" onClick={clearColumnFilters} className="h-9 gap-1 text-xs">
+                                    <X className="h-3.5 w-3.5" />
+                                    {isAr ? 'مسح فلاتر الأعمدة' : 'Clear column filters'}
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </CardHeader>
                 <CardContent>
-                    {filteredInvoices && filteredInvoices.length > 0 ? (
+                    {processedInvoices && processedInvoices.length > 0 ? (
                         <div className="overflow-x-auto">
                             <table className="data-table">
                                 <thead>
                                     <tr>
-                                        <th>{t('purchases.table.invoiceNumber')}</th>
-                                        <th>{t('filters.supplier')}</th>
-                                        <th>{t('purchases.table.items')}</th>
-                                        <th>{t('common.date')}</th>
-                                        <th>{t('common.status')}</th>
-                                        <th className="text-right">{t('common.amount')}</th>
-                                        <th className="text-right">{t('purchases.table.paid')}</th>
-                                        <th className="text-right">{t('purchases.table.balance')}</th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap"
+                                            onClick={() => handleSort('invoiceNumber')}
+                                        >
+                                            <span className="inline-flex items-center gap-1">
+                                                {t('purchases.table.invoiceNumber')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('invoiceNumber')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap"
+                                            onClick={() => handleSort('supplier')}
+                                        >
+                                            <span className="inline-flex items-center gap-1">
+                                                {t('filters.supplier')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('supplier')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap"
+                                            onClick={() => handleSort('items')}
+                                        >
+                                            <span className="inline-flex items-center gap-1">
+                                                {t('purchases.table.items')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('items')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap"
+                                            onClick={() => handleSort('date')}
+                                        >
+                                            <span className="inline-flex items-center gap-1">
+                                                {t('common.date')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('date')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap"
+                                            onClick={() => handleSort('status')}
+                                        >
+                                            <span className="inline-flex items-center gap-1">
+                                                {t('common.status')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('status')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap text-right"
+                                            onClick={() => handleSort('amount')}
+                                        >
+                                            <span className="inline-flex items-center justify-end gap-1 w-full">
+                                                {t('common.amount')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('amount')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap text-right"
+                                            onClick={() => handleSort('paid')}
+                                        >
+                                            <span className="inline-flex items-center justify-end gap-1 w-full">
+                                                {t('purchases.table.paid')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('paid')}
+                                            </span>
+                                        </th>
+                                        <th
+                                            className="cursor-pointer select-none whitespace-nowrap text-right"
+                                            onClick={() => handleSort('balance')}
+                                        >
+                                            <span className="inline-flex items-center justify-end gap-1 w-full">
+                                                {t('purchases.table.balance')}
+                                                <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                                {sortIndicator('balance')}
+                                            </span>
+                                        </th>
                                         <th className="text-right">{t('common.actions')}</th>
+                                    </tr>
+                                    <tr className="bg-muted/30">
+                                        <th className="py-2 px-2">
+                                            <Input
+                                                className="h-8 text-xs"
+                                                placeholder={isAr ? 'فلتر رقم الفاتورة' : 'Filter invoice #'}
+                                                value={columnFilters.invoiceNumber}
+                                                onChange={(e) => setColumnFilters((prev) => ({ ...prev, invoiceNumber: e.target.value }))}
+                                            />
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <Input
+                                                className="h-8 text-xs"
+                                                placeholder={isAr ? 'فلتر المورد' : 'Filter supplier'}
+                                                value={columnFilters.supplier}
+                                                onChange={(e) => setColumnFilters((prev) => ({ ...prev, supplier: e.target.value }))}
+                                            />
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <Input
+                                                type="number"
+                                                min={0}
+                                                className="h-8 text-xs"
+                                                placeholder={isAr ? 'حد أدنى' : 'Min items'}
+                                                value={columnFilters.itemsMin}
+                                                onChange={(e) => setColumnFilters((prev) => ({ ...prev, itemsMin: e.target.value }))}
+                                            />
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <div className="flex flex-col gap-1">
+                                                <Input
+                                                    type="date"
+                                                    className="h-8 text-xs"
+                                                    value={columnFilters.dateFrom}
+                                                    onChange={(e) => setColumnFilters((prev) => ({ ...prev, dateFrom: e.target.value }))}
+                                                />
+                                                <Input
+                                                    type="date"
+                                                    className="h-8 text-xs"
+                                                    value={columnFilters.dateTo}
+                                                    onChange={(e) => setColumnFilters((prev) => ({ ...prev, dateTo: e.target.value }))}
+                                                />
+                                            </div>
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <select
+                                                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                                                value={columnFilters.status}
+                                                onChange={(e) => setColumnFilters((prev) => ({ ...prev, status: e.target.value }))}
+                                            >
+                                                <option value="">{isAr ? 'كل الحالات' : 'All statuses'}</option>
+                                                <option value="draft">{t('purchases.status.draft')}</option>
+                                                <option value="review">{t('purchases.status.review')}</option>
+                                                <option value="pending">{t('purchases.status.pending')}</option>
+                                                <option value="paid">{t('purchases.status.paid')}</option>
+                                                <option value="partially_paid">{t('purchases.status.partiallyPaid')}</option>
+                                                <option value="confirmed">{t('purchases.status.confirmed')}</option>
+                                                <option value="cancelled">{t('purchases.status.cancelled')}</option>
+                                            </select>
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <div className="flex flex-col gap-1">
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    className="h-8 text-xs"
+                                                    placeholder={isAr ? 'من' : 'Min'}
+                                                    value={columnFilters.amountMin}
+                                                    onChange={(e) => setColumnFilters((prev) => ({ ...prev, amountMin: e.target.value }))}
+                                                />
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    className="h-8 text-xs"
+                                                    placeholder={isAr ? 'إلى' : 'Max'}
+                                                    value={columnFilters.amountMax}
+                                                    onChange={(e) => setColumnFilters((prev) => ({ ...prev, amountMax: e.target.value }))}
+                                                />
+                                            </div>
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <Input
+                                                type="number"
+                                                min={0}
+                                                className="h-8 text-xs"
+                                                placeholder={isAr ? 'حد أدنى' : 'Min paid'}
+                                                value={columnFilters.paidMin}
+                                                onChange={(e) => setColumnFilters((prev) => ({ ...prev, paidMin: e.target.value }))}
+                                            />
+                                        </th>
+                                        <th className="py-2 px-2">
+                                            <Input
+                                                type="number"
+                                                min={0}
+                                                className="h-8 text-xs"
+                                                placeholder={isAr ? 'حد أدنى' : 'Min balance'}
+                                                value={columnFilters.balanceMin}
+                                                onChange={(e) => setColumnFilters((prev) => ({ ...prev, balanceMin: e.target.value }))}
+                                            />
+                                        </th>
+                                        <th className="py-2 px-2 text-muted-foreground text-xs">—</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredInvoices.map((invoice) => (
+                                    {processedInvoices.map((invoice) => (
                                         <tr
                                             key={invoice.id}
                                             className="cursor-pointer hover:bg-muted/30"
@@ -845,7 +1149,7 @@ export default function PurchaseInvoicesPage() {
                             <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                             <p className="text-lg font-medium mb-2">{t('purchases.empty.noInvoices')}</p>
                             <p className="text-muted-foreground mb-4">
-                                {searchQuery || statusFilter !== 'all'
+                                {searchQuery || statusFilter !== 'all' || hasActiveColumnFilters
                                     ? t('purchases.empty.adjustFilters')
                                     : t('purchases.empty.createFirst')}
                             </p>
