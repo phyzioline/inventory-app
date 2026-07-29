@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Presentation\Http\Controllers\Api\Admin\AdminDashboardController;
+use App\Presentation\Http\Controllers\Api\Admin\AdminErrorLogController;
 use App\Presentation\Http\Controllers\Api\Admin\AdminSubscriptionController;
 use App\Presentation\Http\Controllers\Api\ASINController;
 use App\Presentation\Http\Controllers\Api\AsnTransferController;
@@ -254,6 +255,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::prefix('admin')->middleware(['super.admin'])->group(function (): void {
             Route::get('overview', [AdminDashboardController::class, 'overview']);
             Route::get('subscriptions', [AdminSubscriptionController::class, 'index']);
+            Route::get('error-log', [AdminErrorLogController::class, 'index']);
         });
 
         // ── Subscription (tenant self-service) ──────────────────────────

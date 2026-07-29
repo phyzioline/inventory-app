@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Loader2, AlertTriangle } from 'lucide-react';
 
 interface AdminOverview {
   total_products: number;
@@ -52,7 +54,15 @@ export default function AdminOverview() {
 
   return (
     <div className="space-y-6 p-6">
-      <h1 className="text-2xl font-bold">Admin — Cross-Tenant Overview</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Admin — Cross-Tenant Overview</h1>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/admin/error-log">
+            <AlertTriangle className="h-4 w-4 mr-1.5 text-destructive" />
+            Error Center
+          </Link>
+        </Button>
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Tenants" value={data.tenant_count} />

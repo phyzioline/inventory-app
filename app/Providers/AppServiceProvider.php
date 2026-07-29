@@ -40,6 +40,13 @@ use App\Presentation\Console\Commands\RepairImportSkuDrift;
 use App\Presentation\Console\Commands\RollbackMarketplaceImportStockCommand;
 use App\Presentation\Console\Commands\GrantSuperAdmin;
 use App\Presentation\Console\Commands\SyncSkuCostsFromMasterProductsCommand;
+use App\Domain\Models\Wms\CapitalSource;
+use App\Domain\Models\Wms\InventoryOrder;
+use App\Domain\Models\Wms\PurchaseBatch;
+use App\Domain\Models\Wms\Settlement;
+use App\Domain\Models\Wms\Supplier;
+use App\Domain\Models\Wms\TreasurySulfa;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
@@ -86,6 +93,22 @@ class AppServiceProvider extends ServiceProvider
         // Single super-admin bypass — see database/migrations/*_add_is_super_admin_to_users_table.php.
         // Never mass-assignable (not in User::$fillable); only set via the admin:grant-super command.
         Gate::before(fn ($user, string $ability) => $user->is_super_admin ? true : null);
+
+        // Map legacy Modules\Inventory and App\Models\Inventory namespaces (from the monolith
+        // and intermediate migration steps) to the current App\Domain\Models\Wms namespace.
+        // These values are persisted in morphable_type / payee_type / reference_type columns.
+        Relation::morphMap([
+            'Modules\Inventory\app\Domain\Models\Wms\Settlement'    => Settlement::class,
+            'Modules\Inventory\app\Domain\Models\Wms\Vendor'        => Vendor::class,
+            'Modules\Inventory\app\Domain\Models\Wms\Supplier'      => Supplier::class,
+            'Modules\Inventory\app\Domain\Models\Wms\CapitalSource' => CapitalSource::class,
+            'Modules\Inventory\app\Domain\Models\Wms\InventoryOrder' => InventoryOrder::class,
+            'Modules\Inventory\app\Domain\Models\Wms\TreasurySulfa' => TreasurySulfa::class,
+            'Modules\Inventory\app\Domain\Models\Wms\PurchaseBatch' => PurchaseBatch::class,
+            'App\Models\Inventory\Vendor'                           => Vendor::class,
+            'App\Models\Inventory\Supplier'                         => Supplier::class,
+            'App\Models\Inventory\PurchaseBatch'                    => PurchaseBatch::class,
+        ]);
 
         if ($this->app->runningInConsole()) {
             $this->commands([

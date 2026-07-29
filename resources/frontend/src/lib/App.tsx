@@ -88,6 +88,7 @@ const Subscription = lazy(() => import("./pages/Subscription"));
 // Admin (super-admin only)
 const AdminOverview = lazy(() => import("./pages/admin/AdminOverview"));
 const AdminSubscriptions = lazy(() => import("./pages/admin/AdminSubscriptions"));
+const AdminErrorLog = lazy(() => import("./pages/admin/AdminErrorLog"));
 
 function RouteFallback() {
   return (
@@ -234,6 +235,11 @@ const App = () => (
                 <Route path="/admin/subscriptions" element={
                   <AdminProtectedRoute>
                     <AdminSubscriptions />
+                  </AdminProtectedRoute>
+                } />
+                <Route path="/admin/error-log" element={
+                  <AdminProtectedRoute>
+                    <AdminErrorLog />
                   </AdminProtectedRoute>
                 } />
 
