@@ -1,6 +1,6 @@
 # Discovery Report — inventory-app
 
-**Date:** 2026-07-30  
+**Date:** 2026-07-30 (refreshed after Phases A–C + Staff RBAC / cycle counts)  
 **Agent:** Project Discovery  
 **Identity check:** `pwd` = inventory.phyzioline.com · remote = `phyzioline/inventory-app.git` · **no `Modules/`**
 
@@ -10,18 +10,21 @@
 
 | Metric | Value |
 |--------|------:|
-| Migrations | 83 |
-| Application services | 27 |
-| API controllers | ~48 |
-| Domain WMS models | 48 |
-| Route declarations | ~168 (`/api/inventory`) |
-| SPA pages (lazy) | 50 |
-| Pest/PHPUnit test files | 17 (+ Pest.php/TestCase) |
-| Queue Jobs | **0** |
-| Formal Policies | **0** |
+| Migrations | 86+ (incl. Phase C + RBAC/cycle) |
+| Application services | ~31 |
+| API controllers | ~50 |
+| Domain WMS models | 50+ (incl. TenantMembership, CycleCount, AuditLog) |
+| Route declarations | ~175 (`/api/inventory`) |
+| SPA pages (lazy) | 51+ (CycleCounts; FBA/FBM real pages) |
+| Pest/PHPUnit Feature+Unit files | 19+ |
+| Queue Jobs | **1** (`ProcessMarketplaceImportJob`) |
+| Formal Policies | **1** (`DestructiveInventoryPolicy`) |
+| Form Requests | **5** |
+| Staff RBAC | `tenant_memberships` + `TenantContext` + abilities on `/auth/me` |
 
-**Auth:** Sanctum session + CSRF · `Gate::before` super-admin bypass · tenant isolation via `IsIsolatedByUser`  
-**DB safety:** `.env.testing` + `phpunit.xml` force `phyzioline_inventory_test` · `DatabaseSafetyGuard`
+**Auth:** Sanctum session + CSRF · `Gate::before` super-admin bypass · tenant isolation via `IsIsolatedByUser` → **`TenantContext::id()`** (staff act as owner tenant)  
+**DB safety:** `.env.testing` + `phpunit.xml` force `phyzioline_inventory_test` · `DatabaseSafetyGuard`  
+**Unified scorecard:** [13-executive-scorecard.md](./13-executive-scorecard.md)
 
 ---
 
@@ -41,7 +44,9 @@
 | CRM | Customer / Vendor / Supplier | `CustomersSuppliers` | med |
 | Subscriptions | `SubscriptionCheckoutService`, Paymob | `Subscription`, Admin | med |
 | Reports / dashboard | metrics, dead-stock, margin alerts | `Dashboard`, `Reports` | med |
-| Amazon tools | ASINs, removals; FBA/FBM pages | ASINs live; **FBA/FBM ComingSoon** | gap |
+| Amazon tools | ASINs, removals; FBA/FBM SKU lists | ASINs; **FBA/FBM MVP pages** (not ComingSoon) | med |
+| Staff / RBAC | `StaffMembershipService`, abilities | Settings → Staff | YES |
+| Cycle counts | `CycleCountService` | `/inventory/cycle-counts` | med |
 
 ---
 

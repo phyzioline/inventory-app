@@ -1,0 +1,83 @@
+name: Inventory QA Safety
+
+# Light CI: never point tests at production DB.
+# Full Pest needs PostgreSQL phyzioline_inventory_test + secrets (optional job).
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  phpunit-db-guard:
+    name: Guard test DB name
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: phpunit.xml must force phyzioline_inventory_test
+        run: |
+          set -euo pipefail
+          if ! grep -F 'name="DB_DATABASE" value="phyzioline_inventory_test" force="true"' phpunit.xml; then
+            echo "FATAL: missing forced DB_DATABASE=phyzioline_inventory_test in phpunit.xml"
+            exit 1
+          fi
+          if grep -E 'name="DB_DATABASE" value="phyzioline_inventory"' phpunit.xml; then
+            echo "FATAL: phpunit.xml still references production DB name phyzioline_inventory"
+            exit 1
+          fi
+          echo "OK: phpunit.xml forces phyzioline_inventory_test"
+
+      - name: DatabaseSafetyGuard class must exist
+        run: |
+          test -f app/Support/DatabaseSafetyGuard.php
+          grep -q 'phyzioline_inventory_test' app/Support/DatabaseSafetyGuard.php \
+            || grep -q 'DatabaseSafetyGuard' app/Support/DatabaseSafetyGuard.php
+          echo "OK: DatabaseSafetyGuard present"
+
+      - name: No Modules/ package tree in this repo
+        run: |
+          if [ -d Modules ]; then
+            echo "FATAL: Modules/ must not exist in inventory-app"
+            exit 1
+          fi
+          echo "OK: no Modules/"
+
+  pest-optional:
+    name: Pest (optional — needs TEST_DB secrets)
+    runs-on: ubuntu-latest
+    needs: phpunit-db-guard
+    if: ${{ secrets.RUN_INVENTORY_PEST == 'true' }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: inventory
+          POSTGRES_PASSWORD: inventory
+          POSTGRES_DB: phyzioline_inventory_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pgsql, mbstring, xml
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist
+      - name: Write .env.testing
+        run: |
+          cp .env.testing.example .env.testing 2>/dev/null || cp .env.example .env.testing
+          sed -i 's/^DB_CONNECTION=.*/DB_CONNECTION=pgsql/' .env.testing || true
+          sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' .env.testing || true
+          sed -i 's/^DB_PORT=.*/DB_PORT=5432/' .env.testing || true
+          sed -i 's/^DB_DATABASE=.*/DB_DATABASE=phyzioline_inventory_test/' .env.testing || true
+          sed -i 's/^DB_USERNAME=.*/DB_USERNAME=inventory/' .env.testing || true
+          sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=inventory/' .env.testing || true
+          grep DB_DATABASE .env.testing phpunit.xml
+      - run: php artisan key:generate --env=testing --force || true
+      - run: ./vendor/bin/pest --colors=never

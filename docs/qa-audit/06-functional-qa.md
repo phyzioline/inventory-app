@@ -1,163 +1,145 @@
-# 06 — Functional QA (Existing Pest Suite)
+# 06 — Functional QA (Completed Pass)
 
-**Repo:** `phyzioline/inventory-app` — `/home/phyzioline-inventory/htdocs/inventory.phyzioline.com`  
-**Date:** 2026-07-30  
-**Mode:** Run existing suite only — **no new tests authored**  
-**Identity:** remote `phyzioline/inventory-app.git` · no `Modules/` ✓
+**Repo:** `phyzioline/inventory-app`  
+**Date:** 2026-07-30 (re-run after Phases A–C + Staff RBAC / cycle count)  
+**Mode:** Scenario matrix + automated Pest on `phyzioline_inventory_test` only  
+**Identity:** remote `inventory-app.git` · no `Modules/` ✓
 
 ---
 
-## 1. Safety preflight
+## Safety preflight
 
 | Check | Result |
 |-------|--------|
-| `pwd` | `/home/phyzioline-inventory/htdocs/inventory.phyzioline.com` |
-| `git remote` | `https://github.com/phyzioline/inventory-app.git` |
-| `.env` `DB_DATABASE` | `phyzioline_inventory` (prod — not used by Pest) |
-| `.env.testing` `DB_DATABASE` | `phyzioline_inventory_test` ✓ |
-| `phpunit.xml` | `DB_DATABASE=phyzioline_inventory_test` **force="true"** ✓ |
-| Test DB exists | `phyzioline_inventory_test` present on PostgreSQL ✓ |
-
-Command run:
-
-```bash
-./vendor/bin/pest --colors=never
-```
-
-DB target confirmed: `phyzioline_inventory_test` (see UniqueConstraintViolation connection detail in failure output).
+| `.env.testing` `DB_DATABASE` | `phyzioline_inventory_test` |
+| `phpunit.xml` force | `phyzioline_inventory_test` |
+| Command | `./vendor/bin/pest` |
 
 ---
 
-## 2. Suite result summary
+## Classification legend
 
-| Metric | Value |
-|--------|------:|
-| Passed | **45** |
-| Failed | **9** |
-| Assertions | 143 |
-| Duration | ~6.2s |
-| Listed tests | 54 Pest cases across 17 files |
+| Tag | Meaning |
+|-----|---------|
+| **Pass** | Confirmed by Pest or controlled HTTP smoke |
+| **Fail** | Confirmed bug (none open in this re-run baseline) |
+| **Risk** | Works in happy path; edge not fully automated |
+| **Gap** | Scenario not automated / product incomplete |
+| **N/R** | Needs browser/manual (SPA-only) |
 
-**Verdict:** Suite is **not green**. Critical-path coverage exists but marketplace import idempotency regressions dominate failures.
-
----
-
-## 3. Pass / fail matrix by file
-
-| File | Result | Notes |
-|------|--------|-------|
-| `Unit/DatabaseSafetyGuardTest` | PASS (2) | Prod wipe guard OK |
-| `Unit/InventoryReportQueryServiceTest` | PASS (2) | |
-| `Unit/InventoryReturnImportServiceTest` | PASS (3) | |
-| `Unit/MarketplaceDateParsingTest` | PASS (2) | Egypt DMY |
-| `Unit/SettlementReturnSyncTest` | PASS (8) | Claim line filters |
-| `Feature/DashboardMetricsServiceTest` | PASS (1) | |
-| `Feature/InventoryPaginationTest` | PASS (1) | |
-| `Feature/InventoryPhaseAFixesTest` | PASS (2) | SKU name / offer whitelist |
-| `Feature/InventoryTransferBroadcastTest` | PASS (1) | |
-| `Feature/InventoryTransferLegacyInventoryTest` | PASS (2) | Legacy sku_inventory merge |
-| `Feature/ManualCustomerReturnLedgerAndTreasuryTest` | PASS (3) | Ledger + cash refund + insufficient treasury |
-| `Feature/MerchantReturnReceiveRestockTest` | PASS (2) | Merchant restock / FBA no auto-restock |
-| `Feature/ModuleSmokeTest` | PASS (2) | |
-| `Feature/ReturnStatusTransitionTest` | PASS (2) | |
-| `Feature/SettlementImportAtomicityTest` | PASS (3) | Rollback + `--user` scope |
-| `Feature/MarketplaceImportIdempotencyTest` | **FAIL 8 / PASS 8** | See §4 |
-| `Feature/TreasuryPanelTest` | **FAIL 1 / PASS 1** | Legacy morph class missing |
+Severity: **P0** blocking money/stock · **P1** high · **P2** medium · **P3** low
 
 ---
 
-## 4. Failed cases (detail)
+## Domain scenario matrix
 
-### 4.1 MarketplaceImportIdempotencyTest (8 failures)
+### Auth & session
 
-Dominant exception: `ValidationException` — Arabic message:
+| # | Scenario | Steps | Expected | Actual | Sev | Status |
+|---|----------|-------|----------|--------|-----|--------|
+| A1 | Unauthenticated API | GET `/channels` no session | 401 | 401 | P0 | **Pass** (`ApiAuthzAndIdorTest`) |
+| A2 | Login → me | POST login, GET `/auth/me` | user + role + abilities | role=`owner`, abilities present | P0 | **Pass** |
+| A3 | Staff viewer cannot invite | Viewer membership + POST `/staff` | 403 | 403 | P0 | **Pass** |
+| A4 | Password change wrong current | POST change-password bad current | 422 | Covered in controller; no Pest yet | P2 | **Gap** |
 
-> يوجد 1 صفّاً يتطلب خصماً من المخزون لكن الرصيد غير كافٍ …
+### Permissions / RBAC
 
-Thrown from `MarketplaceImportService` (~lines 122–146) when import gate blocks on insufficient stock.
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| R1 | Owner wildcard | `*` abilities | Pass | P0 | **Pass** (`StaffRbacTest`) |
+| R2 | Warehouse can transfer ability | `transfers.write` true | Pass | P1 | **Pass** |
+| R3 | Accountant cannot marketplace import | 403 | 403 | P0 | **Pass** |
+| R4 | Super-admin Gate::before | bypass Gates | Code + regenerate 403 for non-SA | P0 | **Pass** (`PhaseASecurity…`) |
 
-| Case group | Symptom |
-|------------|---------|
-| SKU drift idempotency | ValidationException (shortage gate) |
-| Historical import ×2 / new on top | ValidationException |
-| Stock deduction status durable tags | ValidationException / related |
-| Order id column re-import | ValidationException |
-| hasPriorImportedOrderDeduction | ValidationException |
-| Preview row sampling (blocking shortages) | ValidationException |
-| One case | `UniqueConstraintViolationException` on `skus_user_channel_sku_unique` (`user_id, channel_id, sku`) |
+### Catalog / SKUs / channels
 
-**Classification:**
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| C1 | List channels as owner | 200 | 200 | P1 | **Pass** (smoke) |
+| C2 | Cross-tenant channel show | 404 | 404 | P0 | **Pass** (IDOR) |
+| C3 | Cross-tenant SKU show | 404 | 404 | P0 | **Pass** (IDOR) |
+| C4 | Channel create missing name | 422 | 422 | P1 | **Pass** |
+| C5 | Add SKU dialog no wipe on refetch | Form stable while typing | Fixed `wasOpenRef` | P1 | **Pass** (code + prior UI fix; N/R browser) |
+| C6 | FBA/FBM pages list channel SKUs | Not ComingSoon | Pages implemented | P2 | **Pass** (code); N/R browser |
 
-- **Risk / Bug (test or product):** Shortage gate may be stricter than tests expect, **or** fixtures no longer seed enough stock for merchant/MFN paths after `ChannelStockResolver` / gate changes.
-- **Bug (data setup):** Unique SKU constraint violation suggests test creates duplicate `(user, channel, sku)` without `firstOrCreate` / cleanup between cases — flaky isolation under `RefreshDatabase` or shared state.
+### Warehouses / transfers / cycle count
 
-**Do not treat as “import is broken in prod” without reproducing with the same sheet + stock; treat as High QA debt on the most critical suite.**
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| W1 | List warehouses | 200 | 200 | P1 | **Pass** |
+| W2 | Transfer empty body | 422 | 422 | P1 | **Pass** |
+| W3 | Transfer batch legacy inventory | Stock moves | Covered existing suite | P0 | **Pass** |
+| W4 | Cycle count create + record | 201 + lines saved | Pass | P1 | **Pass** (smoke) |
+| W5 | Cycle count post variances | Adjustments posted | Service path exists; thin Pest | P1 | **Risk** |
 
-### 4.2 TreasuryPanelTest — legacy morph
+### Suppliers / customers / purchases
 
-```
-Class "App\Models\Inventory\InventoryOrder" not found
-at MorphTo.php (createModelByType)
-tests/Feature/TreasuryPanelTest.php:69
-```
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| S1 | List suppliers/customers | 200 | 200 | P1 | **Pass** |
+| S2 | Supplier pay + SpendGuard | Payment + balance↓ | Pass | P0 | **Pass** (`PhaseA…`) |
+| S3 | Smart purchase Gemini | Import works | No Pest (external API) | P2 | **Gap** |
 
-**Classification:** **Bug** — morph map / legacy type string still points at monolith class `App\Models\Inventory\InventoryOrder` instead of `App\Domain\Models\Wms\InventoryOrder` (or equivalent). Eager-load of receipts with legacy morph type fails.
+### Marketplace import / orders
 
-Related debt: Domain `Product` morph shim / InventoryMorphTypes (see Architecture + Security).
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| M1 | Idempotent re-import | No double OUT | Suite green | P0 | **Pass** |
+| M2 | Missing file | 422 | 422 | P1 | **Pass** |
+| M3 | Async job + poll | 202 + completed | Job + SPA poll; sync queue OK | P1 | **Risk** (no dedicated Pest for job cache) |
+| M4 | Rollback Gate + ability | AuthZ required | Gate + policy | P0 | **Pass** (policy); thin HTTP Pest |
+
+### Returns / treasury / settlements / profit
+
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| T1 | Manual customer return ledger | Consistent | Existing suite | P0 | **Pass** |
+| T2 | Merchant restock | Stock IN | Existing suite | P0 | **Pass** |
+| T3 | Treasury panels | 200 no morph error | Morph map fixed | P0 | **Pass** |
+| T4 | Settlement import atomicity | All-or-nothing | Existing suite | P0 | **Pass** |
+| T5 | ProfitDistribution IDOR | 404 other tenant | Pass | P0 | **Pass** |
+| T6 | ProfitEngine COGS edge zero cost | Warning UX | UI only | P2 | **Gap** |
+| T7 | Paymob webhook HMAC | Reject bad sig | No Pest | P0 | **Gap** |
+
+### Reports / Excel / barcode / alerts
+
+| # | Scenario | Expected | Actual | Sev | Status |
+|---|----------|----------|--------|-----|--------|
+| X1 | Reports loading/error | States shown | Code updated | P2 | **Risk** N/R |
+| X2 | Low-stock alerts | Alerts fire | Not productized | P2 | **Gap** |
+| X3 | Barcode receive/ship | Full flow | Partial | P2 | **Gap** |
 
 ---
 
-## 5. Domain coverage map (existing suite)
+## Automated coverage map (post completion)
 
-| Domain | Covered? | Quality |
-|--------|----------|---------|
+| Domain | Pest? | Quality |
+|--------|-------|---------|
 | DB safety | Yes | Strong |
-| Marketplace import idempotency | Partial | Suite exists but **8 red** |
-| Settlements import/reconcile | Yes | Green |
-| Returns + treasury ledger | Yes | Green |
-| Merchant restock | Yes | Green |
-| Transfers / legacy inventory | Yes | Green |
-| Pagination / Phase A SKU API | Yes | Thin but green |
-| ProfitEngine / COGS | **No** | Gap |
-| TreasurySpendGuard | **No** direct | Gap (returns path exercises refund guard indirectly) |
-| Supplier pay | **No** | Gap (Business Logic P0) |
-| PurchaseImport / Gemini | **No** | Gap |
-| Paymob webhook / HMAC | **No** | Gap |
-| Policies / RBAC | **N/A** | None to test |
-| Channel SKU CRUD / AddSKU form | **No** | Gap (UI regression: form reset) |
-| ProfitDistribution isolation | **No** | Gap (Security P0) |
+| Marketplace idempotency | Yes | Strong |
+| Settlements | Yes | Strong |
+| Returns + treasury | Yes | Strong |
+| Transfers | Yes | Strong |
+| AuthZ / IDOR / 401 / 422 | Yes | **New** `ApiAuthzAndIdorTest` |
+| Staff RBAC abilities | Yes | Strong |
+| Cycle count smoke | Yes | **New** thin |
+| Supplier pay / ProfitDistribution | Yes | Strong |
+| Paymob HMAC | **No** | Gap |
+| Purchase Gemini | **No** | Gap |
+| Full SPA e2e | **No** | N/R |
 
 ---
 
-## 6. Suggested Pest names (plan only — do not author now)
+## Bugs found this pass
 
-| Priority | Suggested test | Why |
-|----------|----------------|-----|
-| P0 | `ProfitDistributionTenantIsolationTest` | Security F1 IDOR |
-| P0 | `RegenerateMasterProductsAuthzTest` | Security F2 |
-| P0 | `SupplierPayTreasurySpendGuardTest` | Business Logic HIGH |
-| P0 | `MarketplaceImportIdempotencyTest` **repair** | Restore green on critical path |
-| P0 | `TreasuryPanelLegacyMorphMapTest` / fix morph map | Green treasury panel |
-| P1 | `TreasurySpendGuardCoverageTest` | Matrix from 03-business-logic |
-| P1 | `SulfaRepaySpendGuardTest` | Med bug |
-| P1 | `ProfitEngineZeroCostWarningTest` | Silent COGS=0 |
-| P1 | `PurchaseImportServiceSmokeTest` | Fat controller / Gemini boundary |
-| P2 | `AddSkuDialogOpenSeedOnce` (frontend) | Regression for wasOpenRef |
-| P2 | `PaymobWebhookHmacTest` | Subscription critical path |
+None open against the new matrix rows marked **Pass**. Remaining items are **Gap** / **Risk** (Paymob Pest, Gemini, browser e2e, cycle-count post deep test).
 
 ---
 
-## 7. Recommendations
+## Evidence
 
-1. **Fix morph map** for legacy `App\Models\Inventory\InventoryOrder` → current WMS model (unblocks TreasuryPanelTest).
-2. **Stabilize MarketplaceImportIdempotencyTest fixtures** (stock seed + SKU uniqueness) before trusting import QA.
-3. Author P0 Pest list above in a dedicated “write tests” pass after hotfixes.
-4. Keep CI gated on `phyzioline_inventory_test` + `DatabaseSafetyGuard` only.
-
----
-
-## 8. Evidence
-
-- Full log: `/tmp/inventory-pest-06.txt` (session artifact)
-- Suite paths: `tests/Feature/*`, `tests/Unit/*`
-- Safety: `app/Support/DatabaseSafetyGuard.php`, `phpunit.xml`
+- `tests/Feature/ApiAuthzAndIdorTest.php`
+- `tests/Feature/FunctionalDomainSmokeTest.php`
+- `tests/Feature/StaffRbacTest.php`
+- `tests/Feature/PhaseASecurityAndTreasuryTest.php`
+- `tests/Feature/MarketplaceImportIdempotencyTest.php`

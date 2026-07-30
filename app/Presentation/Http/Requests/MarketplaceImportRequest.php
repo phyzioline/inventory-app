@@ -2,13 +2,18 @@
 
 namespace App\Presentation\Http\Requests;
 
+use App\Application\Services\InventoryAbilityService;
 use Illuminate\Foundation\Http\FormRequest;
 
 class MarketplaceImportRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user() !== null;
+        if ($this->user() === null) {
+            return false;
+        }
+
+        return app(InventoryAbilityService::class)->can('marketplace.import');
     }
 
     /**

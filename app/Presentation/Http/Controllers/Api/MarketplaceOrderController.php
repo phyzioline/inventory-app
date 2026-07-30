@@ -24,8 +24,6 @@ class MarketplaceOrderController extends Controller
      */
     public function import(MarketplaceImportRequest $request): JsonResponse
     {
-        app(InventoryAbilityService::class)->assertCan('marketplace.import');
-
         if (function_exists('set_time_limit')) {
             @set_time_limit(600);
         }
