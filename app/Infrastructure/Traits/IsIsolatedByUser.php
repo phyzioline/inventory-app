@@ -2,6 +2,7 @@
 
 namespace App\Infrastructure\Traits;
 
+use App\Application\Support\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
 
@@ -14,8 +15,9 @@ trait IsIsolatedByUser
     {
         static::addGlobalScope('user_isolation', function (Builder $builder) {
             $table = $builder->getModel()->getTable();
-            if (Auth::check()) {
-                $builder->where($table.'.user_id', Auth::id());
+            $tenantId = TenantContext::id();
+            if ($tenantId !== null) {
+                $builder->where($table.'.user_id', $tenantId);
 
                 return;
             }
@@ -28,8 +30,9 @@ trait IsIsolatedByUser
         });
 
         static::creating(function ($model) {
-            if (Auth::check() && ($model->user_id === null || $model->user_id === '')) {
-                $model->user_id = Auth::id();
+            $tenantId = TenantContext::id();
+            if ($tenantId !== null && ($model->user_id === null || $model->user_id === '')) {
+                $model->user_id = $tenantId;
             }
         });
     }

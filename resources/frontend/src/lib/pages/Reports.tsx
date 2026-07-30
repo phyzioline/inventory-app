@@ -14,7 +14,8 @@ import {
   ShoppingCart,
   Truck,
   Calendar,
-  RefreshCw
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -80,17 +81,22 @@ export default function Reports() {
   };
 
   // Data hooks
-  const { data: warehouses = [] } = useWarehouses();
-  const { data: suppliers = [] } = useSuppliers();
-  const { data: products = [] } = useProducts();
-  const { data: purchases = [] } = usePurchaseInvoices();
-  const { data: salesData = [] } = useSalesOrders();
+  const { data: warehouses = [], isLoading: loadingWarehouses, isError: errorWarehouses } = useWarehouses();
+  const { data: suppliers = [], isLoading: loadingSuppliers, isError: errorSuppliers } = useSuppliers();
+  const { data: products = [], isLoading: loadingProducts, isError: errorProducts } = useProducts();
+  const { data: purchases = [], isLoading: loadingPurchases, isError: errorPurchases } = usePurchaseInvoices();
+  const { data: salesData = [], isLoading: loadingSales, isError: errorSales } = useSalesOrders();
   const sales = Array.isArray(salesData) ? salesData : [];
-  const { data: returnsPayload } = useReturns();
+  const { data: returnsPayload, isLoading: loadingReturns, isError: errorReturns } = useReturns();
   const returns = returnsPayload?.data ?? [];
-  const { data: deadStock = [] } = getDeadStock(90);
-  const { data: marginAlerts = [] } = useMarginAlerts(0.20);
-  const { data: returnRates = [] } = useReturnRates();
+  const { data: deadStock = [], isLoading: loadingDead, isError: errorDead } = getDeadStock(90);
+  const { data: marginAlerts = [], isLoading: loadingMargin, isError: errorMargin } = useMarginAlerts(0.20);
+  const { data: returnRates = [], isLoading: loadingRates, isError: errorRates } = useReturnRates();
+
+  const reportsLoading = loadingWarehouses || loadingSuppliers || loadingProducts || loadingPurchases
+    || loadingSales || loadingReturns || loadingDead || loadingMargin || loadingRates;
+  const reportsError = errorWarehouses || errorSuppliers || errorProducts || errorPurchases
+    || errorSales || errorReturns || errorDead || errorMargin || errorRates;
 
   // Quick date presets
   const datePresets = [
@@ -294,6 +300,23 @@ export default function Reports() {
   const handleExport = () => {
     exportToExcel(reportData, `${reportType}_report_${format(new Date(), 'yyyy-MM-dd')}`, `${reportType.charAt(0).toUpperCase() + reportType.slice(1)} Report`);
   };
+
+  if (reportsLoading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center gap-2 text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <span>{t('common.loading') || 'Loading…'}</span>
+      </div>
+    );
+  }
+
+  if (reportsError) {
+    return (
+      <div className="flex min-h-[400px] flex-col items-center justify-center gap-2 text-destructive">
+        <p>{t('common.error') || 'Failed to load report data. Please refresh.'}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

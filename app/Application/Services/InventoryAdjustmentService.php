@@ -2,6 +2,7 @@
 
 namespace App\Application\Services;
 
+use App\Application\Support\TenantContext;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -31,7 +32,7 @@ class InventoryAdjustmentService
             $quantity = $data['quantity']; // Absolute number
             $type = $data['type']; // DAMAGE, LOST, THEFT, EXPIRED, CORRECTION, OPENING_BALANCE
             $notes = $data['notes'] ?? null;
-            $userId = Auth::id() ?? 1;
+            $userId = TenantContext::id() ?? Auth::id() ?? 1;
 
             // Determine if this is an addition or removal
             $additionTypes = ['CORRECTION', 'OPENING_BALANCE', 'STOCK_IN'];

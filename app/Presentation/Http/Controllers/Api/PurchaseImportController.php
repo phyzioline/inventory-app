@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use App\Application\Services\PurchaseImportService;
 use App\Application\Services\TreasurySpendGuard;
+use App\Presentation\Http\Requests\StorePurchaseBatchRequest;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\PurchaseBatch;
@@ -412,33 +413,12 @@ class PurchaseImportController extends Controller
      * POST /api/inventory/purchases/smart-import/batches
      * Create a manual purchase batch.
      */
-    public function store(Request $request): JsonResponse
+    public function store(StorePurchaseBatchRequest $request): JsonResponse
     {
         $this->normalizeManualPurchaseStoreRequest($request);
 
         $userId = (int) $request->user()->id;
-        $validated = $request->validate([
-            'supplier_id' => [
-                'required',
-                Rule::exists('suppliers', 'id')->where(fn ($q) => $q->where('user_id', $userId)),
-            ],
-            'location_id' => [
-                'required',
-                Rule::exists('inventory_locations', 'id')->where(fn ($q) => $q->where('user_id', $userId)),
-            ],
-            'reference_number' => 'nullable|string',
-            'invoice_date' => 'nullable|date',
-            'notes' => 'nullable|string',
-            'items' => 'required|array|min:1',
-            'items.*.master_product_id' => [
-                'required',
-                Rule::exists('master_products', 'id')->where(fn ($q) => $q->where('user_id', $userId)),
-            ],
-            // SKU is resolved server-side; strict exists fails on stale/empty client ids.
-            'items.*.sku_id' => 'nullable|integer|min:1',
-            'items.*.quantity' => 'required|numeric|min:0.01',
-            'items.*.unit_price' => 'required|numeric|min:0',
-        ]);
+        $validated = $request->validated();
 
         $locationId = (int) ($validated['location_id'] ?? 0);
         $location = InventoryLocation::query()->with('channel')->findOrFail($locationId);

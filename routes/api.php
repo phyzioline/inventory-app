@@ -47,6 +47,8 @@ use App\Presentation\Http\Controllers\Api\SupplierController;
 use App\Presentation\Http\Controllers\Api\TransferController;
 use App\Presentation\Http\Controllers\Api\TreasuryPanelController;
 use App\Presentation\Http\Controllers\Api\TreasurySulfaController;
+use App\Presentation\Http\Controllers\Api\CycleCountController;
+use App\Presentation\Http\Controllers\Api\StaffMembershipController;
 use App\Presentation\Http\Controllers\Api\VendorController;
 use App\Presentation\Http\Controllers\Api\WithdrawalController;
 
@@ -68,6 +70,16 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('auth/me', [InventoryAuthController::class, 'me']);
         Route::put('auth/profile', [InventoryAuthController::class, 'updateProfile']);
         Route::post('auth/change-password', [InventoryAuthController::class, 'changePassword']);
+
+        Route::get('staff', [StaffMembershipController::class, 'index']);
+        Route::post('staff', [StaffMembershipController::class, 'store']);
+        Route::put('staff/{id}', [StaffMembershipController::class, 'update']);
+        Route::delete('staff/{id}', [StaffMembershipController::class, 'destroy']);
+
+        Route::get('cycle-counts', [CycleCountController::class, 'index']);
+        Route::post('cycle-counts', [CycleCountController::class, 'store']);
+        Route::post('cycle-counts/{id}/counts', [CycleCountController::class, 'recordCounts']);
+        Route::post('cycle-counts/{id}/post', [CycleCountController::class, 'post']);
 
         // ── Inventory Core ──────────────────────────────────────────
         Route::apiResource('master-products', MasterProductController::class);
@@ -118,6 +130,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::apiResource('orders', InventoryOrderController::class);
         Route::post('marketplace/import/preview', [MarketplaceOrderController::class, 'preview']);
         Route::post('marketplace/import', [MarketplaceOrderController::class, 'import']);
+        Route::get('marketplace/import/jobs/{jobKey}', [MarketplaceOrderController::class, 'importJobStatus']);
         Route::get('marketplace/import/last-batch', [MarketplaceOrderController::class, 'lastBatch']);
         Route::post('marketplace/import/rollback-last', [MarketplaceOrderController::class, 'rollbackLast']);
         Route::post('marketplace/import/retry-stock-deductions', [MarketplaceOrderController::class, 'retryStockDeductions']);
@@ -248,14 +261,13 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::apiResource('purchase-returns', PurchaseReturnController::class)
             ->only(['index', 'show', 'store', 'update']);
 
-        // ── Admin Tools ──────────────────────────────────────────────
-        Route::post('admin/regenerate-master-products', [MasterProductController::class, 'regenerateFromOrphans']);
-
         // ── Super-admin: cross-tenant oversight (see App\Http\Middleware\EnsureSuperAdmin) ──
         Route::prefix('admin')->middleware(['super.admin'])->group(function (): void {
             Route::get('overview', [AdminDashboardController::class, 'overview']);
             Route::get('subscriptions', [AdminSubscriptionController::class, 'index']);
             Route::get('error-log', [AdminErrorLogController::class, 'index']);
+            // Must stay super.admin — previously accepted arbitrary user_id (IDOR).
+            Route::post('regenerate-master-products', [MasterProductController::class, 'regenerateFromOrphans']);
         });
 
         // ── Subscription (tenant self-service) ──────────────────────────

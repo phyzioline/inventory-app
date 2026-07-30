@@ -6,14 +6,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Standalone, local replacement for the monolith's
- * Modules\AI\app\Application\Services\Legacy\GeminiService.
- *
- * Calls Google's Gemini API directly over HTTP using GEMINI_API_KEY —
- * no dependency on the monolith's AI module / BrainFallbackService.
- * Public method signatures are kept identical to the source class so
- * PurchaseImportService (and any other caller) needed no changes beyond
- * the `use` import path.
+ * Standalone Gemini client. API key is sent via x-goog-api-key header
+ * (never as a URL query parameter — avoids leaking into access logs).
  */
 class GeminiService
 {
@@ -73,7 +67,7 @@ class GeminiService
             throw new \RuntimeException('Gemini API key not configured');
         }
 
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:streamGenerateContent?alt=sse&key={$apiKey}";
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:streamGenerateContent?alt=sse";
 
         $payload = [
             'contents' => [[
@@ -85,6 +79,7 @@ class GeminiService
         }
 
         $response = Http::timeout((int) config('services.gemini.timeout', 20))
+            ->withHeaders(['x-goog-api-key' => $apiKey])
             ->withOptions(['stream' => true])
             ->post($url, $payload);
 
@@ -120,7 +115,7 @@ class GeminiService
 
     protected function requestModel(string $apiKey, string $model, string $prompt, ?string $system = null): string
     {
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
 
         $payload = [
             'contents' => [[
@@ -132,7 +127,9 @@ class GeminiService
         }
 
         try {
-            $response = Http::timeout((int) config('services.gemini.timeout', 20))->post($url, $payload);
+            $response = Http::timeout((int) config('services.gemini.timeout', 20))
+                ->withHeaders(['x-goog-api-key' => $apiKey])
+                ->post($url, $payload);
 
             if ($response->successful()) {
                 $text = $response->json('candidates.0.content.parts.0.text');

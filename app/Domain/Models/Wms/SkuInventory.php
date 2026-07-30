@@ -14,7 +14,7 @@ class SkuInventory extends Model
     protected $table = 'sku_inventory';
 
     protected $fillable = [
-        'sku_id', 'location_id', 'quantity', 'reserved',
+        'sku_id', 'location_id', 'quantity', 'reserved', 'lot_number', 'serial_number',
     ];
 
     protected static function newFactory(): SkuInventoryFactory

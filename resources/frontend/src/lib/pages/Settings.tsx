@@ -18,6 +18,7 @@ import {
   UserRound,
   Shield,
   CreditCard,
+  Users,
 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -42,6 +43,7 @@ import {
   SettingsSecurityPanel,
   SettingsSubscriptionSummary,
 } from '@/components/settings/SettingsAccountPanels';
+import { SettingsStaffPanel } from '@/components/settings/SettingsStaffPanel';
 import { ProductWorkflowGuide } from '@/components/settings/ProductWorkflowGuide';
 
 type EditMode = { type: 'warehouse' | 'supplier' | 'product'; id?: string; data?: any } | null;
@@ -252,6 +254,7 @@ export default function Settings() {
     { id: 'account', label: t('settings.tabAccount'), icon: UserRound },
     { id: 'security', label: t('settings.tabSecurity'), icon: Shield },
     { id: 'subscription', label: t('settings.tabSubscription'), icon: CreditCard },
+    { id: 'staff', label: isAr ? 'الفريق' : 'Staff', icon: Users },
     { id: 'warehouses', label: t('nav.warehouses'), icon: Warehouse },
     { id: 'suppliers', label: t('nav.suppliers'), icon: Truck },
     { id: 'products', label: t('nav.products'), icon: Package },
@@ -311,6 +314,10 @@ export default function Settings() {
 
           <TabsContent value="subscription" className="space-y-6">
             <SettingsSubscriptionSummary />
+          </TabsContent>
+
+          <TabsContent value="staff" className="space-y-6">
+            <SettingsStaffPanel />
           </TabsContent>
 
           {/* Warehouses */}

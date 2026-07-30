@@ -2,11 +2,13 @@
 
 namespace App\Presentation\Http\Controllers\Api;
 
+use App\Application\Services\InventoryAbilityService;
+use App\Application\Services\MarketplaceImportService;
 use App\Http\Controllers\Controller;
+use App\Presentation\Http\Requests\MarketplaceImportRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
-use App\Application\Services\MarketplaceImportService;
 
 class MarketplaceOrderController extends Controller
 {
@@ -20,8 +22,10 @@ class MarketplaceOrderController extends Controller
     /**
      * Import marketplace orders from CSV.
      */
-    public function import(Request $request): JsonResponse
+    public function import(MarketplaceImportRequest $request): JsonResponse
     {
+        app(InventoryAbilityService::class)->assertCan('marketplace.import');
+
         if (function_exists('set_time_limit')) {
             @set_time_limit(600);
         }
@@ -36,11 +40,34 @@ class MarketplaceOrderController extends Controller
             ], 422);
         }
 
-        $request->validate([
-            'channel_id' => ($lockChannel ? 'required' : 'nullable').'|exists:channels,id',
-            'file' => 'required|file|mimes:csv,txt,xlsx,xls',
-            'lock_channel' => 'nullable|boolean',
-        ]);
+        // Optional async path: store file and queue ProcessMarketplaceImportJob (202 + job_key).
+        if ($request->boolean('async')) {
+            $userId = (int) $request->user()->id;
+            $jobKey = 'mktimp_'.$userId.'_'.uniqid('', true);
+            $stored = $request->file('file')->storeAs(
+                'marketplace-imports/'.$userId,
+                $jobKey.'_'.$request->file('file')->getClientOriginalName(),
+                'local'
+            );
+            \App\Infrastructure\Jobs\ProcessMarketplaceImportJob::dispatch(
+                $userId,
+                (int) $request->input('channel_id', 0),
+                $lockChannel,
+                $stored,
+                $request->file('file')->getClientOriginalName(),
+                $jobKey,
+            );
+            \Illuminate\Support\Facades\Cache::put('marketplace_import_job:'.$jobKey, [
+                'status' => 'queued',
+                'updated_at' => now()->toIso8601String(),
+            ], now()->addHours(6));
+
+            return response()->json([
+                'message' => 'Import queued',
+                'job_key' => $jobKey,
+                'status_url' => '/api/inventory/marketplace/import/jobs/'.$jobKey,
+            ], 202);
+        }
 
         try {
             $results = $this->importService->import(
@@ -79,10 +106,25 @@ class MarketplaceOrderController extends Controller
     }
 
     /**
+     * Poll async marketplace import job status (Cache-backed).
+     */
+    public function importJobStatus(string $jobKey): JsonResponse
+    {
+        $payload = \Illuminate\Support\Facades\Cache::get('marketplace_import_job:'.$jobKey);
+        if (! is_array($payload)) {
+            return response()->json(['message' => 'Job not found'], 404);
+        }
+
+        return response()->json($payload);
+    }
+
+    /**
      * Preview marketplace orders import result (no DB write).
      */
     public function preview(Request $request): JsonResponse
     {
+        app(InventoryAbilityService::class)->assertCan('marketplace.import');
+
         if (function_exists('set_time_limit')) {
             @set_time_limit(600);
         }
@@ -128,8 +170,16 @@ class MarketplaceOrderController extends Controller
      */
     public function rollbackLast(): JsonResponse
     {
+        $this->authorize('rollback-marketplace-import');
+
         try {
             $details = $this->importService->rollbackLastStockDeductionBatch();
+            app(\App\Application\Services\InventoryAuditLogService::class)->record(
+                'marketplace_import.rollback_last',
+                null,
+                null,
+                is_array($details) ? $details : ['details' => $details],
+            );
 
             return response()->json([
                 'message' => 'Last import stock deductions reversed',

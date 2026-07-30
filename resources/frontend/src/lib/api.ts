@@ -30,6 +30,11 @@ apiClient.interceptors.response.use(
     (error) => {
         if (error.response?.status === 401 || error.response?.status === 419) {
             console.warn('[API] Authentication error:', error.response.status);
+            // Avoid redirect loops on the login page itself.
+            const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+            if (!hash.includes('/login')) {
+                window.location.hash = '#/login';
+            }
         }
         return Promise.reject(error);
     }
@@ -84,7 +89,7 @@ export const api = {
             headers: {
                 'Content-Type': 'multipart/form-data',
             },
-            timeout: config.timeoutMs ?? 0,
+            timeout: config.timeoutMs ?? 600_000,
         });
         return response.data;
     },

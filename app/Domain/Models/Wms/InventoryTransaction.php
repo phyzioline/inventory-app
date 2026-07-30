@@ -12,7 +12,7 @@ class InventoryTransaction extends Model
     use HasFactory, IsIsolatedByUser;
 
     protected $fillable = [
-        'sku_id', 'location_id', 'type', 'quantity', 'reference_type', 'reference_id', 'notes',
+        'sku_id', 'location_id', 'type', 'quantity', 'balance_after', 'reference_type', 'reference_id', 'notes',
     ];
 
     protected static function newFactory(): InventoryTransactionFactory

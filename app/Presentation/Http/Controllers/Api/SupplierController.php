@@ -427,7 +427,7 @@ class SupplierController extends Controller
     }
 
     /**
-     * Process a payment to the supplier.
+     * Process a payment to the supplier (treasury-backed Payment row + balance update).
      */
     public function pay(Request $request, $id)
     {
@@ -435,24 +435,77 @@ class SupplierController extends Controller
             'amount' => 'required|numeric|min:0.01',
             'notes' => 'nullable|string|max:500',
             'payment_method' => 'required|string', // cash, bank_transfer, etc.
+            'payment_date' => 'nullable|date',
         ]);
 
         $supplier = Supplier::findOrFail($id);
+        $amount = round((float) $request->amount, 2);
+        $userId = (int) (\Illuminate\Support\Facades\Auth::id() ?? 0);
 
-        // Deduct from balance (assuming positive balance means we owe them)
-        // If balance is tracked as "Amount they owe us", we would add.
-        // But usually Supplier Balance = Accounts Payable (Credit).
-        // Let's assume Positive = We owe them.
-        $supplier->balance -= $request->amount;
-        $supplier->save();
+        $spendGuard = app(\App\Application\Services\TreasurySpendGuard::class);
+        $spendGuard->ensureCapitalRegistered();
+        $spendGuard->assertPaymentAllowed($amount);
 
-        // TODO: Record a financial transaction/expense here for full accounting.
-        // For now, just updating the balance as requested.
+        $ledger = app(\App\Application\Services\FinanceAccountLedgerService::class);
+        $ledger->ensureDefaultAccountsForUser($userId);
+        $financeAccountId = $ledger->resolveFinanceAccountId(
+            null,
+            (string) $request->payment_method,
+            $userId
+        );
 
-        return response()->json([
-            'message' => 'Payment recorded successfully',
-            'supplier' => $supplier,
-        ]);
+        \Illuminate\Support\Facades\DB::beginTransaction();
+        try {
+            $prefix = 'PAY-';
+            $last = (string) Payment::whereNotNull('payment_number')
+                ->where('payment_number', 'like', $prefix.'%')
+                ->orderByDesc('id')
+                ->value('payment_number');
+            $lastNum = (int) preg_replace('/\D+/', '', $last ?: '');
+            $next = $lastNum + 1;
+            $paymentNumber = $prefix.str_pad((string) $next, 3, '0', STR_PAD_LEFT);
+            while (Payment::where('payment_number', $paymentNumber)->exists()) {
+                $next++;
+                $paymentNumber = $prefix.str_pad((string) $next, 3, '0', STR_PAD_LEFT);
+            }
+
+            $payment = Payment::create([
+                'payment_number' => $paymentNumber,
+                'payee_type' => Supplier::class,
+                'payee_id' => $supplier->id,
+                'payee_name' => $supplier->name,
+                'amount' => $amount,
+                'payment_method' => $request->payment_method,
+                'payment_date' => $request->input('payment_date', now()->toDateString()),
+                'status' => 'completed',
+                'notes' => $request->input('notes'),
+                'user_id' => $userId,
+                'finance_account_id' => $financeAccountId,
+            ]);
+
+            $supplier->balance = (float) $supplier->balance - $amount;
+            $supplier->save();
+
+            $linkedVendor = $supplier->resolveLinkedVendor();
+            if ($linkedVendor) {
+                $linkedVendor->updateBalance($amount, 'subtract');
+            }
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            return response()->json([
+                'message' => 'Payment recorded successfully',
+                'supplier' => $supplier->fresh(),
+                'payment' => $payment,
+            ], 201);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+
+            return response()->json([
+                'message' => 'Payment failed',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**

@@ -730,7 +730,10 @@ class MasterProductController extends Controller
      */
     public function regenerateFromOrphans(Request $request): JsonResponse
     {
-        $userId = $request->user_id ?? auth()->id();
+        // Never honor client-supplied user_id (IDOR). Super-admin middleware gates access;
+        // regeneration always targets the authenticated admin's own tenant unless explicitly
+        // run via artisan with a scoped command.
+        $userId = auth()->id();
 
         if (! $userId) {
             return response()->json(['success' => false, 'message' => 'User ID required'], 400);

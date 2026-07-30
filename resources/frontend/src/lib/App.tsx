@@ -44,6 +44,7 @@ const Returns = lazy(() => import("./pages/Returns"));
 const ReturnAnalytics = lazy(() => import("./pages/ReturnAnalytics"));
 const BatchTracking = lazy(() => import("./pages/BatchTracking"));
 const InventoryAdjustments = lazy(() => import("./pages/InventoryAdjustments"));
+const CycleCounts = lazy(() => import("./pages/CycleCounts"));
 const InventoryTransactions = lazy(() => import("./pages/InventoryTransactions"));
 
 // Orders
@@ -177,6 +178,7 @@ const App = () => (
                   <Route path="/inventory/transfers" element={<Transfers />} />
                   <Route path="/inventory/batch-tracking" element={<BatchTracking />} />
                   <Route path="/inventory/adjustments" element={<InventoryAdjustments />} />
+                  <Route path="/inventory/cycle-counts" element={<CycleCounts />} />
                   <Route path="/returns" element={<Returns />} />
                   <Route path="/returns/analytics" element={<ReturnAnalytics />} />
                   <Route path="/transactions" element={<InventoryTransactions />} />

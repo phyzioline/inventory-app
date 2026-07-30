@@ -16,6 +16,7 @@ alwaysApply: false
 | `mandatory-engineering-rules.mdc` | Placement + safety checklist |
 | `clean-architecture-placement.mdc` | Where files go |
 | `inventory-critical-paths.mdc` | Stock / money red lines |
+| `inventory-qa-audit-team.mdc` | QA & Audit AI team artifacts / next runs |
 | `CURSOR.md` | Short agent brief |
 | `CLAUDE.md` (repo root) | Full agent context + 12 execution rules |
 

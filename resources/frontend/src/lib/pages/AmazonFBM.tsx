@@ -1,5 +1,5 @@
-import ComingSoon from './ComingSoon';
+import { AmazonChannelInventoryPage } from './AmazonFBA';
 
 export default function AmazonFBM() {
-  return <ComingSoon title="Amazon FBM Inventory" />;
+  return <AmazonChannelInventoryPage mode="fbm" />;
 }

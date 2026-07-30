@@ -1,0 +1,27 @@
+---
+description: Inventory QA & Audit AI Team — discovery artifacts and next agent runs
+alwaysApply: false
+---
+
+# Inventory QA & Audit AI Team
+
+Standalone **inventory-app** only (`inventory.phyzioline.com` / `phyzioline/inventory-app`). Not laravel-phyzio.
+
+## Artifacts
+
+- Plan: `docs/qa-audit/README.md`
+- Discovery: `docs/qa-audit/01-discovery-report.md`
+- Roadmap: `docs/qa-audit/ROADMAP.md`
+
+## When user asks to continue QA / Audit
+
+1. Confirm `pwd` + `git remote -v` → inventory-app
+2. Read latest `docs/qa-audit/*` before re-discovering from scratch
+3. Run next agent from ROADMAP (Security → Business Logic → Feature Gap …)
+4. Append dated report under `docs/qa-audit/` (e.g. `02-security-review.md`)
+5. Update ROADMAP checkboxes
+6. Never wipe production DB; Pest only on `phyzioline_inventory_test`
+
+## Critical paths
+
+See `inventory-critical-paths.mdc` — marketplace import, returns+ledger, settlements, treasury, purchases, profit/COGS, Paymob.

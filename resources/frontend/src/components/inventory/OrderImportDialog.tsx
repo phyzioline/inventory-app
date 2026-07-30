@@ -257,6 +257,57 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
         await runPreviewUpload();
     };
 
+    const finishImportDetails = (details: any) => {
+        setResults(details);
+        void queryClient.invalidateQueries({ queryKey: ['marketplace-import-last-batch'] });
+        void queryClient.invalidateQueries({ queryKey: ['orders'] });
+        void queryClient.invalidateQueries({ queryKey: ['orders-for-profit'] });
+        invalidateInventoryLiveQueries(queryClient, { scope: 'marketplace-import', immediate: true });
+        const shortageN = Number(details?.stock_shortage_count ?? details?.stock_shortages?.length ?? 0);
+        const importedN = Number(details?.imported ?? 0);
+        const skippedN = Number(details?.skipped ?? 0);
+        if (shortageN > 0) {
+            toast.warning(
+                isAr
+                    ? `تنبيه: ${shortageN} سطر بدون خصم مخزون (لم يُنفَّذ الخصم). إن كان هذا بعد معاينة نظيفة، غالباً تغيّر الرصيد بين المعاينة والاستيراد.`
+                    : `${shortageN} line(s): stock deduction did not run. If preview was clear, inventory likely changed between preview and import.`,
+                { duration: 10_000 }
+            );
+        } else if (importedN === 0 && skippedN > 0) {
+            toast.info(
+                isAr
+                    ? `لم يُضف طلب جديد (${skippedN} صف مُتجاهل — غالباً مكرر أو موجود مسبقاً). راجع المعاينة: «طلبات جديدة» يجب أن تكون > 0 لإضافة طلبات.`
+                    : `No new rows imported (${skippedN} skipped — usually duplicates or already in system). Preview must show new orders > 0.`,
+                { duration: 12_000 }
+            );
+        } else {
+            toast.success(
+                isAr
+                    ? `تم الاستيراد: ${importedN} صفاً${skippedN > 0 ? ` (وتم تجاهل ${skippedN})` : ''}`
+                    : `Imported ${importedN} row(s)${skippedN > 0 ? ` (${skippedN} skipped)` : ''}`
+            );
+        }
+        if (onSuccess) onSuccess();
+    };
+
+    const pollAsyncImportJob = async (jobKey: string) => {
+        const maxAttempts = 180;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const status = await api.get<{ status?: string; result?: any; error?: string }>(
+                `marketplace/import/jobs/${jobKey}`
+            );
+            if (status?.status === 'completed') {
+                finishImportDetails(status.result);
+                return;
+            }
+            if (status?.status === 'failed') {
+                throw new Error(status.error || (isAr ? 'فشل الاستيراد في الخلفية' : 'Background import failed'));
+            }
+            await new Promise((r) => setTimeout(r, 2000));
+        }
+        throw new Error(isAr ? 'انتهت مهلة انتظار الاستيراد' : 'Import job timed out');
+    };
+
     const handleImport = async () => {
         if (!file) {
             toast.error(isAr ? 'يرجى اختيار الملف' : 'Please select a file');
@@ -270,48 +321,25 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
         setIsImporting(true);
         const formData = new FormData();
         appendImportFormFields(formData);
+        formData.append('async', '1');
 
         try {
             const response = await api.upload('/marketplace/import', formData, {
                 timeoutMs: MARKETPLACE_IMPORT_UPLOAD_TIMEOUT_MS,
             });
-            const details = response.details;
-            setResults(details);
-            void queryClient.invalidateQueries({ queryKey: ['marketplace-import-last-batch'] });
-            void queryClient.invalidateQueries({ queryKey: ['orders'] });
-            void queryClient.invalidateQueries({ queryKey: ['orders-for-profit'] });
-            invalidateInventoryLiveQueries(queryClient, { scope: 'marketplace-import', immediate: true });
-            const shortageN = Number(details?.stock_shortage_count ?? details?.stock_shortages?.length ?? 0);
-            const importedN = Number(details?.imported ?? 0);
-            const skippedN = Number(details?.skipped ?? 0);
-            if (shortageN > 0) {
-                toast.warning(
-                    isAr
-                        ? `تنبيه: ${shortageN} سطر بدون خصم مخزون (لم يُنفَّذ الخصم). إن كان هذا بعد معاينة نظيفة، غالباً تغيّر الرصيد بين المعاينة والاستيراد.`
-                        : `${shortageN} line(s): stock deduction did not run. If preview was clear, inventory likely changed between preview and import.`,
-                    { duration: 10_000 }
-                );
-            } else if (importedN === 0 && skippedN > 0) {
-                toast.info(
-                    isAr
-                        ? `لم يُضف طلب جديد (${skippedN} صف مُتجاهل — غالباً مكرر أو موجود مسبقاً). راجع المعاينة: «طلبات جديدة» يجب أن تكون > 0 لإضافة طلبات.`
-                        : `No new rows imported (${skippedN} skipped — usually duplicates or already in system). Preview must show new orders > 0.`,
-                    { duration: 12_000 }
-                );
+            if (response?.job_key) {
+                toast.info(isAr ? 'الاستيراد في الخلفية…' : 'Import running in background…');
+                await pollAsyncImportJob(String(response.job_key));
             } else {
-                toast.success(
-                    isAr
-                        ? `تم الاستيراد: ${importedN} صفاً${skippedN > 0 ? ` (وتم تجاهل ${skippedN})` : ''}`
-                        : `Imported ${importedN} row(s)${skippedN > 0 ? ` (${skippedN} skipped)` : ''}`
-                );
+                finishImportDetails(response.details);
             }
-            if (onSuccess) onSuccess();
         } catch (error: any) {
             console.error('Import failed:', error);
             const status = error.response?.status;
             const errorMsg =
                 error.response?.data?.error ||
                 error.response?.data?.message ||
+                error.message ||
                 (isAr ? 'فشل الاستيراد' : 'Import failed');
             if (status === 422) {
                 toast.error(

@@ -135,6 +135,8 @@ class TreasurySulfaController extends Controller
         }
 
         try {
+            app(\App\Application\Services\TreasurySpendGuard::class)->assertExpenseAllowed($pay);
+
             DB::transaction(function () use ($sulfa, $pay, $validated, $ledger, $mirror) {
                 $ledger->record(
                     (int) $sulfa->treasury_account_id,

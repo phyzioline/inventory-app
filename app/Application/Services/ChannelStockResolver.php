@@ -20,6 +20,14 @@ class ChannelStockResolver
     private static ?int $mainStoreChannelIdCache = null;
 
     /**
+     * Clear static channel-resolution caches (required after RefreshDatabase in tests).
+     */
+    public static function clearCache(): void
+    {
+        self::$mainStoreChannelIdCache = null;
+    }
+
+    /**
      * True when this channel's sales consume stock from the main store bucket.
      *
      * This is intentionally based on scope resolution (not string matching alone),

@@ -55,22 +55,44 @@ function setupInventoryFixture(User $user): array
         'is_active' => true,
     ]);
 
+    // Shared catalog: merchant listing SKU resolves stock via store SKU on same master product.
+    $masterProduct = MasterProduct::factory()->create(['user_id' => $user->id]);
+
+    $storeOffer = InventoryOffer::factory()->create([
+        'master_product_id' => $masterProduct->id,
+        'user_id' => $user->id,
+    ]);
+    $storeSku = Sku::factory()->create([
+        'offer_id' => $storeOffer->id,
+        'user_id' => $user->id,
+        'channel_id' => $storeChannel->id,
+        'sku' => 'STORE-ASIN-TEST-001',
+    ]);
+    SkuInventory::factory()->create([
+        'sku_id' => $storeSku->id,
+        'location_id' => $location->id,
+        'quantity' => 50,
+        'user_id' => $user->id,
+    ]);
+
+    $merchantOffer = InventoryOffer::factory()->create([
+        'master_product_id' => $masterProduct->id,
+        'user_id' => $user->id,
+    ]);
     $sku = Sku::factory()->create([
+        'offer_id' => $merchantOffer->id,
         'user_id' => $user->id,
         'sku' => 'ASIN-TEST-001',
         'marketplace_id' => 'ASIN-TEST-001',
         'channel_id' => $channel->id,
     ]);
 
-    SkuInventory::factory()->create([
-        'sku_id' => $sku->id,
-        'location_id' => $location->id,
-        'quantity' => 50,
-        'user_id' => $user->id,
-    ]);
-
-    return compact('channel', 'storeChannel', 'location', 'sku');
+    return compact('channel', 'storeChannel', 'location', 'sku', 'storeSku', 'masterProduct');
 }
+
+beforeEach(function () {
+    \App\Application\Services\ChannelStockResolver::clearCache();
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bug #1 — SKU drift: historical import must NOT double-deduct when sku_id changed
@@ -82,7 +104,7 @@ describe('SKU drift idempotency', function () {
         $user = User::factory()->create();
         Auth::login($user);
 
-        ['channel' => $channel, 'location' => $location, 'sku' => $sku] = setupInventoryFixture($user);
+        ['channel' => $channel, 'location' => $location, 'sku' => $sku, 'storeSku' => $storeSku] = setupInventoryFixture($user);
 
         // Step 1: import Day-1 sheet — order 111-AAAAAA-1111111 with SKU ASIN-TEST-001 (sku_id = old)
         $day1 = makeCsvFile([
@@ -92,22 +114,18 @@ describe('SKU drift idempotency', function () {
         $result1 = $service->import($day1, $channel->id, true);
 
         expect($result1['imported'])->toBe(1);
-        expect(SkuInventory::where('sku_id', $sku->id)->where('location_id', $location->id)->value('quantity'))->toBe(48);
+        expect(SkuInventory::where('sku_id', $storeSku->id)->where('location_id', $location->id)->value('quantity'))->toBe(48);
         expect(InventoryTransaction::where('reference_type', 'ImportedOrder')->where('type', 'OUT')->count())->toBe(1);
 
-        // Step 2: simulate SKU re-mapping — create a new SKU row for the same external code.
+        // Step 2: simulate SKU re-mapping — soft-delete old listing (unique is soft-delete aware).
+        $oldOfferId = $sku->offer_id;
+        $sku->delete();
         $newSku = Sku::factory()->create([
+            'offer_id' => $oldOfferId,
             'user_id' => $user->id,
-            'sku' => 'ASIN-TEST-001',        // same external code, different DB row
+            'sku' => 'ASIN-TEST-001',
             'marketplace_id' => 'ASIN-TEST-001',
             'channel_id' => $channel->id,
-        ]);
-        // Point some stock at the new SKU too (in case resolver picks it).
-        SkuInventory::factory()->create([
-            'sku_id' => $newSku->id,
-            'location_id' => $location->id,
-            'quantity' => 10,
-            'user_id' => $user->id,
         ]);
 
         // Step 3: re-import the SAME historical sheet.
@@ -122,11 +140,8 @@ describe('SKU drift idempotency', function () {
         expect(InventoryTransaction::where('reference_type', 'ImportedOrder')->where('type', 'OUT')->count())
             ->toBe(1, 'No second OUT transaction should be created');
 
-        // Total stock across both SKUs must not have changed.
-        $totalStock = SkuInventory::whereIn('sku_id', [$sku->id, $newSku->id])
-            ->where('location_id', $location->id)
-            ->sum('quantity');
-        expect($totalStock)->toBe(58, 'Stock must be 48+10 = 58 — no double deduction');
+        expect(SkuInventory::where('sku_id', $storeSku->id)->where('location_id', $location->id)->value('quantity'))
+            ->toBe(48, 'Store stock must not change on re-import after SKU remap');
     });
 
 });
@@ -141,7 +156,7 @@ describe('Historical import idempotency', function () {
         $user = User::factory()->create();
         Auth::login($user);
 
-        ['channel' => $channel, 'location' => $location, 'sku' => $sku] = setupInventoryFixture($user);
+        ['channel' => $channel, 'storeSku' => $storeSku] = setupInventoryFixture($user);
 
         $orderRows = [];
         for ($i = 1; $i <= 30; $i++) {
@@ -155,7 +170,7 @@ describe('Historical import idempotency', function () {
             $service->import($file, $channel->id, true);
         }
 
-        $stockAfterDaily = SkuInventory::where('sku_id', $sku->id)->value('quantity');
+        $stockAfterDaily = SkuInventory::where('sku_id', $storeSku->id)->value('quantity');
         $txCountAfterDaily = InventoryTransaction::where('reference_type', 'ImportedOrder')->where('type', 'OUT')->count();
 
         expect($stockAfterDaily)->toBe(20, '30 units deducted from 50 initial');
@@ -166,7 +181,7 @@ describe('Historical import idempotency', function () {
         $service = app(MarketplaceImportService::class);
         $resultH = $service->import($historicalFile, $channel->id, true);
 
-        $stockAfterHistorical = SkuInventory::where('sku_id', $sku->id)->value('quantity');
+        $stockAfterHistorical = SkuInventory::where('sku_id', $storeSku->id)->value('quantity');
         $txCountAfterHistorical = InventoryTransaction::where('reference_type', 'ImportedOrder')->where('type', 'OUT')->count();
 
         expect($stockAfterHistorical)->toBe($stockAfterDaily, 'Stock must not change on re-import');
@@ -179,7 +194,7 @@ describe('Historical import idempotency', function () {
         $user = User::factory()->create();
         Auth::login($user);
 
-        ['channel' => $channel, 'location' => $location, 'sku' => $sku] = setupInventoryFixture($user);
+        ['channel' => $channel, 'storeSku' => $storeSku] = setupInventoryFixture($user);
 
         // First import: orders 1-20.
         $firstBatch = [];
@@ -189,7 +204,7 @@ describe('Historical import idempotency', function () {
         $service = app(MarketplaceImportService::class);
         $service->import(makeCsvFile($firstBatch), $channel->id, true);
 
-        $stockAfterFirst = SkuInventory::where('sku_id', $sku->id)->value('quantity');
+        $stockAfterFirst = SkuInventory::where('sku_id', $storeSku->id)->value('quantity');
         expect($stockAfterFirst)->toBe(30);
 
         // Historical import: orders 1-25 (20 existing + 5 new).
@@ -200,7 +215,7 @@ describe('Historical import idempotency', function () {
 
         $resultH = $service->import(makeCsvFile($historicalBatch), $channel->id, true);
 
-        $stockAfterHistorical = SkuInventory::where('sku_id', $sku->id)->value('quantity');
+        $stockAfterHistorical = SkuInventory::where('sku_id', $storeSku->id)->value('quantity');
         expect($stockAfterHistorical)->toBe(25, '5 new orders deducted, not 25');
         expect($resultH['imported'])->toBe(5);
         expect($resultH['skipped'])->toBe(20);
@@ -328,7 +343,7 @@ describe('Preview stock consistency', function () {
 
 describe('Stock deduction status is recorded durably', function () {
 
-    it('marks a new line "deducted" when stock covers it and "shortage" when it does not', function () {
+    it('marks a new line "deducted" when stock covers it and blocks confirm when shortage exists', function () {
         $user = User::factory()->create();
         Auth::login($user);
 
@@ -371,30 +386,35 @@ describe('Stock deduction status is recorded durably', function () {
             'user_id' => $user->id,
         ]);
 
-        $file = makeCsvFile([
+        $service = app(MarketplaceImportService::class);
+
+        // Mixed sheet: confirm must be blocked while any new line would shortage.
+        $mixed = makeCsvFile([
             ['800-AAAAAA-0000001', 'PLENTY-001', '5', '25.00', 'AFN'],
             ['800-BBBBBB-0000002', 'SCARCE-001', '10', '25.00', 'AFN'],
         ]);
+        $preview = $service->preview($mixed, $channel->id, true);
+        expect($preview['import_blocked'])->toBeTrue()
+            ->and($preview['stock_shortage_count'])->toBeGreaterThan(0);
 
-        $service = app(MarketplaceImportService::class);
-        $service->import($file, $channel->id, true);
+        expect(fn () => $service->import($mixed, $channel->id, true))
+            ->toThrow(\Illuminate\Validation\ValidationException::class);
+
+        // Coverable line alone still imports and records deducted status.
+        $ok = makeCsvFile([
+            ['800-AAAAAA-0000001', 'PLENTY-001', '5', '25.00', 'AFN'],
+        ]);
+        $service->import($ok, $channel->id, true);
 
         $deductedItem = InventoryOrderItem::where('sku_id', $plentifulSku->id)->first();
-        $shortageItem = InventoryOrderItem::where('sku_id', $scarceSku->id)->first();
-
         expect($deductedItem)->not->toBeNull()
             ->and($deductedItem->stock_deduction_status)->toBe('deducted')
             ->and($deductedItem->stock_shortage_reason)->toBeNull();
-
-        expect($shortageItem)->not->toBeNull()
-            ->and($shortageItem->stock_deduction_status)->toBe('shortage')
-            ->and($shortageItem->stock_shortage_reason)->not->toBeEmpty();
-
         expect((int) SkuInventory::where('sku_id', $plentifulSku->id)->value('quantity'))->toBe(5);
-        expect((int) SkuInventory::where('sku_id', $scarceSku->id)->value('quantity'))->toBe(2, 'shortage must not touch stock');
+        expect((int) SkuInventory::where('sku_id', $scarceSku->id)->value('quantity'))->toBe(2);
     });
 
-    it('retro-tags a legacy item with no prior deduction on re-import (backfill path)', function () {
+    it('retro-tags a legacy item with no prior deduction via retryPendingStockDeductions', function () {
         $user = User::factory()->create();
         Auth::login($user);
 
@@ -427,22 +447,29 @@ describe('Stock deduction status is recorded durably', function () {
             'user_id' => $user->id,
             'channel_id' => $channel->id,
             'platform_order_id' => '900-LEGACY-0000001',
+            'order_date' => now()->subHours(2),
+            'status' => 'shipped',
         ]);
         InventoryOrderItem::factory()->create([
             'inventory_order_id' => $order->id,
+            'user_id' => $user->id,
             'sku_id' => $sku->id,
             'sku_code' => 'LEGACY-001',
             'quantity' => 3,
             'unit_price' => 25.00,
+            'stock_deduction_status' => null,
         ]);
-        // No InventoryTransaction OUT recorded — matches a historical pre-fix import.
+        // No InventoryTransaction OUT — matches a historical pre-fix import.
 
-        $file = makeCsvFile([
-            ['900-LEGACY-0000001', 'LEGACY-001', '3', '25.00', 'AFN'],
-        ]);
         $service = app(MarketplaceImportService::class);
-        $service->import($file, $channel->id, true);
+        $run = $service->retryPendingStockDeductions([
+            'user_id' => $user->id,
+            'since' => now()->subDay()->toDateTimeString(),
+            'dry_run' => false,
+            'include_legacy_null' => true,
+        ]);
 
+        expect($run['deducted'])->toBe(1);
         $item = InventoryOrderItem::where('inventory_order_id', $order->id)->where('sku_id', $sku->id)->first();
         expect($item->stock_deduction_status)->toBe('deducted');
         expect((int) SkuInventory::where('sku_id', $sku->id)->value('quantity'))->toBe(7);
@@ -658,9 +685,7 @@ describe('hasPriorImportedOrderDeduction', function () {
         $user = User::factory()->create();
         Auth::login($user);
 
-        ['channel' => $channel, 'location' => $location, 'sku' => $sku] = setupInventoryFixture($user);
-
-        // Create an order + item with old sku_id = $sku->id.
+        ['channel' => $channel, 'location' => $location, 'sku' => $sku, 'storeSku' => $storeSku] = setupInventoryFixture($user);
         $order = InventoryOrder::factory()->create([
             'user_id' => $user->id,
             'channel_id' => $channel->id,
@@ -673,9 +698,9 @@ describe('hasPriorImportedOrderDeduction', function () {
             'quantity' => 3,
         ]);
 
-        // Create the OUT transaction for old sku_id.
+        // Create the OUT transaction under the store SKU (merchant imports deduct from store).
         InventoryTransaction::factory()->create([
-            'sku_id' => $sku->id,
+            'sku_id' => $storeSku->id,
             'location_id' => $location->id,
             'type' => 'OUT',
             'quantity' => 3,
@@ -684,8 +709,11 @@ describe('hasPriorImportedOrderDeduction', function () {
             'user_id' => $user->id,
         ]);
 
-        // Create a NEW sku_id for the same external code (simulates re-mapping).
+        // Remap listing code: rename old merchant SKU so the unique key frees for a new row.
+        // Do NOT delete the row that owns historical OUT txs (sku_id FK is ON DELETE CASCADE).
+        $sku->update(['sku' => 'ASIN-TEST-001-OLD', 'marketplace_id' => 'ASIN-TEST-001-OLD']);
         $newSku = Sku::factory()->create([
+            'offer_id' => $sku->offer_id,
             'user_id' => $user->id,
             'sku' => 'ASIN-TEST-001',
             'marketplace_id' => 'ASIN-TEST-001',
@@ -699,9 +727,9 @@ describe('hasPriorImportedOrderDeduction', function () {
         $method->setAccessible(true);
 
         // With new sku_id alone → old behaviour would return false.
-        // With sku_code hint → must return true.
+        // With sku_code hint → must return true (via store sku resolution / item sku_code).
         $withCode = $method->invoke($service, (int) $order->id, (int) $newSku->id, 'ASIN-TEST-001');
-        expect($withCode)->toBeTrue('should find OUT via sku_code lookup');
+        expect($withCode)->toBeTrue('should find OUT via sku_code / store sku lookup');
     });
 
 });

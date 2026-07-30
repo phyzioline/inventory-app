@@ -4,12 +4,13 @@ namespace App\Domain\Models\Wms;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Infrastructure\Traits\IsIsolatedByUser;
 use Database\Factories\MasterProductFactory;
 
 class MasterProduct extends Model
 {
-    use HasFactory, IsIsolatedByUser;
+    use HasFactory, IsIsolatedByUser, SoftDeletes;
 
     protected $fillable = [
         'internal_name', 'category', 'specifications', 'original_supplier',

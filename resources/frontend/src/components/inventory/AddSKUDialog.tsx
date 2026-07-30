@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,42 +20,48 @@ interface Props {
     presetChannelId?: string;
 }
 
-export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initialData, presetChannelId }: Props) {
-    const { t, language } = useLanguage();
-    const isAr = language === 'ar';
-    const queryClient = useQueryClient();
-    const [formData, setFormData] = useState({
+function buildFormFromProps(
+    initialData: any,
+    offerId?: string,
+    presetChannelId?: string,
+) {
+    const channelDefault =
+        initialData?.channel_id?.toString()
+        || (presetChannelId ? String(presetChannelId) : '');
+    return {
         sku: initialData?.sku || '',
         name: initialData?.name || '',
         image_url: initialData?.image_url || '',
         marketplace_id: initialData?.marketplace_id || '',
-        channel_id: initialData?.channel_id?.toString() || '',
+        channel_id: channelDefault,
         cost_price: initialData?.cost_price?.toString() || '',
         is_active: initialData?.is_active ?? true,
         offer_id: offerId || initialData?.offer_id || '',
-    });
+    };
+}
+
+export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initialData, presetChannelId }: Props) {
+    const { t, language } = useLanguage();
+    const isAr = language === 'ar';
+    const queryClient = useQueryClient();
+    const wasOpenRef = useRef(false);
+    const [formData, setFormData] = useState(() =>
+        buildFormFromProps(initialData, offerId, presetChannelId),
+    );
 
     const { data: channels = [] } = useQuery({
         queryKey: ['channels'],
         queryFn: () => api.getArray('/channels')
     });
 
+    // Seed form only when the dialog opens — not on every parent re-render.
+    // ChannelDetail passes `initialData={{ channel_id }}` inline; that new object
+    // reference used to wipe typed SKU/name/image while background queries refetch.
     useEffect(() => {
-        if (open) {
-            const channelDefault =
-                initialData?.channel_id?.toString()
-                || (presetChannelId ? String(presetChannelId) : '');
-            setFormData({
-                sku: initialData?.sku || '',
-                name: initialData?.name || '',
-                image_url: initialData?.image_url || '',
-                marketplace_id: initialData?.marketplace_id || '',
-                channel_id: channelDefault,
-                cost_price: initialData?.cost_price?.toString() || '',
-                is_active: initialData?.is_active ?? true,
-                offer_id: offerId || initialData?.offer_id || '',
-            });
+        if (open && !wasOpenRef.current) {
+            setFormData(buildFormFromProps(initialData, offerId, presetChannelId));
         }
+        wasOpenRef.current = open;
     }, [open, initialData, offerId, presetChannelId]);
 
     const mutation = useMutation({
@@ -101,16 +107,7 @@ export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initi
     });
 
     const resetForm = () => {
-        setFormData({
-            sku: '',
-            name: '',
-            image_url: '',
-            marketplace_id: '',
-            channel_id: '',
-            cost_price: '',
-            is_active: true,
-            offer_id: offerId || '',
-        });
+        setFormData(buildFormFromProps(undefined, offerId, presetChannelId));
     };
 
     const handleSubmit = (e: React.FormEvent) => {

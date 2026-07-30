@@ -2,6 +2,8 @@
 
 namespace App\Presentation\Http\Controllers\Api;
 
+use App\Application\Services\InventoryAbilityService;
+use App\Application\Support\TenantContext;
 use App\Domain\Models\Subscription;
 use App\Domain\Models\SubscriptionPlan;
 use App\Http\Controllers\Controller;
@@ -199,6 +201,9 @@ class InventoryAuthController extends Controller
      */
     private function userPayload(User $user): array
     {
+        TenantContext::flush();
+        $abilities = app(InventoryAbilityService::class);
+
         return [
             'id' => $user->id,
             'name' => $user->name,
@@ -208,6 +213,9 @@ class InventoryAuthController extends Controller
             'currency' => $user->currency ?: 'EGP',
             'preferred_locale' => $user->preferred_locale,
             'is_super_admin' => (bool) $user->is_super_admin,
+            'tenant_user_id' => TenantContext::id(),
+            'role' => TenantContext::role(),
+            'abilities' => $abilities->abilities(),
         ];
     }
 }

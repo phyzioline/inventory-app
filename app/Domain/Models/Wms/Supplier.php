@@ -4,11 +4,12 @@ namespace App\Domain\Models\Wms;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Infrastructure\Traits\IsIsolatedByUser;
 
 class Supplier extends Model
 {
-    use IsIsolatedByUser;
+    use IsIsolatedByUser, SoftDeletes;
 
     protected $fillable = [
         'name', 'email', 'phone', 'address', 'balance',

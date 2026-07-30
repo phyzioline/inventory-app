@@ -10,6 +10,9 @@ export interface User {
     currency?: string | null;
     preferred_locale?: string | null;
     is_super_admin?: boolean;
+    tenant_user_id?: number | null;
+    role?: string | null;
+    abilities?: string[];
 }
 
 interface AuthContextType {

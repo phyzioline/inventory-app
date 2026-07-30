@@ -3,6 +3,7 @@
 namespace App\Presentation\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Presentation\Http\Requests\TransferStockRequest;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -744,18 +745,9 @@ class InventoryTransactionController extends Controller
     /**
      * Transfer stock between locations
      */
-    public function transfer(Request $request)
+    public function transfer(TransferStockRequest $request)
     {
-        $validated = $request->validate([
-            'sku_id' => 'required|exists:skus,id',
-            'to_sku_id' => 'nullable|exists:skus,id',
-            'from_location_id' => 'required|exists:inventory_locations,id',
-            'to_location_id' => 'required|exists:inventory_locations,id|different:from_location_id',
-            'quantity' => 'required|integer|min:1',
-            'notes' => 'nullable|string',
-            // Stable client id to prevent double-submits / retries from duplicating transfers.
-            'client_transfer_id' => 'nullable|string|max:80',
-        ]);
+        $validated = $request->validated();
 
         DB::beginTransaction();
         try {
@@ -864,17 +856,6 @@ class InventoryTransactionController extends Controller
             $refTypeOut = $clientId !== '' ? ('transfer_out:'.$clientId) : 'transfer_out';
             $refTypeIn = $clientId !== '' ? ('transfer_in:'.$clientId) : 'transfer_in';
 
-            // 2. Create OUT Transaction (Source)
-            $outTx = InventoryTransaction::create([
-                'sku_id' => $fromSku->id,
-                'location_id' => $validated['from_location_id'],
-                'type' => 'TRANSFER',
-                'quantity' => $validated['quantity'], // Positive value, type implies subtraction
-                'notes' => $notesOut,
-                'reference_type' => $refTypeOut,
-                'reference_id' => null, // Will link later if needed
-            ]);
-
             // Atomic decrement while row is locked.
             $sourceInventory->decrement('quantity', (int) $validated['quantity']);
             $sourceInventory->refresh();
@@ -882,23 +863,37 @@ class InventoryTransactionController extends Controller
                 throw new \RuntimeException('Source inventory became negative after transfer decrement.');
             }
 
-            // 3. Create IN Transaction (Destination — may be a different channel SKU of the same master product)
+            // 2. Create OUT Transaction (Source) — after decrement so balance_after is accurate.
+            $outTx = InventoryTransaction::create([
+                'sku_id' => $fromSku->id,
+                'location_id' => $validated['from_location_id'],
+                'type' => 'TRANSFER',
+                'quantity' => $validated['quantity'],
+                'balance_after' => (float) $sourceInventory->quantity,
+                'notes' => $notesOut,
+                'reference_type' => $refTypeOut,
+                'reference_id' => null,
+            ]);
+
+            // Destination inventory (locked + atomic increment).
+            $destInventory = $this->lockedInventoryRow((int) $toSku->id, (int) $validated['to_location_id']);
+            $destInventory->increment('quantity', (int) $validated['quantity']);
+            $destInventory->refresh();
+
+            // 3. Create IN Transaction (Destination)
             $inTx = InventoryTransaction::create([
                 'sku_id' => $toSku->id,
                 'location_id' => $validated['to_location_id'],
-                'type' => 'IN', // Receiving transfer
+                'type' => 'IN',
                 'quantity' => $validated['quantity'],
+                'balance_after' => (float) $destInventory->quantity,
                 'notes' => $notesIn,
                 'reference_type' => $refTypeIn,
-                'reference_id' => $outTx->id, // Link to the OUT transaction
+                'reference_id' => $outTx->id,
             ]);
 
             // Update OUT transaction to link to IN
             $outTx->update(['reference_id' => $inTx->id]);
-
-            // 4. Update Destination Stock (locked + atomic increment)
-            $destInventory = $this->lockedInventoryRow((int) $toSku->id, (int) $validated['to_location_id']);
-            $destInventory->increment('quantity', (int) $validated['quantity']);
 
             DB::commit();
 

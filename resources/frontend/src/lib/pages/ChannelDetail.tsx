@@ -526,7 +526,7 @@ export default function ChannelDetail() {
       <AddSKUDialog
         open={isAddSkuOpen}
         onOpenChange={setIsAddSkuOpen}
-        initialData={{ channel_id: channel?.id }}
+        presetChannelId={channel?.id != null ? String(channel.id) : undefined}
       />
       <AddSKUDialog
         open={!!editingSku}

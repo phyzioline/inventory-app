@@ -94,6 +94,11 @@ class AppServiceProvider extends ServiceProvider
         // Never mass-assignable (not in User::$fillable); only set via the admin:grant-super command.
         Gate::before(fn ($user, string $ability) => $user->is_super_admin ? true : null);
 
+        Gate::define('cancel-inventory-order', [\App\Domain\Policies\DestructiveInventoryPolicy::class, 'cancelOrder']);
+        Gate::define('approve-withdrawal', [\App\Domain\Policies\DestructiveInventoryPolicy::class, 'approveWithdrawal']);
+        Gate::define('delete-settlement', [\App\Domain\Policies\DestructiveInventoryPolicy::class, 'deleteSettlement']);
+        Gate::define('rollback-marketplace-import', [\App\Domain\Policies\DestructiveInventoryPolicy::class, 'rollbackMarketplaceImport']);
+
         // Map legacy Modules\Inventory and App\Models\Inventory namespaces (from the monolith
         // and intermediate migration steps) to the current App\Domain\Models\Wms namespace.
         // These values are persisted in morphable_type / payee_type / reference_type columns.
@@ -108,6 +113,7 @@ class AppServiceProvider extends ServiceProvider
             'App\Models\Inventory\Vendor'                           => Vendor::class,
             'App\Models\Inventory\Supplier'                         => Supplier::class,
             'App\Models\Inventory\PurchaseBatch'                    => PurchaseBatch::class,
+            'App\Models\Inventory\InventoryOrder'                   => InventoryOrder::class,
         ]);
 
         if ($this->app->runningInConsole()) {

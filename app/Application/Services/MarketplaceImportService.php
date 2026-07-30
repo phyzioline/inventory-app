@@ -3007,11 +3007,13 @@ class MarketplaceImportService
         DB::statement("SAVEPOINT {$savepointName}");
 
         try {
+            $freshQty = max(0.0, (float) ($inventory->fresh()?->quantity ?? ($rawAvailable - $quantity)));
             $created = InventoryTransaction::create($this->filterTransactionColumns([
                 'sku_id' => $skuId,
                 'location_id' => $locationId,
                 'type' => 'OUT',
                 'quantity' => $quantity,
+                'balance_after' => $freshQty,
                 'reference_type' => 'ImportedOrder',
                 'reference_id' => (string) $order->id,
                 'user_id' => Auth::id(),

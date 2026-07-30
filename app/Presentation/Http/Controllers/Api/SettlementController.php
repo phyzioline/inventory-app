@@ -646,6 +646,7 @@ class SettlementController extends Controller
     public function destroy($id)
     {
         $settlement = Settlement::with(['items'])->findOrFail($id);
+        $this->authorize('delete-settlement', $settlement);
 
         DB::beginTransaction();
         try {

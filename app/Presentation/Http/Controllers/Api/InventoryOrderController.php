@@ -127,9 +127,20 @@ class InventoryOrderController extends Controller
         return $this->mutations->update($request, $id);
     }
 
-    public function cancel(Request $request, $id)
+    public function cancel(\App\Presentation\Http\Requests\CancelInventoryOrderRequest $request, $id)
     {
-        return $this->mutations->cancel($request, $id);
+        $order = InventoryOrder::findOrFail($id);
+        $this->authorize('cancel-inventory-order', $order);
+
+        $result = $this->mutations->cancel($request, $id);
+        app(\App\Application\Services\InventoryAuditLogService::class)->record(
+            'inventory_order.cancel',
+            InventoryOrder::class,
+            (int) $order->id,
+            ['platform_order_id' => $order->platform_order_id],
+        );
+
+        return $result;
     }
 
     public function import(Request $request)

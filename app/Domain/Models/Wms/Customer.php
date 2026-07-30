@@ -3,11 +3,12 @@
 namespace App\Domain\Models\Wms;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Infrastructure\Traits\IsIsolatedByUser;
 
 class Customer extends Model
 {
-    use IsIsolatedByUser;
+    use IsIsolatedByUser, SoftDeletes;
 
     protected $fillable = [
         'name', 'email', 'phone', 'tax_id', 'address',

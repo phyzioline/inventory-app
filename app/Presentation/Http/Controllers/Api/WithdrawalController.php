@@ -44,6 +44,7 @@ class WithdrawalController extends Controller
     public function approve($id)
     {
         $withdrawal = Withdrawal::findOrFail($id);
+        $this->authorize('approve-withdrawal', $withdrawal);
         if ($withdrawal->status !== 'pending') {
             return response()->json(['message' => 'Can only approve pending withdrawals'], 400);
         }
