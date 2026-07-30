@@ -8,6 +8,7 @@ use App\Domain\Events\StockUpdated;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
+use Illuminate\Support\Facades\Log;
 
 final class StockUpdateBroadcaster
 {
@@ -33,7 +34,7 @@ final class StockUpdateBroadcaster
             return;
         }
 
-        event(new StockUpdated($productId, $warehouseId, $quantity, $type, $userId));
+        self::safeBroadcast(new StockUpdated($productId, $warehouseId, $quantity, $type, $userId));
     }
 
     /**
@@ -48,7 +49,25 @@ final class StockUpdateBroadcaster
             return;
         }
 
-        event(new StockUpdated(0, 0, 0, $type, $userId));
+        self::safeBroadcast(new StockUpdated(0, 0, 0, $type, $userId));
+    }
+
+    /**
+     * Real-time stock pings must never roll back purchases, transfers, or imports when
+     * Reverb/Pusher is misconfigured or down (production incident 2026-07-29).
+     */
+    private static function safeBroadcast(StockUpdated $event): void
+    {
+        try {
+            event($event);
+        } catch (\Throwable $e) {
+            Log::warning('Stock broadcast failed (non-fatal)', [
+                'error' => $e->getMessage(),
+                'user_id' => $event->userId,
+                'warehouse_id' => $event->warehouseId,
+                'type' => $event->type,
+            ]);
+        }
     }
 
     /**

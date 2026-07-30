@@ -286,7 +286,10 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
         },
         onError: (error: any) => {
             if (axios.isAxiosError(error)) {
-                const apiMessage = error.response?.data?.message;
+                const rawMessage = error.response?.data?.message;
+                const apiMessage = typeof rawMessage === 'string' && !rawMessage.includes('<!DOCTYPE')
+                    ? rawMessage
+                    : null;
                 const validationErrors = error.response?.data?.errors;
                 if (validationErrors && typeof validationErrors === 'object') {
                     const firstError = Object.values(validationErrors).flat()[0];
