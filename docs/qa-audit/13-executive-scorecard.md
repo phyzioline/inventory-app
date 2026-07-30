@@ -19,7 +19,7 @@
 | B6 | UI | AddSKU form wipe on refetch | P1 | **Fixed** |
 | B7 | API/AuthZ | Import ability checked after validation → wrong 422 | P1 | **Fixed** (this pass) |
 | B8 | Risk | Response shapes inconsistent | P2 | Open (Opinion/Risk) |
-| B9 | Gap | Paymob HMAC untested | P0 test gap | Open |
+| B9 | Gap | Paymob HMAC untested | P0 test gap | **Fixed** (PaymobWebhookHmacTest) |
 
 ---
 
@@ -27,10 +27,10 @@
 
 | Gap | Priority | Notes |
 |-----|----------|-------|
-| Low-stock alerts + reorder points | High | Not started |
-| Immutable stock ledger / full audit coverage | High | Partial (`inventory_audit_logs` on cancel/rollback only) |
+| Low-stock alerts + reorder points | High | **MVP shipped** (`LowStockAlertService` + `/inventory/low-stock`) |
+| Immutable stock ledger / full audit coverage | High | Broader: pay / settlement delete / transfer / cycle post (+ cancel/rollback) |
 | Full valuation method switch (FIFO vs weighted) UX | Med | Engine exists; productization thin |
-| Paymob / webhook automated tests | High | Test gap |
+| Paymob / webhook automated tests | High | **Fixed** |
 | Deep FBA ops (not just SKU list) | Med | MVP pages only |
 | Lot/serial end-to-end UI | Med | Columns exist; UI minimal |
 | Cycle count post deep + print | Med | MVP API + page |
@@ -115,7 +115,7 @@ Scores = product completeness × test confidence (judgment from Discovery + Feat
 | 10 | API Testing | **Completed this pass** (executed) |
 | — | Unified scorecard | **This file** |
 | — | CI safety checklist | `.github/workflows/inventory-qa-safety.yml` |
-| — | Phase 2 auto patches/PRs | **Not started** (after scorecard stable) |
+| — | Phase 2 auto patches/PRs | **Scaffolding** — `14-phase-2.md` + `inventory:qa-propose-patches` (no auto-PR) |
 
 ---
 

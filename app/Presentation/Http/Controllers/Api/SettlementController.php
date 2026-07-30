@@ -679,6 +679,13 @@ class SettlementController extends Controller
 
             DB::commit();
 
+            app(\App\Application\Services\InventoryAuditLogService::class)->record(
+                'settlement.delete',
+                Settlement::class,
+                (int) $id,
+                ['affected_orders' => count($affectedOrderIds)],
+            );
+
             return response()->json([
                 'message' => 'Settlement deleted successfully',
                 'affected_orders' => count($affectedOrderIds),

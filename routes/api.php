@@ -48,6 +48,7 @@ use App\Presentation\Http\Controllers\Api\TransferController;
 use App\Presentation\Http\Controllers\Api\TreasuryPanelController;
 use App\Presentation\Http\Controllers\Api\TreasurySulfaController;
 use App\Presentation\Http\Controllers\Api\CycleCountController;
+use App\Presentation\Http\Controllers\Api\LowStockAlertController;
 use App\Presentation\Http\Controllers\Api\StaffMembershipController;
 use App\Presentation\Http\Controllers\Api\VendorController;
 use App\Presentation\Http\Controllers\Api\WithdrawalController;
@@ -80,6 +81,8 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('cycle-counts', [CycleCountController::class, 'store']);
         Route::post('cycle-counts/{id}/counts', [CycleCountController::class, 'recordCounts']);
         Route::post('cycle-counts/{id}/post', [CycleCountController::class, 'post']);
+
+        Route::get('alerts/low-stock', [LowStockAlertController::class, 'index']);
 
         // ── Inventory Core ──────────────────────────────────────────
         Route::apiResource('master-products', MasterProductController::class);

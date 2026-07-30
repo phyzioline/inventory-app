@@ -493,6 +493,17 @@ class SupplierController extends Controller
 
             \Illuminate\Support\Facades\DB::commit();
 
+            app(\App\Application\Services\InventoryAuditLogService::class)->record(
+                'supplier.pay',
+                Supplier::class,
+                (int) $supplier->id,
+                [
+                    'amount' => $amount,
+                    'payment_id' => $payment->id,
+                    'payment_number' => $payment->payment_number,
+                ],
+            );
+
             return response()->json([
                 'message' => 'Payment recorded successfully',
                 'supplier' => $supplier->fresh(),

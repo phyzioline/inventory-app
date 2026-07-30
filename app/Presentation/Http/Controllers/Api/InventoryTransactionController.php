@@ -902,6 +902,20 @@ class InventoryTransactionController extends Controller
                 ['sku_id' => (int) $toSku->id, 'location_id' => (int) $validated['to_location_id']],
             ]);
 
+            app(\App\Application\Services\InventoryAuditLogService::class)->record(
+                'inventory.transfer',
+                InventoryTransaction::class,
+                (int) $outTx->id,
+                [
+                    'quantity' => (int) $validated['quantity'],
+                    'from_location_id' => (int) $validated['from_location_id'],
+                    'to_location_id' => (int) $validated['to_location_id'],
+                    'from_sku_id' => (int) $fromSku->id,
+                    'to_sku_id' => (int) $toSku->id,
+                    'in_transaction_id' => (int) $inTx->id,
+                ],
+            );
+
             return response()->json([
                 'message' => 'Transfer successful',
                 'out_transaction' => $outTx,
@@ -1140,6 +1154,17 @@ class InventoryTransactionController extends Controller
                 $broadcastPairs[] = ['sku_id' => (int) $row['to_sku_id'], 'location_id' => (int) $validated['to_location_id']];
             }
             $this->safeBroadcastTransferPairs($broadcastPairs);
+
+            app(\App\Application\Services\InventoryAuditLogService::class)->record(
+                'inventory.transfer_batch',
+                null,
+                null,
+                [
+                    'from_location_id' => (int) $validated['from_location_id'],
+                    'to_location_id' => (int) $validated['to_location_id'],
+                    'applied_count' => count($applied),
+                ],
+            );
 
             return response()->json([
                 'message' => 'Batch transfer successful',

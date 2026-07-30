@@ -94,7 +94,7 @@ final class DashboardMetricsService
             'channel' => $o->channel?->name,
         ])->values()->all();
 
-        $lowStock = $this->lowStockAlerts($lowStockLimit);
+        $lowStock = app(LowStockAlertService::class)->alerts($lowStockLimit);
 
         return [
             'product_count' => $productCount,
@@ -209,55 +209,5 @@ final class DashboardMetricsService
         }
 
         return $out;
-    }
-
-    /**
-     * @return list<array{id: int, product: string, sku: string, current: float, minimum: float, warehouse: string}>
-     */
-    private function lowStockAlerts(int $limit): array
-    {
-        if (! Schema::hasTable('sku_inventory') || ! Schema::hasTable('master_products')) {
-            return [];
-        }
-
-        $userId = (int) auth()->id();
-
-        // Aggregate non-grouped columns: Postgres only allows SELECT of non-grouped
-        // columns when grouping by a PRIMARY KEY. After dump restores the PK can be
-        // missing, so MAX(...) stays correct either way. Cast jsonb via text for MAX.
-        $rows = DB::table('master_products as mp')
-            ->leftJoin('inventory_offers as o', 'o.master_product_id', '=', 'mp.id')
-            ->leftJoin('skus as s', 's.offer_id', '=', 'o.id')
-            ->leftJoin('sku_inventory as si', 'si.sku_id', '=', 's.id')
-            ->where('mp.user_id', $userId)
-            ->groupBy('mp.id')
-            ->selectRaw(
-                "mp.id, ".
-                "MAX(mp.internal_name) as internal_name, ".
-                "(MAX(mp.specifications::text))::jsonb as specifications, ".
-                "COALESCE(SUM(si.quantity), 0) as total_qty, ".
-                "MIN(s.sku) as sku"
-            )
-            ->havingRaw("(COALESCE(MAX(mp.specifications::text)::jsonb->>'min_stock', '0'))::numeric > 0")
-            ->havingRaw("COALESCE(SUM(si.quantity), 0) < (COALESCE(MAX(mp.specifications::text)::jsonb->>'min_stock', '0'))::numeric")
-            ->orderBy('total_qty')
-            ->limit($limit)
-            ->get();
-
-        return $rows->map(function ($row) {
-            $specs = is_string($row->specifications)
-                ? json_decode($row->specifications, true)
-                : (array) json_decode(json_encode($row->specifications), true);
-            $min = (float) ($specs['min_stock'] ?? 0);
-
-            return [
-                'id' => (int) $row->id,
-                'product' => (string) ($row->internal_name ?? '—'),
-                'sku' => (string) ($row->sku ?? '—'),
-                'current' => round((float) $row->total_qty, 2),
-                'minimum' => $min,
-                'warehouse' => 'N/A',
-            ];
-        })->values()->all();
     }
 }

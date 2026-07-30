@@ -91,6 +91,7 @@ const navItems: NavItem[] = [
       { key: 'nav.transfers', path: '/inventory/transfers' },
       { key: 'nav.inventoryAdjustments', path: '/inventory/adjustments' },
       { key: 'nav.cycleCounts', path: '/inventory/cycle-counts' },
+      { key: 'nav.lowStock', path: '/inventory/low-stock' },
     ],
   },
 

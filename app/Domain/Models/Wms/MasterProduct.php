@@ -15,6 +15,7 @@ class MasterProduct extends Model
     protected $fillable = [
         'internal_name', 'category', 'specifications', 'original_supplier',
         'original_supplier_sku', 'is_active', 'image_url', 'mp_id',
+        'cost_price', 'selling_price', 'min_stock', 'last_purchase_price',
     ];
 
     protected static function newFactory(): MasterProductFactory

@@ -30,12 +30,13 @@ grep DB_DATABASE .env.testing phpunit.xml
 
 ## Not done yet (Next / Later)
 
-- [ ] Phase 2: auto-generated tests / patch PRs
-- [ ] Paymob HMAC Pest (P0 test gap)
-- [ ] Low-stock alerts + reorder
-- [ ] Broader audit-log coverage
-- [ ] SPA production build after latest src (ask explicitly)
+- [x] Phase 2 scaffolding (`14-phase-2.md`, `inventory:qa-propose-patches`) — no auto-PR
+- [x] Paymob HMAC Pest
+- [x] Low-stock alerts + reorder suggestion MVP
+- [x] Broader audit log (pay / settlement delete / transfer / cycle post)
+- [x] SPA production build (live under `public/app/`, gitignored)
 - [ ] git push (ask explicitly)
+- [ ] Remaining Phase 2 stubs (invoice audit, write IDOR, valuation UX, lot/serial)
 
 ## Operating rules
 

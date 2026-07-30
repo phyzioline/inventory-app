@@ -50,6 +50,13 @@ class CycleCountController extends Controller
     {
         $count = $this->cycleCounts->post($id);
 
+        app(\App\Application\Services\InventoryAuditLogService::class)->record(
+            'cycle_count.post',
+            \App\Domain\Models\Wms\InventoryCycleCount::class,
+            (int) $count->id,
+            ['status' => $count->status, 'location_id' => $count->location_id],
+        );
+
         return response()->json(['success' => true, 'data' => $count]);
     }
 }
