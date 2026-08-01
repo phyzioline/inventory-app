@@ -110,6 +110,14 @@ export default function Reconciliation() {
     return normalized;
   };
 
+  /** Shop / POS channels don't receive marketplace payment sheets — hide from the top boxes. */
+  const isShopPaymentChannel = (channel: any) => {
+    const type = String(channel?.type || '').toLowerCase().trim();
+    const hay = `${channel?.name || ''} ${channel?.slug || ''}`.toLowerCase();
+    if (type === 'pos' || type === 'store' || type === 'shop') return true;
+    return /محل/.test(hay) || /\bshop\b/.test(hay) || /\bstore\b/.test(hay);
+  };
+
   const buildGroupLabel = (channelsInGroup: any[]) => {
     const first = channelsInGroup[0];
     if (!first) return '-';
@@ -124,6 +132,7 @@ export default function Reconciliation() {
   const channelGroups = useMemo(() => {
     const groupsMap = new Map<string, any[]>();
     channels.forEach((channel: any) => {
+      if (isShopPaymentChannel(channel)) return;
       // Group by canonical channel family name; slug differences should not split same business account.
       const key = normalizeChannelFamily(`${channel.name || ''}`) || normalizeChannelFamily(`${channel.slug || ''}`) || String(channel.id);
       const existing = groupsMap.get(key) || [];
@@ -145,7 +154,11 @@ export default function Reconciliation() {
 
   useEffect(() => {
     if (!channelGroups.length) return;
-    if (selectedChannelId) return;
+
+    const stillVisible = selectedChannelId
+      ? channelGroups.some((group: any) => group.channelIds.some((id: number) => Number(id) === Number(selectedChannelId)))
+      : false;
+    if (stillVisible) return;
 
     const fromRoute = platform
       ? channelGroups.find((group: any) => group.channels.some((c: any) => (c.slug || '').toLowerCase() === platform.toLowerCase()))

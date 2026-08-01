@@ -133,7 +133,7 @@ export function FbaTransferSummaryTable({ summary, isAr, className }: Props) {
               <th className={cn(excelTh, 'text-start min-w-[100px]')}>{isAr ? 'SKU المحل' : 'Shop SKU'}</th>
               <th className={cn(excelTh, 'text-start min-w-[100px]')}>{isAr ? 'SKU FBA' : 'FBA SKU'}</th>
               <th className={cn(excelTh, 'text-start min-w-[140px]')}>{isAr ? 'المنتج' : 'Product'}</th>
-              <th className={cn(excelTh, 'text-center w-20')}>{isAr ? 'المطلوب' : 'Required'}</th>
+              <th className={cn(excelTh, 'text-center w-20')}>{isAr ? 'كمية الشيت' : 'Sheet qty'}</th>
               <th className={cn(excelTh, 'text-center w-20')}>{isAr ? 'المحوّل' : 'Transferred'}</th>
               <th className={cn(excelTh, 'text-center w-20')}>{isAr ? 'الفرق' : 'Diff'}</th>
               <th className={cn(excelTh, 'text-center w-24')}>{isAr ? 'الحالة' : 'Status'}</th>

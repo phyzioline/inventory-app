@@ -15,7 +15,8 @@ import { TransferBatchPreviewDialog } from '@/components/inventory/TransferBatch
 import { TransferLaneColumn } from '@/components/inventory/TransferLaneColumn';
 import { buildTransferBatches, batchMatchesSearch, type TransferBatch } from '@/lib/transferBatchUtils';
 import { TransferBatchesTable } from '@/components/inventory/TransferBatchesTable';
-import { TRANSFER_LANES, getUnassignedBatches, groupBatchesByLane } from '@/lib/transferLanes';
+import { getUnassignedBatches, groupBatchesByLane, buildTransferLanes } from '@/lib/transferLanes';
+
 
 export default function Transfers() {
   const { t, language } = useLanguage();
@@ -73,9 +74,11 @@ export default function Transfers() {
     [batches, searchQuery, locationNameById],
   );
 
+  const transferLanes = useMemo(() => buildTransferLanes(locations), [locations]);
+
   const batchesByLane = useMemo(
-    () => groupBatchesByLane(filteredBatches, locations, resolveLocationName),
-    [filteredBatches, locations, locationNameById],
+    () => groupBatchesByLane(filteredBatches, transferLanes, resolveLocationName),
+    [filteredBatches, transferLanes, locationNameById],
   );
 
   const txById = useMemo(() => {
@@ -87,8 +90,8 @@ export default function Transfers() {
   }, [transfers]);
 
   const unassignedBatches = useMemo(
-    () => getUnassignedBatches(filteredBatches, locations, resolveLocationName),
-    [filteredBatches, locations, locationNameById],
+    () => getUnassignedBatches(filteredBatches, transferLanes, resolveLocationName),
+    [filteredBatches, transferLanes, locationNameById],
   );
 
   const unassignedCount = unassignedBatches.length;
@@ -186,20 +189,30 @@ export default function Transfers() {
       </Card>
 
       <div className="flex flex-col gap-3">
-        {TRANSFER_LANES.map((lane) => (
-          <TransferLaneColumn
-            key={lane.id}
-            lane={lane}
-            batches={batchesByLane[lane.id]}
-            isAr={isAr}
-            t={t}
-            txById={txById}
-            layout="row"
-            onOpenBatch={setPreviewBatch}
-            onEditItem={(txId) => setSelectedTransferId(txId)}
-            resolveLocationName={resolveLocationName}
-          />
-        ))}
+        {transferLanes.length === 0 ? (
+          <Card>
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              {isAr
+                ? 'أضف مخازن الوجهة (FBA / نون / جوميا…) من صفحة المخازن لتظهر مسارات التحويل هنا بأسمائها.'
+                : 'Add destination warehouses (FBA / Noon / Jumia…) on the Warehouses page to see transfer lanes named after your locations.'}
+            </CardContent>
+          </Card>
+        ) : (
+          transferLanes.map((lane) => (
+            <TransferLaneColumn
+              key={lane.id}
+              lane={lane}
+              batches={batchesByLane[lane.id] || []}
+              isAr={isAr}
+              t={t}
+              txById={txById}
+              layout="row"
+              onOpenBatch={setPreviewBatch}
+              onEditItem={(txId) => setSelectedTransferId(txId)}
+              resolveLocationName={resolveLocationName}
+            />
+          ))
+        )}
       </div>
 
       {unassignedBatches.length > 0 && (

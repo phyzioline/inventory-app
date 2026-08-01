@@ -34,6 +34,14 @@ function isInTransferTx(tx: any): boolean {
   return type === 'TRANSFER' && /Transfer\s+IN/i.test(notes);
 }
 
+function parseSheetQtyFromNotes(notes: unknown): number | null {
+  const text = String(notes || '');
+  const match = text.match(/SheetQty\s*:\s*(\d+)/i);
+  if (!match?.[1]) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
 function parseMskuFromReferenceType(referenceType: unknown): string {
   const ref = String(referenceType || '');
   const fbaMatch = ref.match(/^transfer_out:fba:[^:]+:(.+)$/i);
@@ -172,6 +180,8 @@ export function buildBatchFbaSummary(
     const destFromIn = inTx?.sku?.sku || inTx?.sku?.name;
     const destSku = String(destFromIn || msku || '—');
     const qty = Number(outTx.quantity || 0);
+    const sheetQty = parseSheetQtyFromNotes(outTx?.notes);
+    const required = sheetQty !== null ? sheetQty : qty;
     const sourceName = resolveSkuListingLabel(outTx);
     const destName = inTx ? resolveSkuListingLabel(inTx) : '—';
     const sourceImage = resolveTxImage(outTx);
@@ -185,7 +195,7 @@ export function buildBatchFbaSummary(
       product_name: sourceName,
       source_product_name: sourceName,
       dest_product_name: destName,
-      required: qty,
+      required,
       actual: qty,
       status: qty > 0 ? 'transferred' : 'skipped',
       tx_id: String(outTx.id),

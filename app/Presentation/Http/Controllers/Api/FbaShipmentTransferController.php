@@ -5,6 +5,7 @@ namespace App\Presentation\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Domain\Models\Wms\InventoryLocation;
+use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\ProductAlias;
 use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
@@ -43,6 +44,11 @@ class FbaShipmentTransferController extends Controller
 
         $sourceLocationId = isset($validated['source_location_id']) ? (int) $validated['source_location_id'] : null;
         $destinationLocationId = isset($validated['destination_location_id']) ? (int) $validated['destination_location_id'] : null;
+        $sourceChannelId = null;
+        if ($sourceLocationId) {
+            $rawSourceChannel = InventoryLocation::query()->whereKey($sourceLocationId)->value('channel_id');
+            $sourceChannelId = $rawSourceChannel ? (int) $rawSourceChannel : null;
+        }
         $fbaChannelId = null;
         if ($destinationLocationId) {
             $fbaChannelId = InventoryLocation::query()->whereKey($destinationLocationId)->value('channel_id');
@@ -53,7 +59,7 @@ class FbaShipmentTransferController extends Controller
         $unmatched = [];
 
         foreach ($parsed['rows'] as $row) {
-            $match = $this->matchSourceSku($row, $sourceLocationId);
+            $match = $this->matchSourceSku($row, $sourceLocationId, $sourceChannelId);
             if (! $match['sku']) {
                 $unmatched[] = [
                     ...$row,
@@ -65,7 +71,16 @@ class FbaShipmentTransferController extends Controller
 
             // If the MSKU/ASIN maps to the FBA SKU, pick the sibling SKU that exists in the chosen shop location
             // via the same master product, so the UI shows the real shop SKU code (not a hidden cross-channel id).
-            $sku = $this->resolveShopSkuFromMatchedSku($match['sku'], $sourceLocationId) ?? $match['sku'];
+            $sku = $this->resolveShopSkuFromMatchedSku($match['sku'], $sourceLocationId, $sourceChannelId) ?? $match['sku'];
+            // Reject cross-channel source picks when the source location has a channel.
+            if ($sourceChannelId && (int) ($sku->channel_id ?? 0) > 0 && (int) $sku->channel_id !== $sourceChannelId) {
+                $unmatched[] = [
+                    ...$row,
+                    'reason' => 'Matched SKU belongs to a different channel than the selected source location',
+                ];
+
+                continue;
+            }
             $available = null;
             if ($sourceLocationId) {
                 $available = (int) (SkuInventory::where('sku_id', $sku->id)
@@ -114,6 +129,9 @@ class FbaShipmentTransferController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'type', 'channel_id']);
 
+        $shipmentId = trim((string) ($parsed['shipment']['shipment_id'] ?? ''));
+        $priorTransfer = $this->findPriorFbaShipmentTransfer($shipmentId);
+
         return response()->json([
             'message' => 'FBA shipment file parsed successfully',
             'shipment' => $parsed['shipment'],
@@ -123,10 +141,53 @@ class FbaShipmentTransferController extends Controller
                 'unmatched' => count($unmatched),
                 'total_units' => array_sum(array_column($parsed['rows'], 'quantity')),
             ],
+            'prior_transfer' => $priorTransfer,
             'fba_locations' => $fbaLocations,
             'matched_items' => $matched,
             'unmatched_items' => $unmatched,
         ]);
+    }
+
+    /**
+     * Whether this Amazon shipment ID already produced transfer OUT lines.
+     *
+     * @return array{
+     *   exists: bool,
+     *   shipment_id?: string,
+     *   transferred_at?: string|null,
+     *   line_count?: int,
+     *   total_units?: int,
+     *   notes_sample?: string|null
+     * }
+     */
+    private function findPriorFbaShipmentTransfer(string $shipmentId): array
+    {
+        $shipmentId = trim($shipmentId);
+        if ($shipmentId === '') {
+            return ['exists' => false];
+        }
+
+        $prefix = 'transfer_out:fba:'.$shipmentId.':';
+        $base = InventoryTransaction::query()
+            ->where('type', 'TRANSFER')
+            ->where('reference_type', 'like', $prefix.'%');
+
+        $lineCount = (clone $base)->count();
+        if ($lineCount === 0) {
+            return ['exists' => false, 'shipment_id' => $shipmentId];
+        }
+
+        $totalUnits = (int) (clone $base)->sum('quantity');
+        $first = (clone $base)->orderBy('created_at')->first(['created_at', 'notes']);
+
+        return [
+            'exists' => true,
+            'shipment_id' => $shipmentId,
+            'transferred_at' => $first?->created_at?->toIso8601String(),
+            'line_count' => $lineCount,
+            'total_units' => $totalUnits,
+            'notes_sample' => $first?->notes,
+        ];
     }
 
     /**
@@ -246,7 +307,7 @@ class FbaShipmentTransferController extends Controller
             && (str_contains($lower, 'asin') || str_contains($line, 'ASIN'));
     }
 
-    private function matchSourceSku(array $row, ?int $sourceLocationId = null): array
+    private function matchSourceSku(array $row, ?int $sourceLocationId = null, ?int $sourceChannelId = null): array
     {
         return $this->matchSkuByCodesForSource(
             [
@@ -254,7 +315,8 @@ class FbaShipmentTransferController extends Controller
                 trim((string) ($row['asin'] ?? '')),
                 trim((string) ($row['fnsku'] ?? '')),
             ],
-            $sourceLocationId
+            $sourceLocationId,
+            $sourceChannelId
         );
     }
 
@@ -312,11 +374,12 @@ class FbaShipmentTransferController extends Controller
     /**
      * For source (shop) selection we must prefer a SKU that actually exists in the chosen source location inventory,
      * otherwise the UI shows only the numeric id (e.g. 6210) because that SKU isn't present in the shop warehouse list.
+     * When the source location has a channel_id, also restrict to that channel (no merchant/FBA listings).
      *
      * @param  list<string>  $candidateCodes
      * @return array{sku: ?Sku, matched_by: ?string}
      */
-    private function matchSkuByCodesForSource(array $candidateCodes, ?int $sourceLocationId): array
+    private function matchSkuByCodesForSource(array $candidateCodes, ?int $sourceLocationId, ?int $sourceChannelId = null): array
     {
         $candidateCodes = array_values(array_unique(array_filter(array_map('trim', $candidateCodes))));
 
@@ -330,6 +393,7 @@ class FbaShipmentTransferController extends Controller
                     ->whereHas('inventory', function ($q) use ($sourceLocationId) {
                         $q->where('location_id', $sourceLocationId);
                     })
+                    ->when($sourceChannelId, fn ($q) => $q->where('channel_id', $sourceChannelId))
                     ->where(function ($q) use ($lower) {
                         $q->whereRaw('LOWER(sku) = ?', [$lower])
                             ->orWhereRaw('LOWER(marketplace_id) = ?', [$lower]);
@@ -341,13 +405,19 @@ class FbaShipmentTransferController extends Controller
             }
         }
 
-        // Fallback: any SKU match (may be cross-channel).
+        // Fallback: any SKU match (may be cross-channel) — caller upgrades via resolveShopSkuFromMatchedSku.
         $match = $this->matchSkuByCodes($candidateCodes);
         if ($match['sku']) {
-            return $match;
+            $resolved = $this->resolveShopSkuFromMatchedSku($match['sku'], $sourceLocationId, $sourceChannelId);
+            if ($resolved) {
+                return ['sku' => $resolved, 'matched_by' => ($match['matched_by'] ?? null).'+source_channel'];
+            }
+            if (! $sourceChannelId) {
+                return $match;
+            }
         }
 
-        // Alias fallback: but prefer the SKU that exists in the source location if possible.
+        // Alias fallback: but prefer the SKU that exists in the source location (+ channel) if possible.
         foreach ($candidateCodes as $code) {
             $lower = mb_strtolower($code);
             $alias = ProductAlias::with('masterProduct')
@@ -361,6 +431,9 @@ class FbaShipmentTransferController extends Controller
             if ($sourceLocationId) {
                 $skusQ->whereHas('inventory', fn ($q) => $q->where('location_id', $sourceLocationId));
             }
+            if ($sourceChannelId) {
+                $skusQ->where('channel_id', $sourceChannelId);
+            }
             $sku = $skusQ->first();
             if ($sku) {
                 return ['sku' => $sku, 'matched_by' => "alias: {$code}"];
@@ -370,17 +443,20 @@ class FbaShipmentTransferController extends Controller
         return ['sku' => null, 'matched_by' => null];
     }
 
-    private function resolveShopSkuFromMatchedSku(?Sku $sku, ?int $sourceLocationId): ?Sku
+    private function resolveShopSkuFromMatchedSku(?Sku $sku, ?int $sourceLocationId, ?int $sourceChannelId = null): ?Sku
     {
         if (! $sku || ! $sourceLocationId) {
             return null;
         }
 
-        // Already exists in shop location inventory.
-        if (SkuInventory::query()
+        $inLocation = SkuInventory::query()
             ->where('sku_id', $sku->id)
             ->where('location_id', $sourceLocationId)
-            ->exists()) {
+            ->exists();
+        $channelOk = ! $sourceChannelId || (int) ($sku->channel_id ?? 0) === $sourceChannelId;
+
+        // Already exists in shop location inventory and matches source channel.
+        if ($inLocation && $channelOk) {
             return $sku;
         }
 
@@ -389,11 +465,12 @@ class FbaShipmentTransferController extends Controller
             return null;
         }
 
-        // Find any SKU for the same master product that exists in the chosen shop location.
+        // Find a SKU for the same master product that exists in the chosen shop location (+ channel).
         $shopSku = Sku::query()
             ->with(['offer.masterProduct', 'channel'])
             ->whereHas('offer', fn ($q) => $q->where('master_product_id', $masterId))
             ->whereHas('inventory', fn ($q) => $q->where('location_id', $sourceLocationId))
+            ->when($sourceChannelId, fn ($q) => $q->where('channel_id', $sourceChannelId))
             ->orderBy('id')
             ->first();
 

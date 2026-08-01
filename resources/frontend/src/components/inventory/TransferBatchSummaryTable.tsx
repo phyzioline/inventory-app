@@ -138,7 +138,7 @@ export function TransferBatchSummaryTable({ summary, isAr, className, onEditRow 
               <th className={cn(excelTh, 'min-w-[220px] text-start')}>
                 {isAr ? 'محوّل إليه (FBA)' : 'To (FBA)'}
               </th>
-              <th className={cn(excelTh, 'w-20 text-center')}>{isAr ? 'المطلوب' : 'Required'}</th>
+              <th className={cn(excelTh, 'w-20 text-center')}>{isAr ? 'كمية الشيت' : 'Sheet qty'}</th>
               <th className={cn(excelTh, 'w-20 text-center')}>{isAr ? 'المحوّل' : 'Transferred'}</th>
               <th className={cn(excelTh, 'w-20 text-center')}>{isAr ? 'الفرق' : 'Diff'}</th>
               <th className={cn(excelTh, 'w-24 text-center')}>{isAr ? 'الحالة' : 'Status'}</th>

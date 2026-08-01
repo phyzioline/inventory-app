@@ -293,6 +293,14 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
   const [unmatchedDraft, setUnmatchedDraft] = useState<Record<string, { sourceSkuId: string; destSkuId: string }>>({});
   const [transferSummary, setTransferSummary] = useState<FbaTransferSummary | null>(null);
   const [submitIssues, setSubmitIssues] = useState<string[]>([]);
+  const [priorTransfer, setPriorTransfer] = useState<{
+    exists: boolean;
+    shipment_id?: string;
+    transferred_at?: string | null;
+    line_count?: number;
+    total_units?: number;
+    notes_sample?: string | null;
+  } | null>(null);
 
   const resetState = () => {
     setFile(null);
@@ -305,6 +313,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     setUnmatchedDraft({});
     setTransferSummary(null);
     setSubmitIssues([]);
+    setPriorTransfer(null);
   };
 
   const finishAndClose = () => {
@@ -354,7 +363,19 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
 
   const allSourceSkus = useMemo(() => mapInventoryToSkuOptions(sourceInventory), [sourceInventory]);
   const allDestSkus = useMemo(() => mapInventoryToSkuOptions(destInventory), [destInventory]);
-  const sourceAvailMap = useMemo(() => buildAvailMap(allSourceSkus), [allSourceSkus]);
+
+  const sourceChannelId = useMemo(() => {
+    const loc = locations.find((l: any) => String(l.id) === sourceLocationId);
+    return loc?.channel_id != null ? String(loc.channel_id) : '';
+  }, [locations, sourceLocationId]);
+
+  /** Source picker / recommendations: only SKUs for the selected source location's channel. */
+  const sourceSkus = useMemo(() => {
+    if (!sourceChannelId) return allSourceSkus;
+    return allSourceSkus.filter((s) => String(s.channel_id || '') === sourceChannelId);
+  }, [allSourceSkus, sourceChannelId]);
+
+  const sourceAvailMap = useMemo(() => buildAvailMap(sourceSkus), [sourceSkus]);
 
   const refreshMatchedStock = useCallback(
     (items: MatchedItem[]) => applyStockStatuses(items, sourceAvailMap),
@@ -428,22 +449,35 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
 
       const matched = ((response?.matched_items || []) as MatchedItem[]).map((row) => ({
         ...row,
-        file_quantity: row.quantity,
+        file_quantity: row.file_quantity ?? row.quantity,
       }));
       const unmatched = (response?.unmatched_items || []) as UnmatchedItem[];
       setShipment((response?.shipment || null) as ShipmentMeta | null);
       setFileTotalUnits(Number(response?.summary?.total_units ?? response?.shipment?.total_units ?? 0) || null);
       setTransferSummary(null);
       setSubmitIssues([]);
+      setPriorTransfer(response?.prior_transfer?.exists ? response.prior_transfer : null);
       setMatchedItems(refreshMatchedStock(matched));
       setUnmatchedItems(unmatched);
       setUnmatchedDraft({});
 
-      toast.success(
-        isAr
-          ? `تم التحليل: ${matched.length} مطابق، ${unmatched.length} غير مطابق`
-          : `Parsed: ${matched.length} matched, ${unmatched.length} unmatched`
-      );
+      if (response?.prior_transfer?.exists) {
+        const at = response.prior_transfer.transferred_at
+          ? new Date(response.prior_transfer.transferred_at).toLocaleString(isAr ? 'ar-EG' : 'en-GB')
+          : '';
+        toast.error(
+          isAr
+            ? `هذه الشحنة رُفعت مسبقاً${at ? ` يوم ${at}` : ''} — ${response.prior_transfer.line_count ?? 0} سطر، ${response.prior_transfer.total_units ?? 0} وحدة`
+            : `This shipment was already transferred${at ? ` on ${at}` : ''} — ${response.prior_transfer.line_count ?? 0} line(s), ${response.prior_transfer.total_units ?? 0} unit(s)`,
+          { duration: 12_000 }
+        );
+      } else {
+        toast.success(
+          isAr
+            ? `تم التحليل: ${matched.length} مطابق، ${unmatched.length} غير مطابق`
+            : `Parsed: ${matched.length} matched, ${unmatched.length} unmatched`
+        );
+      }
     } catch (error: any) {
       toast.error(error?.response?.data?.message || (isAr ? 'فشل تحليل الملف' : 'Failed to parse shipment file'));
     } finally {
@@ -501,7 +535,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
       toast.error(isAr ? 'اختر SKU المحل و SKU الـ FBA' : 'Select shop SKU and FBA SKU');
       return;
     }
-    const src = allSourceSkus.find((s) => s.sku_id === draft.sourceSkuId);
+    const src = sourceSkus.find((s) => s.sku_id === draft.sourceSkuId);
     const dst = allDestSkus.find((s) => s.sku_id === draft.destSkuId);
     if (!src || !dst) {
       toast.error(isAr ? 'SKU غير موجود في المخزون المحدد' : 'SKU not found in selected warehouses');
@@ -576,7 +610,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     }
 
     for (const row of activeItems) {
-      const src = allSourceSkus.find((s) => s.sku_id === String(row.sku_id));
+      const src = sourceSkus.find((s) => s.sku_id === String(row.sku_id));
       const dst = allDestSkus.find((s) => s.sku_id === String(row.to_sku_id));
       const constraintMsg = validateTransferRowConstraints(row, src, dst, fromLoc, toLoc, isAr);
       if (constraintMsg) issues.push(constraintMsg);
@@ -602,6 +636,17 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
       );
     }
 
+    if (priorTransfer?.exists) {
+      const at = priorTransfer.transferred_at
+        ? new Date(priorTransfer.transferred_at).toLocaleString(isAr ? 'ar-EG' : 'en-GB')
+        : '';
+      issues.push(
+        isAr
+          ? `الشحنة «${priorTransfer.shipment_id || shipment?.shipment_id || ''}» رُفعت مسبقاً${at ? ` يوم ${at}` : ''} (${priorTransfer.line_count ?? 0} سطر، ${priorTransfer.total_units ?? 0} وحدة) — ممنوع التكرار`
+          : `Shipment «${priorTransfer.shipment_id || shipment?.shipment_id || ''}» already transferred${at ? ` on ${at}` : ''} (${priorTransfer.line_count ?? 0} lines, ${priorTransfer.total_units ?? 0} units) — re-upload blocked`
+      );
+    }
+
     return {
       issues,
       skippedCount,
@@ -617,10 +662,12 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     previewUnits,
     sourceAvailMap.size,
     locations,
-    allSourceSkus,
+    sourceSkus,
     allDestSkus,
     isAr,
     t,
+    priorTransfer,
+    shipment?.shipment_id,
   ]);
 
   const displayIssues = useMemo(
@@ -645,7 +692,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
 
   const resolveRowSourceImage = (row: MatchedItem): string => {
     if (row.source_image_url) return row.source_image_url;
-    return allSourceSkus.find((s) => s.sku_id === String(row.sku_id))?.image || '';
+    return sourceSkus.find((s) => s.sku_id === String(row.sku_id))?.image || '';
   };
 
   const executeTransfer = async () => {
@@ -673,6 +720,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
             sku_id: row.sku_id,
             to_sku_id: row.to_sku_id,
             quantity: row.quantity,
+            file_quantity: row.file_quantity ?? row.quantity,
           })),
       });
 
@@ -681,7 +729,14 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     } catch (error: any) {
       const insufficient = error?.response?.data?.insufficient;
       const apiIssues = error?.response?.data?.issues;
-      if (Array.isArray(apiIssues) && apiIssues.length) {
+      if (error?.response?.data?.error === 'fba_shipment_already_transferred') {
+        const prior = error?.response?.data?.prior_transfer;
+        if (prior?.exists) setPriorTransfer(prior);
+        toast.error(
+          error?.response?.data?.message ||
+            (isAr ? 'هذه الشحنة رُفعت مسبقاً — ممنوع التكرار' : 'Shipment already transferred — blocked')
+        );
+      } else if (Array.isArray(apiIssues) && apiIssues.length) {
         const active = matchedItems.filter((r) => r.quantity > 0);
         const lines = apiIssues.map((issue: { index?: number; message?: string }) => {
           const idx = Number(issue.index ?? -1);
@@ -856,8 +911,8 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
           <DialogDescription className="text-xs leading-snug">
             {transferSummary
               ? isAr
-                ? 'مقارنة الكميات المطلوبة من ملف الشحنة مقابل ما تم تحويله فعلياً.'
-                : 'Compare required quantities from the shipment file vs what was actually transferred.'
+                ? 'كمية الشيت من ملف أمازون مقابل ما تم تحويله فعلياً — الفرق = الشيت − المحوّل.'
+                : 'Sheet quantity from the Amazon file vs what was actually transferred — diff = sheet − transferred.'
               : t('transfers.fbaRequestDesc')}
           </DialogDescription>
         </DialogHeader>
@@ -979,11 +1034,29 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
               <div
                 className={cn(
                   'rounded-md border px-2.5 py-1 text-[11px] leading-snug min-h-[56px] max-h-[140px] overflow-y-auto',
-                  validation.canExecute
-                    ? 'border-green-200 bg-green-50/50 text-green-900'
-                    : 'border-amber-200 bg-amber-50/50 text-amber-950'
+                  priorTransfer?.exists
+                    ? 'border-red-300 bg-red-50/70 text-red-950'
+                    : validation.canExecute
+                      ? 'border-green-200 bg-green-50/50 text-green-900'
+                      : 'border-amber-200 bg-amber-50/50 text-amber-950'
                 )}
               >
+                {priorTransfer?.exists ? (
+                  <div className="font-bold flex items-center gap-1.5 text-[11px] text-red-800">
+                    <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                    {isAr
+                      ? `شحنة مكررة: رُفعت مسبقاً${
+                          priorTransfer.transferred_at
+                            ? ` يوم ${new Date(priorTransfer.transferred_at).toLocaleString('ar-EG')}`
+                            : ''
+                        } — ${priorTransfer.line_count ?? 0} سطر / ${priorTransfer.total_units ?? 0} وحدة`
+                      : `Duplicate shipment: already transferred${
+                          priorTransfer.transferred_at
+                            ? ` on ${new Date(priorTransfer.transferred_at).toLocaleString('en-GB')}`
+                            : ''
+                        } — ${priorTransfer.line_count ?? 0} lines / ${priorTransfer.total_units ?? 0} units`}
+                  </div>
+                ) : null}
                 <div className="font-bold flex items-center gap-1.5 text-[11px]">
                   {validation.canExecute ? (
                     <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0" />
@@ -1121,7 +1194,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
                           ) : (
                             renderSkuPicker(
                               `src-${row.amazon_msku}`,
-                              allSourceSkus,
+                              sourceSkus,
                               row.sku_id,
                               isAr ? 'SKU المحل' : 'Shop SKU',
                               sourceSkuPickerOpen,
@@ -1176,7 +1249,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
                           <td className="p-1">
                             {renderSkuPicker(
                               `un-src-${row.amazon_msku}`,
-                              allSourceSkus,
+                              sourceSkus,
                               draft.sourceSkuId,
                               isAr ? 'المحل' : 'Shop',
                               sourceSkuPickerOpen,
@@ -1186,7 +1259,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
                                   ...prev,
                                   [row.amazon_msku]: { ...draft, sourceSkuId: opt.sku_id },
                                 })),
-                              allSourceSkus.find((s) => s.sku_id === draft.sourceSkuId)?.image
+                              sourceSkus.find((s) => s.sku_id === draft.sourceSkuId)?.image
                             )}
                           </td>
                           <td className="p-1">

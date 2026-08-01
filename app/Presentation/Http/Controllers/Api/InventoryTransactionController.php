@@ -143,16 +143,69 @@ class InventoryTransactionController extends Controller
         return trim(substr($raw, $pos));
     }
 
-    private function buildTransferNotes(string $direction, int $otherLocationId, ?string $userNotes, string $crossSuffix = ''): string
+    private function buildTransferNotes(string $direction, int $otherLocationId, ?string $userNotes, string $crossSuffix = '', ?int $sheetQty = null): string
     {
         $suffix = trim((string) ($userNotes ?? ''));
         $suffix = $suffix !== '' ? (' '.$suffix) : '';
         $cross = $crossSuffix !== '' ? (' '.trim($crossSuffix)) : '';
+        $sheet = ($sheetQty !== null && $sheetQty >= 0) ? (' | SheetQty:'.$sheetQty.' |') : '';
         if ($direction === 'out') {
-            return 'Transfer OUT to Location #'.$otherLocationId.'.'.$suffix.$cross;
+            return 'Transfer OUT to Location #'.$otherLocationId.'.'.$suffix.$sheet.$cross;
         }
 
-        return 'Transfer IN from Location #'.$otherLocationId.'.'.$suffix.$cross;
+        return 'Transfer IN from Location #'.$otherLocationId.'.'.$suffix.$sheet.$cross;
+    }
+
+    /**
+     * Extract Amazon FBA shipment id from batch notes or fba:{id}:{msku} client ids.
+     */
+    private function extractFbaShipmentIdFromBatch(?string $userNotes, array $items): string
+    {
+        $notes = (string) ($userNotes ?? '');
+        if (preg_match('/FBA\s+Shipment\s+([^|]+)/i', $notes, $m)) {
+            return trim($m[1]);
+        }
+
+        foreach ($items as $row) {
+            $clientId = trim((string) ($row['client_transfer_id'] ?? ''));
+            if (preg_match('/^fba:([^:]+):/i', $clientId, $m)) {
+                return trim($m[1]);
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * @return array{exists: bool, shipment_id?: string, transferred_at?: string|null, line_count?: int, total_units?: int}
+     */
+    private function findPriorFbaShipmentTransfer(string $shipmentId): array
+    {
+        $shipmentId = trim($shipmentId);
+        if ($shipmentId === '') {
+            return ['exists' => false];
+        }
+
+        $prefix = 'transfer_out:fba:'.$shipmentId.':';
+        $base = InventoryTransaction::query()
+            ->where('type', 'TRANSFER')
+            ->where('reference_type', 'like', $prefix.'%');
+
+        $lineCount = (clone $base)->count();
+        if ($lineCount === 0) {
+            return ['exists' => false, 'shipment_id' => $shipmentId];
+        }
+
+        $totalUnits = (int) (clone $base)->sum('quantity');
+        $first = (clone $base)->orderBy('created_at')->first(['created_at']);
+
+        return [
+            'exists' => true,
+            'shipment_id' => $shipmentId,
+            'transferred_at' => $first?->created_at?->toIso8601String(),
+            'line_count' => $lineCount,
+            'total_units' => $totalUnits,
+        ];
     }
 
     private function validateTransferConstraints(Sku $fromSku, Sku $toSku, InventoryLocation $fromLocation, InventoryLocation $toLocation)
@@ -946,6 +999,7 @@ class InventoryTransactionController extends Controller
             'items.*.sku_id' => 'required|exists:skus,id',
             'items.*.to_sku_id' => 'nullable|exists:skus,id',
             'items.*.quantity' => 'required|integer|min:1',
+            'items.*.file_quantity' => 'nullable|integer|min:0',
             'items.*.client_transfer_id' => 'nullable|string|max:80',
         ]);
 
@@ -993,6 +1047,29 @@ class InventoryTransactionController extends Controller
                     continue;
                 }
                 $toApply[] = ['idx' => $idx, 'row' => $row];
+            }
+
+            // Block re-upload of the same Amazon FBA shipment when new lines would be applied.
+            if ($toApply !== []) {
+                $shipmentId = $this->extractFbaShipmentIdFromBatch(is_string($userNotes) ? $userNotes : null, $items);
+                if ($shipmentId !== '') {
+                    $prior = $this->findPriorFbaShipmentTransfer($shipmentId);
+                    if (! empty($prior['exists'])) {
+                        DB::rollBack();
+                        $when = $prior['transferred_at'] ?? null;
+                        $units = $prior['total_units'] ?? 0;
+                        $lines = $prior['line_count'] ?? 0;
+
+                        return response()->json([
+                            'message' => 'This FBA shipment was already transferred'
+                                .($when ? (' on '.$when) : '')
+                                .". Prior transfer: {$lines} line(s), {$units} unit(s)."
+                                .' Re-uploading the same shipment is blocked to prevent double stock moves.',
+                            'prior_transfer' => $prior,
+                            'error' => 'fba_shipment_already_transferred',
+                        ], 422);
+                    }
+                }
             }
 
             // 1) Validate per-row constraints + collect SKUs to load.
@@ -1092,14 +1169,17 @@ class InventoryTransactionController extends Controller
                 $toSku = $skusById->get($toSkuId);
 
                 $qty = (int) $row['quantity'];
+                $sheetQty = array_key_exists('file_quantity', $row) && $row['file_quantity'] !== null
+                    ? (int) $row['file_quantity']
+                    : null;
                 $clientId = trim((string) ($row['client_transfer_id'] ?? ''));
                 $crossSuffix = ($toSku && $fromSku && (int) $toSku->id !== (int) $fromSku->id)
                     ? ('[cross-SKU: '.$fromSku->id.' → '.$toSku->id.']')
                     : '';
 
                 // Create OUT Transaction (Source)
-                $notesOut = $this->buildTransferNotes('out', (int) $validated['to_location_id'], $userNotes, $crossSuffix);
-                $notesIn = $this->buildTransferNotes('in', (int) $validated['from_location_id'], $userNotes, $crossSuffix);
+                $notesOut = $this->buildTransferNotes('out', (int) $validated['to_location_id'], $userNotes, $crossSuffix, $sheetQty);
+                $notesIn = $this->buildTransferNotes('in', (int) $validated['from_location_id'], $userNotes, $crossSuffix, $sheetQty);
                 $refTypeOut = $clientId !== '' ? ('transfer_out:'.$clientId) : 'transfer_out';
                 $refTypeIn = $clientId !== '' ? ('transfer_in:'.$clientId) : 'transfer_in';
 
