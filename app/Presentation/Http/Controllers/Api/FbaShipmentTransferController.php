@@ -4,6 +4,7 @@ namespace App\Presentation\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\ProductAlias;
@@ -44,16 +45,8 @@ class FbaShipmentTransferController extends Controller
 
         $sourceLocationId = isset($validated['source_location_id']) ? (int) $validated['source_location_id'] : null;
         $destinationLocationId = isset($validated['destination_location_id']) ? (int) $validated['destination_location_id'] : null;
-        $sourceChannelId = null;
-        if ($sourceLocationId) {
-            $rawSourceChannel = InventoryLocation::query()->whereKey($sourceLocationId)->value('channel_id');
-            $sourceChannelId = $rawSourceChannel ? (int) $rawSourceChannel : null;
-        }
-        $fbaChannelId = null;
-        if ($destinationLocationId) {
-            $fbaChannelId = InventoryLocation::query()->whereKey($destinationLocationId)->value('channel_id');
-            $fbaChannelId = $fbaChannelId ? (int) $fbaChannelId : null;
-        }
+        $sourceChannelId = $this->resolveLocationChannelId($sourceLocationId);
+        $fbaChannelId = $this->resolveLocationChannelId($destinationLocationId);
 
         $matched = [];
         $unmatched = [];
@@ -146,6 +139,38 @@ class FbaShipmentTransferController extends Controller
             'matched_items' => $matched,
             'unmatched_items' => $unmatched,
         ]);
+    }
+
+    /**
+     * Resolve a warehouse's sales channel. Physical shop rows often have null channel_id —
+     * fall back to a channel with the same name (e.g. location "المحل" → channel "المحل").
+     */
+    private function resolveLocationChannelId(?int $locationId): ?int
+    {
+        if (! $locationId) {
+            return null;
+        }
+
+        $location = InventoryLocation::query()->find($locationId);
+        if (! $location) {
+            return null;
+        }
+
+        if ($location->channel_id) {
+            return (int) $location->channel_id;
+        }
+
+        $name = mb_strtolower(trim((string) ($location->name ?? '')));
+        if ($name === '') {
+            return null;
+        }
+
+        $channel = Channel::query()
+            ->whereRaw('LOWER(TRIM(name)) = ?', [$name])
+            ->orderBy('id')
+            ->first();
+
+        return $channel?->id ? (int) $channel->id : null;
     }
 
     /**

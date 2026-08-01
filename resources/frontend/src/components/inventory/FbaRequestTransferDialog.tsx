@@ -128,7 +128,7 @@ function resolveSkuKind(opt: SkuOption, dir: 'rtl' | 'ltr'): { label: string; cl
   const hay = `${slug} ${type} ${name}`;
 
   const isFba =
-    hay.includes('fba') || hay.includes('amazon_fba') || hay.includes('amz_fba') || hay.includes('امازون');
+    hay.includes('fba') || hay.includes('amazon_fba') || hay.includes('amz_fba') || hay.includes('افن') || /\bafn\b/.test(hay);
   if (isFba) {
     return {
       label: dir === 'rtl' ? 'FBA' : 'FBA',
@@ -149,6 +149,36 @@ function resolveSkuKind(opt: SkuOption, dir: 'rtl' | 'ltr'): { label: string; cl
     label: dir === 'rtl' ? 'محل' : 'Shop',
     className: 'border-sky-500/30 bg-sky-500/10 text-sky-900 dark:text-sky-200',
   };
+}
+
+/** When the shop warehouse has no channel_id, still hide FBA/merchant/noon/jumia listings. */
+function isShopSourceSkuOption(opt: SkuOption): boolean {
+  const slug = String(opt.channel_slug || '').toLowerCase();
+  const type = String(opt.channel_type || '').toLowerCase();
+  const name = String(opt.channel_name || '').toLowerCase();
+  const hay = `${slug} ${type} ${name}`;
+
+  if (/\bfba\b|amazon_fba|\bafn\b/.test(hay)) return false;
+  if (/merchant|\bmfn\b|\bfbm\b|تاجر/.test(hay)) return false;
+  if (/noon|نون|jumia|جوميا/.test(hay)) return false;
+  if (type.includes('fba') || type.includes('merchant') || type.includes('noon') || type.includes('jumia')) {
+    return false;
+  }
+  // Amazon listing channels are never the physical-shop source catalog.
+  if (/amazon|امازون/.test(hay)) return false;
+
+  return true;
+}
+
+function normalizeLocChannelLabel(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function buildAvailMap(sourceSkus: SkuOption[]): Map<number, number> {
@@ -361,22 +391,55 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     enabled: open && !!destinationLocationId,
   });
 
+  const { data: channels = [] } = useQuery({
+    queryKey: ['channels'],
+    queryFn: () => api.getArray('/channels'),
+    enabled: open,
+    staleTime: 60_000,
+  });
+
   const allSourceSkus = useMemo(() => mapInventoryToSkuOptions(sourceInventory), [sourceInventory]);
   const allDestSkus = useMemo(() => mapInventoryToSkuOptions(destInventory), [destInventory]);
 
+  const destChannelId = useMemo(() => {
+    const loc = locations.find((l: any) => String(l.id) === destinationLocationId);
+    if (loc?.channel_id != null && String(loc.channel_id) !== '') return String(loc.channel_id);
+    return '';
+  }, [locations, destinationLocationId]);
+
   const sourceChannelId = useMemo(() => {
     const loc = locations.find((l: any) => String(l.id) === sourceLocationId);
-    return loc?.channel_id != null ? String(loc.channel_id) : '';
-  }, [locations, sourceLocationId]);
+    if (loc?.channel_id != null && String(loc.channel_id) !== '') {
+      return String(loc.channel_id);
+    }
+    // Physical shop warehouses often have null channel_id — match by name to the shop channel.
+    const locName = normalizeLocChannelLabel(String(loc?.name || ''));
+    if (!locName || !channels.length) return '';
+    const matched = (channels as any[]).find((c) => {
+      const n = normalizeLocChannelLabel(String(c?.name || ''));
+      const s = normalizeLocChannelLabel(String(c?.slug || '').replace(/-/g, ' '));
+      return (n && n === locName) || (s && s === locName);
+    });
+    return matched?.id != null ? String(matched.id) : '';
+  }, [locations, sourceLocationId, channels]);
 
-  /** Source picker / recommendations: only SKUs for the selected source location's channel. */
+  /** Source picker: only shop-channel SKUs (never FBA/merchant/noon sitting in the same warehouse). */
   const sourceSkus = useMemo(() => {
-    if (!sourceChannelId) return allSourceSkus;
-    return allSourceSkus.filter((s) => String(s.channel_id || '') === sourceChannelId);
+    if (sourceChannelId) {
+      return allSourceSkus.filter((s) => String(s.channel_id || '') === sourceChannelId);
+    }
+    return allSourceSkus.filter(isShopSourceSkuOption);
   }, [allSourceSkus, sourceChannelId]);
 
-  const sourceAvailMap = useMemo(() => buildAvailMap(sourceSkus), [sourceSkus]);
+  /** Destination picker: only the selected FBA warehouse channel when known. */
+  const destSkus = useMemo(() => {
+    if (destChannelId) {
+      return allDestSkus.filter((s) => String(s.channel_id || '') === destChannelId);
+    }
+    return allDestSkus;
+  }, [allDestSkus, destChannelId]);
 
+  const sourceAvailMap = useMemo(() => buildAvailMap(sourceSkus), [sourceSkus]);
   const refreshMatchedStock = useCallback(
     (items: MatchedItem[]) => applyStockStatuses(items, sourceAvailMap),
     [sourceAvailMap]
@@ -536,7 +599,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
       return;
     }
     const src = sourceSkus.find((s) => s.sku_id === draft.sourceSkuId);
-    const dst = allDestSkus.find((s) => s.sku_id === draft.destSkuId);
+    const dst = destSkus.find((s) => s.sku_id === draft.destSkuId);
     if (!src || !dst) {
       toast.error(isAr ? 'SKU غير موجود في المخزون المحدد' : 'SKU not found in selected warehouses');
       return;
@@ -611,7 +674,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
 
     for (const row of activeItems) {
       const src = sourceSkus.find((s) => s.sku_id === String(row.sku_id));
-      const dst = allDestSkus.find((s) => s.sku_id === String(row.to_sku_id));
+      const dst = destSkus.find((s) => s.sku_id === String(row.to_sku_id));
       const constraintMsg = validateTransferRowConstraints(row, src, dst, fromLoc, toLoc, isAr);
       if (constraintMsg) issues.push(constraintMsg);
     }
@@ -663,7 +726,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     sourceAvailMap.size,
     locations,
     sourceSkus,
-    allDestSkus,
+    destSkus,
     isAr,
     t,
     priorTransfer,
@@ -686,7 +749,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
 
   const resolveRowDestImage = (row: MatchedItem): string => {
     if (row.dest_image_url) return row.dest_image_url;
-    if (row.to_sku_id) return allDestSkus.find((d) => d.sku_id === String(row.to_sku_id))?.image || '';
+    if (row.to_sku_id) return destSkus.find((d) => d.sku_id === String(row.to_sku_id))?.image || '';
     return '';
   };
 
@@ -1158,7 +1221,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
                           ) : (
                             renderSkuPicker(
                               `dst-${row.amazon_msku}`,
-                              allDestSkus,
+                              destSkus,
                               row.to_sku_id,
                               isAr ? 'SKU FBA' : 'FBA SKU',
                               destSkuPickerOpen,
@@ -1265,7 +1328,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
                           <td className="p-1">
                             {renderSkuPicker(
                               `un-dst-${row.amazon_msku}`,
-                              allDestSkus,
+                              destSkus,
                               draft.destSkuId,
                               'FBA',
                               destSkuPickerOpen,
@@ -1275,7 +1338,7 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
                                   ...prev,
                                   [row.amazon_msku]: { ...draft, destSkuId: opt.sku_id },
                                 })),
-                              allDestSkus.find((s) => s.sku_id === draft.destSkuId)?.image,
+                              destSkus.find((s) => s.sku_id === draft.destSkuId)?.image,
                               row.amazon_msku
                             )}
                           </td>
