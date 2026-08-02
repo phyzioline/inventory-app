@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import axios from 'axios';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { expenseService, Expense, warehouseService } from '@/lib/supabase-services';
+import { employeeService, expenseService, Expense, warehouseService } from '@/lib/supabase-services';
 import { exportToExcel } from '@/lib/excelUtils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import {
   Search,
   Plus,
@@ -25,6 +29,9 @@ import {
   Wallet,
   PieChart,
   X,
+  Users,
+  ChevronsUpDown,
+  Check,
 } from 'lucide-react';
 
 const toNumber = (value: number | string | null | undefined) => {
@@ -32,12 +39,12 @@ const toNumber = (value: number | string | null | undefined) => {
   return Number.isFinite(numericValue) ? numericValue : 0;
 };
 
+/** Operational expense categories — salaries live on /salaries */
 const EXPENSE_CATEGORIES = [
   'general',
   'shipping',
   'utilities',
   'rent',
-  'salaries',
   'marketing',
   'maintenance',
   'supplies',
@@ -64,6 +71,8 @@ export default function Expenses() {
   // Dialog state
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [beneficiaryPickerOpen, setBeneficiaryPickerOpen] = useState(false);
+  const [beneficiarySearch, setBeneficiarySearch] = useState('');
   const [formData, setFormData] = useState({
     category: 'general',
     warehouse_id: '',
@@ -83,6 +92,11 @@ export default function Expenses() {
   const { data: warehouses = [] } = useQuery({
     queryKey: ['warehouses'],
     queryFn: warehouseService.getAll,
+  });
+
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees'],
+    queryFn: () => employeeService.getAll(true),
   });
 
   // Mutations
@@ -151,18 +165,33 @@ export default function Expenses() {
     });
   };
 
-  // Filtered data
+  // Filtered data (salaries excluded — managed on /salaries)
+  const operationalExpenses = useMemo(
+    () => expenses.filter((expense) => expense.category !== 'salaries'),
+    [expenses]
+  );
+
   const beneficiaryOptions = useMemo(() => {
     const set = new Set<string>();
-    expenses.forEach((expense) => {
+    employees.forEach((emp: { name?: string }) => {
+      const name = String(emp.name || '').trim();
+      if (name) set.add(name);
+    });
+    operationalExpenses.forEach((expense) => {
       const beneficiary = String(expense.vendor_name || '').trim();
       if (beneficiary) set.add(beneficiary);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ar'));
-  }, [expenses]);
+  }, [employees, operationalExpenses]);
+
+  const filteredBeneficiaryOptions = useMemo(() => {
+    const q = beneficiarySearch.trim().toLowerCase();
+    if (!q) return beneficiaryOptions;
+    return beneficiaryOptions.filter((name) => name.toLowerCase().includes(q));
+  }, [beneficiaryOptions, beneficiarySearch]);
 
   const filteredExpenses = useMemo(() => {
-    return expenses.filter((expense) => {
+    return operationalExpenses.filter((expense) => {
       const matchesSearch =
         !searchQuery ||
         expense.vendor_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -185,7 +214,7 @@ export default function Expenses() {
 
       return matchesSearch && matchesWarehouse && matchesCategory && matchesPaymentMethod && matchesBeneficiary && matchesDateFrom && matchesDateTo;
     });
-  }, [expenses, searchQuery, warehouseFilter, categoryFilter, paymentMethodFilter, beneficiaryFilter, dateFrom, dateTo]);
+  }, [operationalExpenses, searchQuery, warehouseFilter, categoryFilter, paymentMethodFilter, beneficiaryFilter, dateFrom, dateTo]);
 
   const selectedBeneficiarySummary = useMemo(() => {
     if (beneficiaryFilter === 'all') return null;
@@ -251,20 +280,23 @@ export default function Expenses() {
   const openCreateDialog = () => {
     setEditingExpenseId(null);
     resetForm();
+    setBeneficiarySearch('');
     setIsDialogOpen(true);
   };
 
   const openEditDialog = (expense: Expense) => {
     setEditingExpenseId(expense.id);
+    const vendorName = expense.vendor_name || '';
     setFormData({
       category: expense.category || 'general',
       warehouse_id: expense.warehouse_id || '',
       amount: toNumber(expense.amount).toString(),
       payment_method: expense.payment_method || 'cash',
       description: expense.description || '',
-      vendor_name: expense.vendor_name || '',
+      vendor_name: vendorName,
       expense_date: format(new Date(expense.expense_date || expense.created_at), 'yyyy-MM-dd'),
     });
+    setBeneficiarySearch(vendorName);
     setIsDialogOpen(true);
   };
 
@@ -360,6 +392,12 @@ export default function Expenses() {
           <p className="text-muted-foreground">{t('expenses.subtitle')}</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/salaries">
+              <Users className="w-4 h-4 me-2" />
+              {t('expenses.manageSalaries')}
+            </Link>
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="w-4 h-4 me-2" />
             {t('common.export')}
@@ -371,6 +409,8 @@ export default function Expenses() {
               if (!open) {
                 setEditingExpenseId(null);
                 resetForm();
+                setBeneficiaryPickerOpen(false);
+                setBeneficiarySearch('');
               }
             }}
           >
@@ -422,11 +462,57 @@ export default function Expenses() {
                 </div>
                 <div className="space-y-2">
                   <Label>{isAr ? 'المستفيد' : 'Beneficiary'}</Label>
-                  <Input
-                    value={formData.vendor_name}
-                    onChange={(e) => setFormData({ ...formData, vendor_name: e.target.value })}
-                    placeholder={isAr ? 'اسم المستفيد' : 'Beneficiary name'}
-                  />
+                  <Popover open={beneficiaryPickerOpen} onOpenChange={setBeneficiaryPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between font-normal"
+                      >
+                        <span className={cn('truncate', !formData.vendor_name && 'text-muted-foreground')}>
+                          {formData.vendor_name || (isAr ? 'اسم المستفيد' : 'Beneficiary name')}
+                        </span>
+                        <ChevronsUpDown className="ms-2 h-4 w-4 shrink-0 opacity-60" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder={t('salaries.searchBeneficiary')}
+                          value={beneficiarySearch}
+                          onValueChange={(value) => {
+                            setBeneficiarySearch(value);
+                            setFormData({ ...formData, vendor_name: value });
+                          }}
+                        />
+                        <CommandEmpty>{t('salaries.noBeneficiaryMatch')}</CommandEmpty>
+                        <CommandList>
+                          <CommandGroup>
+                            {filteredBeneficiaryOptions.map((name) => (
+                              <CommandItem
+                                key={name}
+                                value={name}
+                                onSelect={() => {
+                                  setFormData({ ...formData, vendor_name: name });
+                                  setBeneficiarySearch(name);
+                                  setBeneficiaryPickerOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    'me-2 h-4 w-4',
+                                    formData.vendor_name === name ? 'opacity-100' : 'opacity-0'
+                                  )}
+                                />
+                                {name}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">

@@ -456,6 +456,10 @@ export interface Expense {
     category: string;
     amount: number;
     date: string;
+    expense_date?: string;
+    expense_number?: string;
+    vendor_name?: string;
+    payment_method?: string;
     warehouse_id?: string;
     notes?: string;
     status: 'pending' | 'approved' | 'rejected';
@@ -1023,6 +1027,38 @@ export const paymentService = {
 };
 
 // ========== EXPENSE SERVICE ==========
+export interface Employee {
+    id: string | number;
+    name: string;
+    job_title?: string | null;
+    phone?: string | null;
+    base_salary?: number | string | null;
+    is_active?: boolean;
+    hired_at?: string | null;
+    notes?: string | null;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export const employeeService = {
+    async getAll(activeOnly = false) {
+        const qs = activeOnly ? '?active_only=1' : '';
+        return await api.getArray(`employees${qs}`);
+    },
+    async create(data: Partial<Employee>) {
+        return await api.post('employees', data);
+    },
+    async update(id: string | number, data: Partial<Employee>) {
+        return await api.put(`employees/${id}`, data);
+    },
+    async delete(id: string | number) {
+        await api.delete(`employees/${id}`);
+    },
+    async importFromExpenses() {
+        return await api.post('employees/import-from-expenses', {});
+    },
+};
+
 export const expenseService = {
     async getAll() {
         try {

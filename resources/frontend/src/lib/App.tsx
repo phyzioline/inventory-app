@@ -75,6 +75,7 @@ const BankAccounts = lazy(() => import("./pages/BankAccounts"));
 const Receipts = lazy(() => import("./pages/Receipts"));
 const Payments = lazy(() => import("./pages/Payments"));
 const Expenses = lazy(() => import("./pages/Expenses"));
+const Salaries = lazy(() => import("./pages/Salaries"));
 const CapitalManagement = lazy(() => import("./pages/CapitalManagement"));
 const TreasurySulfa = lazy(() => import("./pages/TreasurySulfa"));
 
@@ -213,6 +214,7 @@ const App = () => (
                   <Route path="/finance/receipts" element={<Receipts />} />
                   <Route path="/finance/payments" element={<Payments />} />
                   <Route path="/expenses" element={<Expenses />} />
+                  <Route path="/salaries" element={<Salaries />} />
                   <Route path="/finance/capital" element={<CapitalManagement />} />
                   <Route path="/finance/sulfa" element={<TreasurySulfa />} />
 

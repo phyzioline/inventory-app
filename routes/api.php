@@ -14,6 +14,7 @@ use App\Presentation\Http\Controllers\Api\ChannelSkuImportController;
 use App\Presentation\Http\Controllers\Api\CustomerController;
 use App\Presentation\Http\Controllers\Api\DashboardMetricsController;
 use App\Presentation\Http\Controllers\Api\DraftProductReviewController;
+use App\Presentation\Http\Controllers\Api\EmployeeController;
 use App\Presentation\Http\Controllers\Api\ExpenseController;
 use App\Presentation\Http\Controllers\Api\FbaShipmentTransferController;
 use App\Presentation\Http\Controllers\Api\FinanceAccountController;
@@ -167,6 +168,8 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('finance/accounts', [FinanceAccountController::class, 'index']);
         Route::post('finance/accounts', [FinanceAccountController::class, 'store']);
         Route::patch('finance/accounts/{id}', [FinanceAccountController::class, 'update']);
+        Route::post('employees/import-from-expenses', [EmployeeController::class, 'importFromExpenses']);
+        Route::apiResource('employees', EmployeeController::class);
         Route::apiResource('expenses', ExpenseController::class);
         Route::apiResource('receipts', ReceiptController::class);
         Route::apiResource('payments', PaymentController::class);
