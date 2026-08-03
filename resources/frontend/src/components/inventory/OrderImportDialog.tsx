@@ -292,6 +292,7 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
 
     const pollAsyncImportJob = async (jobKey: string) => {
         const maxAttempts = 180;
+        let stillQueuedAttempts = 0;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             const status = await api.get<{ status?: string; result?: any; error?: string }>(
                 `marketplace/import/jobs/${jobKey}`
@@ -302,6 +303,19 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
             }
             if (status?.status === 'failed') {
                 throw new Error(status.error || (isAr ? 'فشل الاستيراد في الخلفية' : 'Background import failed'));
+            }
+            if (status?.status === 'queued') {
+                stillQueuedAttempts += 1;
+                // ~90s still queued ⇒ worker likely down / stalled (backend also fails at 120s).
+                if (stillQueuedAttempts >= 45) {
+                    throw new Error(
+                        isAr
+                            ? 'الاستيراد معلّق في الطابور. أعد المحاولة؛ إن تكرر فالمشكلة في معالج الطوابير (inventory-queue).'
+                            : 'Import stuck in queue. Retry; if it persists, the inventory-queue worker is down.'
+                    );
+                }
+            } else {
+                stillQueuedAttempts = 0;
             }
             await new Promise((r) => setTimeout(r, 2000));
         }

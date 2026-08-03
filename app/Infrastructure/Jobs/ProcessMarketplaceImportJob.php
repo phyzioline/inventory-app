@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Storage;
 use App\Application\Services\MarketplaceImportService;
 use App\Application\Support\TenantContext;
 use App\Models\User;
+use App\Support\InventoryQueueGuard;
 
 /**
  * Async marketplace sheet import. HTTP can dispatch this and return 202 + job_key
@@ -73,6 +74,7 @@ class ProcessMarketplaceImportJob implements ShouldQueue
                 'result' => $results,
                 'updated_at' => now()->toIso8601String(),
             ], now()->addHours(6));
+            InventoryQueueGuard::forgetActiveJob($this->jobKey);
         } catch (\Throwable $e) {
             Log::error('ProcessMarketplaceImportJob failed', [
                 'job_key' => $this->jobKey,
@@ -98,5 +100,6 @@ class ProcessMarketplaceImportJob implements ShouldQueue
             'error' => $message,
             'updated_at' => now()->toIso8601String(),
         ], now()->addHours(6));
+        InventoryQueueGuard::forgetActiveJob($this->jobKey);
     }
 }

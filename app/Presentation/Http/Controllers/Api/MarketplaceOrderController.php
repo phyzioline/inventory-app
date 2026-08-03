@@ -6,8 +6,11 @@ use App\Application\Services\InventoryAbilityService;
 use App\Application\Services\MarketplaceImportService;
 use App\Http\Controllers\Controller;
 use App\Presentation\Http\Requests\MarketplaceImportRequest;
+use App\Support\InventoryQueueGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class MarketplaceOrderController extends Controller
@@ -38,8 +41,8 @@ class MarketplaceOrderController extends Controller
             ], 422);
         }
 
-        // Optional async path: store file and queue ProcessMarketplaceImportJob (202 + job_key).
-        if ($request->boolean('async')) {
+        // Async only when a queue worker is alive — otherwise sync so imports never hang.
+        if ($request->boolean('async') && InventoryQueueGuard::workerAppearsAlive()) {
             $userId = (int) $request->user()->id;
             $jobKey = 'mktimp_'.$userId.'_'.uniqid('', true);
             $stored = $request->file('file')->storeAs(
@@ -55,16 +58,23 @@ class MarketplaceOrderController extends Controller
                 $request->file('file')->getClientOriginalName(),
                 $jobKey,
             );
-            \Illuminate\Support\Facades\Cache::put('marketplace_import_job:'.$jobKey, [
+            Cache::put('marketplace_import_job:'.$jobKey, [
                 'status' => 'queued',
                 'updated_at' => now()->toIso8601String(),
             ], now()->addHours(6));
+            InventoryQueueGuard::registerActiveJob($jobKey);
 
             return response()->json([
                 'message' => 'Import queued',
                 'job_key' => $jobKey,
                 'status_url' => '/api/inventory/marketplace/import/jobs/'.$jobKey,
             ], 202);
+        }
+
+        if ($request->boolean('async') && ! InventoryQueueGuard::workerAppearsAlive()) {
+            Log::warning('Marketplace async import falling back to sync: queue worker not running', [
+                'pending_queue' => InventoryQueueGuard::pendingQueueSize(),
+            ]);
         }
 
         try {
@@ -108,10 +118,16 @@ class MarketplaceOrderController extends Controller
      */
     public function importJobStatus(string $jobKey): JsonResponse
     {
-        $payload = \Illuminate\Support\Facades\Cache::get('marketplace_import_job:'.$jobKey);
+        if (! preg_match('/^mktimp_\d+_[a-zA-Z0-9.]+$/', $jobKey)) {
+            return response()->json(['message' => 'Job not found'], 404);
+        }
+
+        $payload = Cache::get('marketplace_import_job:'.$jobKey);
         if (! is_array($payload)) {
             return response()->json(['message' => 'Job not found'], 404);
         }
+
+        $payload = InventoryQueueGuard::refreshStaleJobPayload($jobKey, $payload);
 
         return response()->json($payload);
     }

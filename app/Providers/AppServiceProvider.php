@@ -135,6 +135,7 @@ class AppServiceProvider extends ServiceProvider
                 RepairImportSkuDrift::class,
                 \App\Presentation\Console\Commands\FixSwappedMarketplaceOrderDatesCommand::class,
                 \App\Presentation\Console\Commands\QaProposePatchesCommand::class,
+                \App\Presentation\Console\Commands\EnsureInventoryQueueHealthyCommand::class,
             ]);
         }
     }

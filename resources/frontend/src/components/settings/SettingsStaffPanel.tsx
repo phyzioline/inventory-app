@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Users, Loader2, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Users, Loader2, Trash2, Banknote, ArrowLeft, ArrowRight } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -92,22 +93,68 @@ export function SettingsStaffPanel() {
 
   if (!canManage) {
     return (
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="w-5 h-5" />
-            {isAr ? 'فريق العمل' : 'Staff'}
-          </CardTitle>
-          <CardDescription>
-            {isAr ? 'عرض فقط — لا تملك صلاحية إدارة الموظفين.' : 'Read-only — you cannot manage staff.'}
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="space-y-6">
+        <Card className="glass-card border-primary/20">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+            <div className="space-y-1.5">
+              <CardTitle className="flex items-center gap-2">
+                <Banknote className="w-5 h-5 text-primary" />
+                {isAr ? 'الرواتب والموظفين' : 'Salaries & Employees'}
+              </CardTitle>
+              <CardDescription>
+                {isAr
+                  ? 'إدارة موظفي الرواتب ودفع الرواتب من الخزنة (منفصل عن صلاحيات دخول النظام).'
+                  : 'Manage payroll employees and pay salaries from the treasury (separate from app login roles).'}
+              </CardDescription>
+            </div>
+            <Button asChild>
+              <Link to="/salaries">
+                {isAr ? 'فتح الرواتب' : 'Open salaries'}
+                {isAr ? <ArrowLeft className="w-4 h-4 ms-2" /> : <ArrowRight className="w-4 h-4 ms-2" />}
+              </Link>
+            </Button>
+          </CardHeader>
+        </Card>
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" />
+              {isAr ? 'فريق العمل' : 'Staff'}
+            </CardTitle>
+            <CardDescription>
+              {isAr ? 'عرض فقط — لا تملك صلاحية إدارة الموظفين.' : 'Read-only — you cannot manage staff.'}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <Card className="glass-card">
+    <div className="space-y-6">
+      <Card className="glass-card border-primary/20">
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle className="flex items-center gap-2">
+              <Banknote className="w-5 h-5 text-primary" />
+              {isAr ? 'الرواتب والموظفين' : 'Salaries & Employees'}
+            </CardTitle>
+            <CardDescription>
+              {isAr
+                ? 'إدارة موظفي الرواتب ودفع الرواتب من الخزنة (منفصل عن صلاحيات دخول النظام).'
+                : 'Manage payroll employees and pay salaries from the treasury (separate from app login roles).'}
+            </CardDescription>
+          </div>
+          <Button asChild>
+            <Link to="/salaries">
+              {isAr ? 'فتح الرواتب' : 'Open salaries'}
+              {isAr ? <ArrowLeft className="w-4 h-4 ms-2" /> : <ArrowRight className="w-4 h-4 ms-2" />}
+            </Link>
+          </Button>
+        </CardHeader>
+      </Card>
+
+      <Card className="glass-card">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Users className="w-5 h-5" />
@@ -220,5 +267,6 @@ export function SettingsStaffPanel() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

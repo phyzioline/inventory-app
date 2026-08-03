@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import axios from 'axios';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -29,7 +28,6 @@ import {
   Wallet,
   PieChart,
   X,
-  Users,
   ChevronsUpDown,
   Check,
 } from 'lucide-react';
@@ -392,12 +390,6 @@ export default function Expenses() {
           <p className="text-muted-foreground">{t('expenses.subtitle')}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/salaries">
-              <Users className="w-4 h-4 me-2" />
-              {t('expenses.manageSalaries')}
-            </Link>
-          </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="w-4 h-4 me-2" />
             {t('common.export')}

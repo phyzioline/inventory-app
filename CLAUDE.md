@@ -108,6 +108,28 @@ profit/COGS, subscriptions/Paymob. See `.cursor/rules/inventory-critical-paths.m
 
 ---
 
+## Queue worker (MANDATORY for async marketplace import)
+
+Incident 2026-08-03: async sheet import hung for hours because jobs sat in Redis
+`queued` with **no** inventory queue worker (only phyzioline.com had a worker).
+
+| Unit | Purpose |
+|---|---|
+| `inventory-queue.service` | `php artisan queue:work redis` — **must be enabled+running** |
+| `inventory-queue-watchdog.timer` | Restarts the worker if it dies |
+| Cron `schedule:run` (this app) | Runs `inventory:ensure-queue-healthy` every minute |
+
+```bash
+systemctl status inventory-queue.service
+systemctl enable --now inventory-queue.service inventory-queue-watchdog.timer
+php artisan inventory:ensure-queue-healthy
+```
+
+If the worker is down, marketplace `async=1` **falls back to sync** so the UI never
+polls forever. Stale `queued` jobs auto-fail after 120s.
+
+---
+
 # AI AGENT EXECUTION RULES (MANDATORY)
 
 These rules override all other instructions. Violation = failed implementation.

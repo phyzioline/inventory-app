@@ -121,7 +121,6 @@ const navItems: NavItem[] = [
       { key: 'nav.receipts', path: '/finance/receipts' },
       { key: 'nav.payments', path: '/finance/payments' },
       { key: 'nav.expenses', path: '/expenses' },
-      { key: 'nav.salaries', path: '/salaries' },
     ],
   },
 
