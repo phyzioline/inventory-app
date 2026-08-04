@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\PurchaseImportService;
+use App\Application\Services\SkuUniquenessGuard;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryOffer;
 use App\Domain\Models\Wms\MasterProduct;
@@ -454,9 +455,12 @@ class MasterProductController extends Controller
                     $listingChannelId = $request->has('channel_id') ? null : 1;
                 }
 
+                $finalSkuCode = SkuUniquenessGuard::normalize((string) ($skuCode ?? ('SKU-'.strtoupper(bin2hex(random_bytes(3))))));
+                SkuUniquenessGuard::assertAvailable((int) auth()->id(), $finalSkuCode);
+
                 Sku::create([
                     'offer_id' => $offer->id,
-                    'sku' => $skuCode ?? ('SKU-'.strtoupper(bin2hex(random_bytes(3)))),
+                    'sku' => $finalSkuCode,
                     'name' => $request->platform_product_name ?? $name,
                     'image_url' => $resolvedSkuImage['stored_url'] ?? ($request->sku_image_url ?? $request->image_url),
                     'selling_price' => $request->selling_price ?? 0,
@@ -474,6 +478,9 @@ class MasterProductController extends Controller
                 'needs_first_offer' => ! $createDefaultListing,
             ]), 201);
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -526,6 +533,30 @@ class MasterProductController extends Controller
                     'display_quantity',
                     round($this->skuStockAsMasterProductsTable($origSku), 4)
                 );
+            }
+        }
+
+        $userId = (int) ($product->user_id ?? auth()->id() ?? 0);
+        $dupMap = SkuUniquenessGuard::duplicateMapForCodes(
+            $userId,
+            $allSkus->map(fn (Sku $s) => (string) ($s->sku ?? ''))->all()
+        );
+        foreach ($product->offers as $offer) {
+            foreach ($offer->skus as $origSku) {
+                $code = (string) ($origSku->sku ?? '');
+                if ($code !== '' && isset($dupMap[$code])) {
+                    $siblings = array_values(array_filter(
+                        $dupMap[$code],
+                        static fn (array $row) => (int) ($row['sku_id'] ?? 0) !== (int) $origSku->id
+                    ));
+                    $origSku->setAttribute('is_duplicate_sku', true);
+                    $origSku->setAttribute('duplicate_action_required', true);
+                    $origSku->setAttribute('duplicate_siblings', $siblings);
+                } else {
+                    $origSku->setAttribute('is_duplicate_sku', false);
+                    $origSku->setAttribute('duplicate_action_required', false);
+                    $origSku->setAttribute('duplicate_siblings', []);
+                }
             }
         }
 

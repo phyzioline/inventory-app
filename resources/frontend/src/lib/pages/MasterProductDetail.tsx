@@ -246,10 +246,24 @@ export default function MasterProductDetail() {
                                                                 SKU
                                                             </div>
                                                             <div>
-                                                                <p className="font-mono font-medium">{sku.sku}</p>
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    <p className="font-mono font-medium">{sku.sku}</p>
+                                                                    {sku.is_duplicate_sku && (
+                                                                        <Badge variant="destructive" className="text-[10px]">
+                                                                            مكرر — يلزم اتخاذ إجراء
+                                                                        </Badge>
+                                                                    )}
+                                                                </div>
                                                                 <p className="text-xs text-muted-foreground">
                                                                     Price: {Number(sku.selling_price).toFixed(2)} EGP
                                                                 </p>
+                                                                {sku.is_duplicate_sku && (sku.duplicate_siblings || []).length > 0 && (
+                                                                    <p className="text-[10px] text-red-600 mt-0.5">
+                                                                        أيضاً في: {(sku.duplicate_siblings || [])
+                                                                            .map((s: any) => s.channel_name || `#${s.channel_id}`)
+                                                                            .join('، ')}
+                                                                    </p>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         <Badge variant={sku.channel_id ? "default" : "outline"}>

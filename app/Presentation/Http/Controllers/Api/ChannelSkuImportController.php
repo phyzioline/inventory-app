@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use App\Application\Services\InventoryTransactionService;
+use App\Application\Services\SkuUniquenessGuard;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\Sku;
@@ -160,7 +161,31 @@ class ChannelSkuImportController extends Controller
 
         foreach ($request->skus as $row) {
             try {
-                $skuCode = trim($row['sku']);
+                $skuCode = SkuUniquenessGuard::normalize((string) ($row['sku'] ?? ''));
+                if ($skuCode === '') {
+                    $errors[] = ['sku' => $row['sku'] ?? '', 'error' => 'SKU فارغ'];
+                    continue;
+                }
+
+                $existingOnChannel = Sku::query()
+                    ->where('user_id', $userId)
+                    ->where('channel_id', $channelId)
+                    ->where('sku', $skuCode)
+                    ->first();
+
+                if (! $existingOnChannel) {
+                    try {
+                        SkuUniquenessGuard::assertAvailable((int) $userId, $skuCode);
+                    } catch (\Illuminate\Validation\ValidationException $e) {
+                        $errors[] = [
+                            'sku' => $skuCode,
+                            'error' => (string) ($e->errors()['sku'][0] ?? $e->getMessage()),
+                            'sku_duplicate' => true,
+                            'duplicate_locations' => $e->response?->getData(true)['duplicate_locations'] ?? [],
+                        ];
+                        continue;
+                    }
+                }
 
                 // Use updateOrCreate with multi-channel unique scope
                 $attrs = [

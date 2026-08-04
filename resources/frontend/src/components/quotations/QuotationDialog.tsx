@@ -735,48 +735,42 @@ export function QuotationEditor({
     };
 
     const editorHeader = (
-        <div className="p-6 border-b border-border bg-muted/40 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start sticky top-0 z-10 backdrop-blur-md shrink-0">
-            <div className="flex items-start gap-3 min-w-0">
+        <div className="px-4 py-3 border-b border-border bg-muted/40 flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center sticky top-0 z-10 backdrop-blur-md shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
                 {isPageMode ? (
-                    <Button type="button" variant="ghost" size="icon" className="shrink-0 mt-0.5" onClick={() => void handleClose()}>
-                        <ArrowLeft className="h-5 w-5" />
+                    <Button type="button" variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => void handleClose()}>
+                        <ArrowLeft className="h-4 w-4" />
                     </Button>
                 ) : null}
                 <div className="min-w-0">
                     {isPageMode ? (
-                        <div className="space-y-1 text-start">
-                            <h1 className="flex items-center gap-2 text-xl font-bold text-foreground">
-                                <FileSpreadsheet className="w-6 h-6 text-emerald-600 shrink-0" />
+                        <div className="text-start">
+                            <h1 className="flex items-center gap-2 text-base sm:text-lg font-bold text-foreground leading-tight">
+                                <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
                                 {editingQuotationId ? (t('quotations.editDialogTitle') || (isAr ? 'تعديل عرض السعر' : 'Edit quotation')) : t('quotations.dialogTitle')}
                             </h1>
-                            <p className="text-muted-foreground text-sm">
-                                {editingQuotationId ? (t('quotations.editDialogSubtitle') || (isAr ? 'عدّل الأصناف والكميات والأسعار.' : 'Adjust items, quantities, and prices.')) : t('quotations.dialogSubtitle')}
-                            </p>
                         </div>
                     ) : (
-                        <DialogHeader className="space-y-1 text-start p-0 sm:text-start">
-                            <DialogTitle className="flex items-center gap-2 text-xl font-bold text-foreground">
-                                <FileSpreadsheet className="w-6 h-6 text-emerald-600 shrink-0" />
+                        <DialogHeader className="space-y-0 text-start p-0 sm:text-start">
+                            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-foreground">
+                                <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
                                 {editingQuotationId ? (t('quotations.editDialogTitle') || (isAr ? 'تعديل عرض السعر' : 'Edit quotation')) : t('quotations.dialogTitle')}
                             </DialogTitle>
-                            <p className="text-muted-foreground text-sm mt-1">
-                                {editingQuotationId ? (t('quotations.editDialogSubtitle') || (isAr ? 'عدّل الأصناف والكميات والأسعار.' : 'Adjust items, quantities, and prices.')) : t('quotations.dialogSubtitle')}
-                            </p>
                         </DialogHeader>
                     )}
                     {autoSaveStatus === 'saving' ? (
-                        <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+                        <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
                             <Loader2 className="h-3 w-3 animate-spin" />
                             {t('quotations.autoSaving') || (isAr ? 'جاري الحفظ التلقائي…' : 'Auto-saving…')}
                         </p>
                     ) : autoSaveStatus === 'saved' ? (
-                        <p className="text-xs text-emerald-600 mt-2">{t('quotations.autoSavedHint') || (isAr ? 'تم الحفظ تلقائياً' : 'Auto-saved')}</p>
+                        <p className="text-[11px] text-emerald-600 mt-0.5">{t('quotations.autoSavedHint') || (isAr ? 'تم الحفظ تلقائياً' : 'Auto-saved')}</p>
                     ) : null}
                 </div>
             </div>
             <div className="flex flex-col items-start sm:items-end shrink-0">
-                <span className="text-muted-foreground text-xs uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
-                <span className="text-3xl font-bold text-foreground tracking-tight">
+                <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
+                <span className="text-2xl font-bold text-foreground tracking-tight leading-none">
                     {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
                     <span className="text-sm text-emerald-600 font-normal">EGP</span>
                 </span>
@@ -784,10 +778,76 @@ export function QuotationEditor({
         </div>
     );
 
+    const productSearchBlock = (
+        <div className="relative z-20 shrink-0 border-b border-border bg-muted/10 px-3 py-2.5 sm:px-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 shrink-0">
+                    <Search className="w-4 h-4" />
+                    <span className="text-sm font-semibold whitespace-nowrap">{t('quotations.addProducts')}</span>
+                </div>
+                <div className="relative min-w-0 flex-1">
+                    <Input
+                        value={searchQuery}
+                        onChange={(e) => {
+                            setSearchQuery(e.target.value);
+                            searchProducts(e.target.value);
+                        }}
+                        placeholder={t('quotations.searchProducts')}
+                        className="h-9 bg-background border-border"
+                        autoComplete="off"
+                        disabled={!isEditable}
+                    />
+                    {isSearching && (
+                        <Loader2 className="absolute end-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+                    )}
+                    {isEditable && searchQuery.trim().length > 0 && searchResults.length === 0 && !isSearching && (
+                        <div className="absolute start-0 end-0 top-full z-50 mt-1 rounded-lg border border-border bg-popover p-2 shadow-lg">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="w-full gap-2"
+                                onClick={openCreateProductDialog}
+                            >
+                                <PlusCircle className="w-4 h-4 text-green-600" />
+                                {t('quotations.createNewProduct') || (isAr ? 'إنشاء منتج جديد بهذا الاسم؟' : 'Create new product with this name?')}
+                            </Button>
+                        </div>
+                    )}
+                    {searchResults.length > 0 && isEditable && (
+                        <div className="absolute start-0 end-0 top-full z-50 mt-1 max-h-[min(50vh,20rem)] overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
+                            {searchResults.map((p) => {
+                                const price = getProductPrice(p);
+                                return (
+                                    <button
+                                        key={p.id}
+                                        type="button"
+                                        onClick={() => addItem(p)}
+                                        className="flex w-full items-center justify-between gap-2 border-b border-border px-3 py-2.5 text-start transition-colors last:border-0 hover:bg-muted/60"
+                                    >
+                                        <div className="min-w-0 flex-1">
+                                            <div className="truncate text-sm font-medium text-foreground">{getProductLabel(p)}</div>
+                                            <div className="mt-0.5 text-xs text-muted-foreground">
+                                                <span className="rounded bg-muted px-1.5 font-mono">{getProductSku(p)}</span>
+                                            </div>
+                                        </div>
+                                        <div className="shrink-0 text-xs font-bold text-emerald-600">
+                                            {price > 0 ? price.toLocaleString(rtl ? 'ar-EG' : 'en-US') : '0'} EGP
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+
     const editorBody = (
-        <>
+        <div className={cn('flex flex-1 flex-col min-h-0 overflow-hidden', !isPageMode && 'min-h-[500px]')}>
             {savedQuotation && (
-                <div className={cn('rounded-lg border border-emerald-600/30 bg-emerald-500/10 px-4 py-3 text-sm text-foreground', isPageMode ? 'mx-6 mt-4' : 'mx-6 mt-4')}>
+                <div className="shrink-0 mx-3 mt-2 sm:mx-4 rounded-md border border-emerald-600/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-foreground">
                     {editingQuotationId ? (t('quotations.editingHint') || (isAr ? 'تعديل عرض السعر' : 'Editing quotation')) : t('quotations.savedHint')}
                     {savedQuotation.reference_number ? (
                         <span className="ms-2 font-mono text-emerald-700 dark:text-emerald-400">#{savedQuotation.reference_number}</span>
@@ -795,15 +855,15 @@ export function QuotationEditor({
                 </div>
             )}
 
-            <div className={cn('grid grid-cols-1 lg:grid-cols-4 gap-0 flex-1 min-h-0', isPageMode ? 'overflow-hidden' : 'min-h-[500px]')}>
-                    <div className="lg:col-span-1 border-b lg:border-b-0 lg:border-e border-border bg-muted/20 p-6 space-y-8">
-                        <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-0 flex-1 min-h-0 overflow-hidden">
+                    <div className="lg:col-span-1 border-b lg:border-b-0 lg:border-e border-border bg-muted/20 p-3 sm:p-4 space-y-3 overflow-y-auto max-h-[40vh] lg:max-h-none">
+                        <div className="space-y-2.5">
                             <h3 className="text-sm font-semibold flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
                                 <UserPlus className="w-4 h-4" />
                                 {t('quotations.customerSection')}
                             </h3>
-                            <div className="space-y-3">
-                                <div className="space-y-1.5">
+                            <div className="space-y-2">
+                                <div className="space-y-1">
                                     <Label className="text-xs text-muted-foreground">{t('quotations.pickRegisteredCustomer')}</Label>
                                     <Popover
                                         open={customerPickerOpen}
@@ -819,7 +879,7 @@ export function QuotationEditor({
                                                 aria-expanded={customerPickerOpen}
                                                 disabled={!isEditable}
                                                 className={cn(
-                                                    'h-10 w-full justify-between bg-background font-normal border-border',
+                                                    'h-9 w-full justify-between bg-background font-normal border-border',
                                                     !customerId && 'text-muted-foreground'
                                                 )}
                                             >
@@ -877,7 +937,7 @@ export function QuotationEditor({
                                         </PopoverContent>
                                     </Popover>
                                     {customerId ? (
-                                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-600/30 bg-emerald-500/10 px-2 py-1.5 text-xs text-foreground">
+                                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-600/30 bg-emerald-500/10 px-2 py-1 text-xs text-foreground">
                                             <span className="text-emerald-800 dark:text-emerald-300">{t('quotations.linkedCustomerBadge')}</span>
                                             {isEditable && (
                                                 <button
@@ -891,7 +951,7 @@ export function QuotationEditor({
                                         </div>
                                     ) : null}
                                 </div>
-                                <div className="space-y-1.5">
+                                <div className="space-y-1">
                                     <Label htmlFor="name" className="text-xs text-muted-foreground">
                                         {t('quotations.customerNameRequired')}
                                     </Label>
@@ -900,127 +960,72 @@ export function QuotationEditor({
                                         value={customerName}
                                         onChange={(e) => setCustomerName(e.target.value)}
                                         placeholder={t('quotations.customerName')}
-                                        className="bg-background border-border"
+                                        className="h-9 bg-background border-border"
                                         disabled={!isEditable}
                                     />
                                 </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="phone" className="text-xs text-muted-foreground">
-                                        {t('quotations.phone')}
-                                    </Label>
-                                    <Input
-                                        id="phone"
-                                        value={customerPhone}
-                                        onChange={(e) => setCustomerPhone(e.target.value)}
-                                        placeholder="01xxxxxxxxx"
-                                        className="bg-background border-border"
-                                        disabled={!isEditable}
-                                    />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="email" className="text-xs text-muted-foreground">
-                                        {t('quotations.email')}
-                                    </Label>
-                                    <Input
-                                        id="email"
-                                        type="email"
-                                        value={customerEmail}
-                                        onChange={(e) => setCustomerEmail(e.target.value)}
-                                        placeholder="email@example.com"
-                                        className="bg-background border-border"
-                                        disabled={!isEditable}
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
+                                    <div className="space-y-1">
+                                        <Label htmlFor="phone" className="text-xs text-muted-foreground">
+                                            {t('quotations.phone')}
+                                        </Label>
+                                        <Input
+                                            id="phone"
+                                            value={customerPhone}
+                                            onChange={(e) => setCustomerPhone(e.target.value)}
+                                            placeholder="01xxxxxxxxx"
+                                            className="h-9 bg-background border-border"
+                                            disabled={!isEditable}
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label htmlFor="email" className="text-xs text-muted-foreground">
+                                            {t('quotations.email')}
+                                        </Label>
+                                        <Input
+                                            id="email"
+                                            type="email"
+                                            value={customerEmail}
+                                            onChange={(e) => setCustomerEmail(e.target.value)}
+                                            placeholder="email@example.com"
+                                            className="h-9 bg-background border-border"
+                                            disabled={!isEditable}
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="space-y-4">
-                            <h3 className="text-sm font-semibold flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                                <Search className="w-4 h-4" />
-                                {t('quotations.addProducts')}
-                            </h3>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs text-muted-foreground">{t('quotations.warehouse') || (isAr ? 'المستودع / مكان الإضافة' : 'Warehouse / listing location')}</Label>
-                                <Select value={storeId || undefined} onValueChange={setStoreId} disabled={!isEditable}>
-                                    <SelectTrigger className="bg-background border-border">
-                                        <SelectValue placeholder={t('quotations.selectWarehouse') || (isAr ? 'اختر المستودع' : 'Select warehouse')} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {(warehouses || []).map((w: any) => (
-                                            <SelectItem key={w.id} value={String(w.id)} disabled={w?.is_active === false}>
-                                                {w.name}{w?.is_active === false ? (isAr ? ' (غير نشط)' : ' (inactive)') : ''}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-[10px] text-muted-foreground">
-                                    {storeId
-                                        ? (t('quotations.warehouseHint') || (isAr ? 'مطلوب لإضافة منتج جديد وربطه بالقناة' : 'Required for new products and channel listing'))
-                                        : (t('quotations.selectWarehouseFirst') || (isAr ? 'اختر المستودع أولاً لإضافة منتج جديد' : 'Select warehouse first to add a new product'))}
-                                </p>
-                            </div>
-                            <div className="relative">
-                                <Input
-                                    value={searchQuery}
-                                    onChange={(e) => {
-                                        setSearchQuery(e.target.value);
-                                        searchProducts(e.target.value);
-                                    }}
-                                    placeholder={t('quotations.searchProducts')}
-                                    className="bg-background border-border"
-                                    autoComplete="off"
-                                    disabled={!isEditable}
-                                />
-                                {isSearching && <p className="text-xs text-muted-foreground mt-1">…</p>}
-                                {isEditable && searchQuery.trim().length > 0 && searchResults.length === 0 && !isSearching && (
-                                    <div className="mt-2">
-                                        <Button
-                                            type="button"
-                                            variant="secondary"
-                                            size="sm"
-                                            className="w-full gap-2"
-                                            onClick={openCreateProductDialog}
-                                        >
-                                            <PlusCircle className="w-4 h-4 text-green-600" />
-                                            {t('quotations.createNewProduct') || (isAr ? 'إنشاء منتج جديد بهذا الاسم؟' : 'Create new product with this name?')}
-                                        </Button>
-                                    </div>
-                                )}
-                                {searchResults.length > 0 && isEditable && (
-                                    <div className="absolute top-full left-0 right-0 z-50 mt-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
-                                        {searchResults.map((p) => {
-                                            const price = getProductPrice(p);
-                                            return (
-                                                <button
-                                                    key={p.id}
-                                                    type="button"
-                                                    onClick={() => addItem(p)}
-                                                    className="flex w-full items-center justify-between gap-2 border-b border-border px-4 py-3 text-start transition-colors last:border-0 hover:bg-muted/60"
-                                                >
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="truncate text-sm font-medium text-foreground">{getProductLabel(p)}</div>
-                                                        <div className="mt-0.5 text-xs text-muted-foreground">
-                                                            <span className="rounded bg-muted px-1.5 font-mono">{getProductSku(p)}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div className="shrink-0 text-xs font-bold text-emerald-600">
-                                                        {price > 0 ? price.toLocaleString(rtl ? 'ar-EG' : 'en-US') : '0'} EGP
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
+                        <div className="space-y-1.5 pt-1 border-t border-border/60">
+                            <Label className="text-xs text-muted-foreground">{t('quotations.warehouse') || (isAr ? 'المستودع / مكان الإضافة' : 'Warehouse / listing location')}</Label>
+                            <Select value={storeId || undefined} onValueChange={setStoreId} disabled={!isEditable}>
+                                <SelectTrigger className="h-9 bg-background border-border">
+                                    <SelectValue placeholder={t('quotations.selectWarehouse') || (isAr ? 'اختر المستودع' : 'Select warehouse')} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {(warehouses || []).map((w: any) => (
+                                        <SelectItem key={w.id} value={String(w.id)} disabled={w?.is_active === false}>
+                                            {w.name}{w?.is_active === false ? (isAr ? ' (غير نشط)' : ' (inactive)') : ''}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground leading-snug">
+                                {storeId
+                                    ? (t('quotations.warehouseHint') || (isAr ? 'مطلوب لإضافة منتج جديد وربطه بالقناة' : 'Required for new products and channel listing'))
+                                    : (t('quotations.selectWarehouseFirst') || (isAr ? 'اختر المستودع أولاً لإضافة منتج جديد' : 'Select warehouse first to add a new product'))}
+                            </p>
                         </div>
                     </div>
 
-                    <div className="lg:col-span-3 flex flex-col bg-background">
-                        <div className="flex-1 overflow-auto">
+                    <div className="lg:col-span-3 flex flex-col bg-background min-h-0 overflow-hidden">
+                        {productSearchBlock}
+
+                        <div className="flex-1 min-h-0 overflow-auto">
                             {items.length === 0 ? (
-                                <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-4 p-12 text-muted-foreground">
-                                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                                        <FileSpreadsheet className="h-8 w-8 opacity-40" />
+                                <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-3 p-8 text-muted-foreground">
+                                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                                        <FileSpreadsheet className="h-6 w-6 opacity-40" />
                                     </div>
                                     <p className="text-sm text-center">{t('quotations.emptyLines')}</p>
                                 </div>
@@ -1102,11 +1107,12 @@ export function QuotationEditor({
                             )}
                         </div>
 
-                        <div className="flex-col gap-3 border-t border-border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between flex shrink-0">
+                        <div className="flex-col gap-2 border-t border-border bg-muted/30 px-3 py-2.5 sm:px-4 sm:flex-row sm:items-center sm:justify-between flex shrink-0">
                             <div className="flex flex-wrap gap-2">
                                 <Button
                                     type="button"
                                     variant="outline"
+                                    size="sm"
                                     className="gap-2 border-border"
                                     title={t('quotations.printHelp')}
                                     onClick={() => void handlePrint()}
@@ -1118,6 +1124,7 @@ export function QuotationEditor({
                                 <Button
                                     type="button"
                                     variant="outline"
+                                    size="sm"
                                     className="gap-2 border-emerald-600/40 bg-emerald-600/5 text-emerald-800 hover:bg-emerald-600/10 dark:text-emerald-400"
                                     onClick={() => void handleConvert()}
                                     disabled={!savedQuotation?.id || savedQuotation.status === 'converted' || isConverting}
@@ -1127,15 +1134,16 @@ export function QuotationEditor({
                                 </Button>
                             </div>
                             <div className="flex flex-wrap justify-end gap-2">
-                                <Button type="button" variant="outline" className="border-border" onClick={() => void handleClose()}>
+                                <Button type="button" variant="outline" size="sm" className="border-border" onClick={() => void handleClose()}>
                                     {isPageMode ? (t('quotations.back') || (isAr ? 'رجوع' : 'Back')) : savedQuotation ? t('quotations.close') : t('quotations.cancel')}
                                 </Button>
                                 {isEditable && (
                                     <Button
                                         type="button"
+                                        size="sm"
                                         onClick={() => mutation.mutate()}
                                         disabled={mutation.isPending || !canSave}
-                                        className="min-w-[140px] bg-emerald-600 hover:bg-emerald-500"
+                                        className="min-w-[120px] bg-emerald-600 hover:bg-emerald-500"
                                     >
                                         {mutation.isPending ? (
                                             <>
@@ -1153,7 +1161,7 @@ export function QuotationEditor({
                         </div>
                     </div>
                 </div>
-        </>
+        </div>
     );
 
     const productCreateDialog = (
@@ -1219,9 +1227,7 @@ export function QuotationEditor({
         return (
             <div className="fixed inset-0 z-50 flex flex-col bg-background text-foreground overflow-hidden">
                 {editorHeader}
-                <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-                    {editorBody}
-                </div>
+                {editorBody}
                 {productCreateDialog}
             </div>
         );
@@ -1229,7 +1235,7 @@ export function QuotationEditor({
 
     return (
         <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-            <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto bg-card text-card-foreground border-border p-0 gap-0">
+            <DialogContent className="max-w-6xl h-[min(90vh,900px)] overflow-hidden flex flex-col bg-card text-card-foreground border-border p-0 gap-0">
                 {editorHeader}
                 {editorBody}
             </DialogContent>

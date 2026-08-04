@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\InventoryValuationService;
 use App\Application\Services\ProfitEngineService;
+use App\Application\Services\SkuUniquenessGuard;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryAdjustment;
 use App\Domain\Models\Wms\InventoryLocation;
@@ -77,6 +78,14 @@ class SkuController extends Controller
             });
         }
 
+        $sortBy = strtolower(trim((string) $request->query('sort_by', '')));
+        $sortDir = strtolower(trim((string) $request->query('sort_dir', 'desc'))) === 'asc' ? 'asc' : 'desc';
+        if ($channelId > 0 && in_array($sortBy, ['stock', 'price'], true)) {
+            $this->applyChannelListSort($query, $channelId, $sortBy, $sortDir);
+        } else {
+            $query->orderBy('skus.id');
+        }
+
         $page = max(0, (int) $request->query('page', 0));
         $paginate = $request->boolean('paginate', false) || $page > 0;
         $perPage = max(1, min((int) $request->query('per_page', 50), 200));
@@ -95,6 +104,87 @@ class SkuController extends Controller
         }
 
         return response()->json($this->enrichSkuRows($query->get(), $channelId)->values()->all());
+    }
+
+    /**
+     * Order channel SKU list by stock or price before pagination.
+     * Stock must be ordered in SQL — client-side sort only reorders the current page.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
+     */
+    private function applyChannelListSort($query, int $channelId, string $sortBy, string $sortDir): void
+    {
+        $dir = $sortDir === 'asc' ? 'asc' : 'desc';
+
+        if ($sortBy === 'price') {
+            // Prefer listing selling_price when set; otherwise cost_price (matches UI fallback loosely).
+            $query->orderByRaw(
+                'CASE WHEN COALESCE(skus.selling_price, 0) > 0 THEN skus.selling_price ELSE COALESCE(skus.cost_price, 0) END '.$dir
+            )->orderBy('skus.sku');
+
+            return;
+        }
+
+        // sort_by=stock
+        if (ChannelStockResolver::deductsFromMainStoreBucket($channelId)) {
+            $this->orderByMerchantStoreStock($query, $dir);
+
+            return;
+        }
+
+        $locationIds = ChannelStockResolver::resolveLocationIdsForChannel($channelId);
+        if ($locationIds === []) {
+            $query->orderByRaw('0 '.$dir)->orderBy('skus.sku');
+
+            return;
+        }
+
+        $stockSub = DB::table('sku_inventory')
+            ->select('sku_id', DB::raw('COALESCE(SUM(quantity), 0) as sort_stock_qty'))
+            ->whereIn('location_id', $locationIds)
+            ->groupBy('sku_id');
+
+        $query->leftJoinSub($stockSub, 'channel_stock_sort', function ($join) {
+            $join->on('channel_stock_sort.sku_id', '=', 'skus.id');
+        })
+            ->orderByRaw('COALESCE(channel_stock_sort.sort_stock_qty, 0) '.$dir)
+            ->orderBy('skus.sku')
+            ->select('skus.*');
+    }
+
+    /**
+     * Merchant/FBM listings show store sellable qty — order by linked offer's store warehouse stock.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
+     */
+    private function orderByMerchantStoreStock($query, string $dir): void
+    {
+        $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
+        if ($storeChannelId <= 0) {
+            $query->orderByRaw('0 '.$dir)->orderBy('skus.sku');
+
+            return;
+        }
+
+        $storeLocationIds = ChannelStockResolver::resolveLocationIdsForChannel($storeChannelId);
+        $offerStock = DB::table('skus as store_skus')
+            ->join('sku_inventory as si', 'si.sku_id', '=', 'store_skus.id')
+            ->where('store_skus.channel_id', $storeChannelId)
+            ->whereNotNull('store_skus.offer_id')
+            ->where('store_skus.offer_id', '>', 0)
+            ->whereNull('store_skus.deleted_at')
+            ->when($storeLocationIds !== [], static function ($q) use ($storeLocationIds) {
+                $q->whereIn('si.location_id', $storeLocationIds);
+            })
+            ->groupBy('store_skus.offer_id')
+            ->select('store_skus.offer_id', DB::raw('COALESCE(SUM(si.quantity), 0) as sort_stock_qty'));
+
+        $query->leftJoinSub($offerStock, 'merchant_stock_sort', function ($join) {
+            $join->on('merchant_stock_sort.offer_id', '=', 'skus.offer_id');
+        })
+            ->orderByRaw('COALESCE(merchant_stock_sort.sort_stock_qty, 0) '.$dir)
+            ->orderBy('skus.sku')
+            ->select('skus.*');
     }
 
     /**
@@ -137,6 +227,12 @@ class SkuController extends Controller
             ->all();
         $batchCosts = $this->profitEngine->averagePurchaseUnitCostByMasterProductIds($masterIds);
 
+        $userId = (int) (auth()->id() ?? 0);
+        $duplicateMap = SkuUniquenessGuard::duplicateMapForCodes(
+            $userId,
+            $rows->map(fn (Sku $sku) => (string) ($sku->sku ?? ''))->all()
+        );
+
         $masterTotalsById = [];
         if ($channelId > 0 && $scopedLocationId >= 0 && ! $deductsFromStore) {
             foreach ($rows as $sku) {
@@ -174,7 +270,8 @@ class SkuController extends Controller
             $linkedLocationByChannelId,
             $deductsFromStore,
             $storeAvailByListingId,
-            $batchCosts
+            $batchCosts,
+            $duplicateMap
         ) {
             $data = $sku->toArray();
             $master = $sku->offer?->masterProduct;
@@ -194,6 +291,21 @@ class SkuController extends Controller
             $data['product_name'] = $sku->name
                 ?? $sku->offer?->masterProduct?->internal_name
                 ?? null;
+
+            $skuCodeKey = (string) ($sku->sku ?? '');
+            if ($skuCodeKey !== '' && isset($duplicateMap[$skuCodeKey])) {
+                $siblings = $duplicateMap[$skuCodeKey];
+                $data['is_duplicate_sku'] = true;
+                $data['duplicate_action_required'] = true;
+                $data['duplicate_siblings'] = array_values(array_filter(
+                    $siblings,
+                    static fn (array $row) => (int) ($row['sku_id'] ?? 0) !== (int) $sku->id
+                ));
+            } else {
+                $data['is_duplicate_sku'] = false;
+                $data['duplicate_action_required'] = false;
+                $data['duplicate_siblings'] = [];
+            }
 
             if (! empty($data['channel']) && $sku->channel) {
                 $cid = (int) $sku->channel->id;
@@ -281,18 +393,9 @@ class SkuController extends Controller
             $validated['cost_price'] = 0;
         }
 
-        $userId = auth()->id();
-        if (! empty($validated['channel_id'])) {
-            $exists = Sku::where('user_id', $userId)->where('channel_id', $validated['channel_id'])->where('sku', $validated['sku'])->exists();
-            if ($exists) {
-                return response()->json(['message' => 'SKU already exists for this channel'], 422);
-            }
-        } else {
-            $exists = Sku::where('sku', $validated['sku'])->exists();
-            if ($exists) {
-                return response()->json(['message' => 'SKU already exists'], 422);
-            }
-        }
+        $userId = (int) auth()->id();
+        $validated['sku'] = SkuUniquenessGuard::normalize((string) $validated['sku']);
+        SkuUniquenessGuard::assertAvailable($userId, $validated['sku']);
 
         $sku = Sku::create(array_merge($validated, ['user_id' => $userId]));
 
@@ -331,27 +434,12 @@ class SkuController extends Controller
         $nextOfferId = array_key_exists('offer_id', $validated) ? (int) ($validated['offer_id'] ?? 0) : $previousOfferId;
 
         if (array_key_exists('sku', $validated)) {
-            $newSku = trim((string) $validated['sku']);
+            $newSku = SkuUniquenessGuard::normalize((string) $validated['sku']);
             if ($newSku === '') {
                 return response()->json(['message' => 'SKU cannot be empty'], 422);
             }
-
-            $targetChannelId = array_key_exists('channel_id', $validated)
-                ? $validated['channel_id']
-                : $sku->channel_id;
-
-            $duplicateQuery = Sku::query()
-                ->where('id', '!=', $sku->id)
-                ->where('user_id', $sku->user_id)
-                ->where('sku', $newSku);
-
-            if (! empty($targetChannelId)) {
-                $duplicateQuery->where('channel_id', $targetChannelId);
-            }
-
-            if ($duplicateQuery->exists()) {
-                return response()->json(['message' => 'SKU already exists for this channel'], 422);
-            }
+            $validated['sku'] = $newSku;
+            SkuUniquenessGuard::assertAvailable((int) $sku->user_id, $newSku, (int) $sku->id);
         }
 
         DB::transaction(function () use ($sku, $validated, $previousOfferId, $nextOfferId) {
@@ -484,14 +572,24 @@ class SkuController extends Controller
         }
 
         $candidate = $base;
-        if (Sku::query()->where('sku', $candidate)->exists()) {
+        $userId = (int) (auth()->id() ?? $linkedChannelSku->user_id ?? 0);
+        $isTaken = static fn (string $code) => $userId > 0
+            ? SkuUniquenessGuard::existsForUser($userId, $code)
+            : Sku::query()->where('sku', $code)->exists();
+
+        if ($isTaken($candidate)) {
             $candidate = $base.'-STORE';
         }
-        if (Sku::query()->where('sku', $candidate)->exists()) {
+        if ($isTaken($candidate)) {
             $candidate = $base.'-STORE-'.$offerId;
         }
-        if (Sku::query()->where('sku', $candidate)->exists()) {
+        if ($isTaken($candidate)) {
             $candidate = 'STORE-'.$offerId;
+        }
+        $suffix = 2;
+        while ($isTaken($candidate) && $suffix < 100) {
+            $candidate = 'STORE-'.$offerId.'-'.$suffix;
+            $suffix++;
         }
 
         return $candidate;

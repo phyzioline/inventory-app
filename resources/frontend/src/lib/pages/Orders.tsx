@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { format, subDays } from 'date-fns';
 import { motion } from 'framer-motion';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { ShoppingCart, Plus, Search, Loader2, AlertTriangle, Package, ArrowUpDown, DollarSign, RotateCcw, TrendingUp, MoreHorizontal, Pencil } from 'lucide-react';
@@ -41,6 +42,15 @@ import { OrderInvoiceDetailDialog } from '@/components/sales/OrderInvoiceDetailD
 import { OrderImportDialog } from '@/components/inventory/OrderImportDialog';
 import { getProductImageSrc } from '@/lib/utils';
 import { useReturns } from '@/hooks/useReturns';
+
+/** Default Orders window — full history (~14k rows / 30MB) times out the browser. */
+const ORDERS_DEFAULT_RANGE_DAYS = 14;
+
+function defaultOrdersDateRange(): { from: string; to: string } {
+  const to = format(new Date(), 'yyyy-MM-dd');
+  const from = format(subDays(new Date(), ORDERS_DEFAULT_RANGE_DAYS), 'yyyy-MM-dd');
+  return { from, to };
+}
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-500/10 text-yellow-500',
@@ -282,6 +292,7 @@ export default function Orders() {
   };
 
   const clearAllFilters = () => {
+    const range = defaultOrdersDateRange();
     setColumnFilters({
       orderId: '',
       product: '',
@@ -289,10 +300,11 @@ export default function Orders() {
       customer: '',
       payment: '',
       status: '',
+      hasShortage: false,
     });
     setSearch('');
-    setFromDate('');
-    setToDate('');
+    setFromDate(range.from);
+    setToDate(range.to);
     if (activeChannel) {
       clearChannelFilter();
     }
@@ -317,8 +329,9 @@ export default function Orders() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const initialDateRange = useMemo(() => defaultOrdersDateRange(), []);
+  const [fromDate, setFromDate] = useState(initialDateRange.from);
+  const [toDate, setToDate] = useState(initialDateRange.to);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [settledCancelOpen, setSettledCancelOpen] = useState(false);
   const [settledCancelOrder, setSettledCancelOrder] = useState<any | null>(null);
@@ -345,14 +358,29 @@ export default function Orders() {
   }, [columnFilters.orderId, search]);
 
   const { data: orders, isLoading, error, refetch } = useQuery({
-    queryKey: ['orders', activeChannel, serverOrderIdParam],
-    queryFn: () =>
-      api.getArray('/orders', {
-        params: {
-          ...(activeChannel ? { channel: activeChannel } : {}),
-          ...(serverOrderIdParam ? { order_id: serverOrderIdParam } : {}),
-        },
-      }),
+    queryKey: ['orders', activeChannel, serverOrderIdParam, fromDate, toDate],
+    queryFn: async () => {
+      const params: Record<string, string | number> = {
+        ...(activeChannel ? { channel: activeChannel } : {}),
+      };
+      if (serverOrderIdParam) {
+        params.order_id = serverOrderIdParam;
+      } else {
+        // Bound the payload — unbounded /orders is ~14k rows / 30MB and aborts in the browser.
+        if (fromDate) params.start_date = fromDate;
+        if (toDate) params.end_date = toDate;
+        if (!fromDate && !toDate) {
+          const range = defaultOrdersDateRange();
+          params.start_date = range.from;
+          params.end_date = range.to;
+        }
+      }
+      const data = await api.get('/orders', {
+        params,
+        timeout: 120_000,
+      });
+      return Array.isArray(data) ? data : Array.isArray((data as any)?.data) ? (data as any).data : [];
+    },
   });
 
   const {
@@ -637,7 +665,7 @@ export default function Orders() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeChannel, search, columnFilters, sortField, sortDirection, pageSize, serverOrderIdParam]);
+  }, [activeChannel, search, columnFilters, sortField, sortDirection, pageSize, serverOrderIdParam, fromDate, toDate]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -940,8 +968,8 @@ export default function Orders() {
       </div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         {isAr
-          ? 'عند إدخال رقم طلب (عمود رقم الطلب أو بحث يشبه 402-… أو SHOP-…) يُتجاهل نطاق التاريخ ويُجلب الطلب من السيرفر حتى لو قديم. إن لم يظهر الطلب فقد لا يكون مستوردًا في «الطلبات» بعد (الشيت وحده لا ينشئ سجل طلب).'
-          : 'When you enter an order reference (order ID column, or main search like 402-… or SHOP-…), the date range is ignored and the server returns matching orders of any age. If nothing appears, the order may not exist in Orders yet (a settlement sheet alone does not create an order row).'}
+          ? `الافتراضي: آخر ${ORDERS_DEFAULT_RANGE_DAYS} يومًا (عشان الصفحة ماتثقلش). غيّر التاريخ لو محتاج أقدم. عند إدخال رقم طلب (402-… أو SHOP-…) يُتجاهل التاريخ ويُجلب الطلب من أي تاريخ.`
+          : `Default: last ${ORDERS_DEFAULT_RANGE_DAYS} days (keeps the page fast). Widen the dates for older orders. Entering an order id (402-… / SHOP-…) ignores dates and searches any age.`}
       </p>
 
       {activeChannel && !isLoading && processedOrders.length === 0 && (

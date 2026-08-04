@@ -921,10 +921,7 @@ class PurchaseImportService
         for ($attempt = 0; $attempt < 50; $attempt++) {
             $candidate = $attempt === 0 ? $baseSku : ($baseSku.'-'.($attempt + 1));
 
-            $existsSameScope = Sku::where('sku', $candidate)
-                ->when($channelId, fn ($q) => $q->where('channel_id', $channelId), fn ($q) => $q->whereNull('channel_id'))
-                ->exists();
-            if ($existsSameScope) {
+            if (SkuUniquenessGuard::existsForUser((int) $userId, $candidate)) {
                 continue;
             }
 

@@ -210,6 +210,9 @@ export default function ChannelDetail() {
       pageSize,
       debouncedSearch,
       linkFilter,
+      sortPriority,
+      stockSort,
+      priceSort,
     ],
     queryFn: async () => {
       if (!channel?.id) {
@@ -233,6 +236,8 @@ export default function ChannelDetail() {
         paginate: '1',
         page: String(currentPage),
         per_page: String(Math.min(pageSize, 200)),
+        sort_by: sortPriority === 'stock' ? 'stock' : 'price',
+        sort_dir: sortPriority === 'stock' ? stockSort : priceSort,
       });
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (linkFilter === 'linked') params.set('linked', '1');
@@ -293,7 +298,11 @@ export default function ChannelDetail() {
   const summaryPending = !includeGeneral && (loadingSummary || (fetchingSummary && !channelSummary));
 
   const filteredSkus = useMemo(() => {
-    // Search + link filter are applied server-side; keep client sort on the current page.
+    // Channel list: server applies sort_by/sort_dir across the full result set before pagination.
+    // Client re-sort would only reorder the current page and undo global stock/price order.
+    if (!includeGeneral) {
+      return skus;
+    }
     return [...skus].sort((a: any, b: any) => {
       const priceA = resolveDisplayUnitPrice(a);
       const priceB = resolveDisplayUnitPrice(b);
@@ -313,7 +322,7 @@ export default function ChannelDetail() {
 
       return String(a?.sku || '').localeCompare(String(b?.sku || ''));
     });
-  }, [skus, stockSort, priceSort, sortPriority]);
+  }, [skus, stockSort, priceSort, sortPriority, includeGeneral]);
 
   const totalFiltered = Number(skuPage?.total ?? filteredSkus.length);
   const totalPages = Math.max(1, Number(skuPage?.last_page ?? 1));
@@ -322,7 +331,7 @@ export default function ChannelDetail() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, linkFilter, pageSize, channel?.id, includeGeneral]);
+  }, [debouncedSearch, linkFilter, pageSize, channel?.id, includeGeneral, sortPriority, stockSort, priceSort]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -575,6 +584,18 @@ export default function ChannelDetail() {
         ))}
       </div>
 
+      {pagedSkus.some((s: any) => s?.is_duplicate_sku) && (
+        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-semibold">يوجد SKU مكرر على هذا الحساب — يلزم اتخاذ إجراء</p>
+            <p className="text-xs mt-0.5 opacity-90">
+              نفس كود الـ SKU موجود في أكثر من قناة/عرض. الصفوف المعلّمة بالأحمر تحتاج معالجة يدوية (دمج أو حذف الزائد) بدون التأثير على الرصيد تلقائياً.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Bulk Action Bar */}
       <AnimatePresence>
         {selectedSkus.size > 0 && (
@@ -813,7 +834,27 @@ export default function ChannelDetail() {
                           <span className="text-[10px] text-muted-foreground uppercase">{sku.channel?.name || channel?.name}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{sku.sku}</TableCell>
+                                                      <TableCell className="font-mono text-xs">
+                                                        <div className="flex flex-col gap-1 items-start">
+                                                          <span>{sku.sku}</span>
+                                                          {sku.is_duplicate_sku && (
+                                                            <Badge
+                                                              variant="destructive"
+                                                              className="h-auto max-w-[220px] whitespace-normal text-start text-[10px] leading-snug px-1.5 py-0.5"
+                                                              title={(sku.duplicate_siblings || [])
+                                                                .map((s: any) => s.channel_name || `قناة #${s.channel_id}`)
+                                                                .join(' · ')}
+                                                            >
+                                                              مكرر — يلزم اتخاذ إجراء
+                                                              {(sku.duplicate_siblings || []).length > 0
+                                                                ? ` (${(sku.duplicate_siblings || [])
+                                                                    .map((s: any) => s.channel_name || `#${s.channel_id}`)
+                                                                    .join('، ')})`
+                                                                : ''}
+                                                            </Badge>
+                                                          )}
+                                                        </div>
+                                                      </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1.5 font-bold">

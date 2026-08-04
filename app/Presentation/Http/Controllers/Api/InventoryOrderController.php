@@ -51,11 +51,11 @@ class InventoryOrderController extends Controller
 
         $startDate = trim((string) $request->query('start_date', ''));
         $endDate = trim((string) $request->query('end_date', ''));
-        if ($startDate !== '' && $endDate !== '') {
-            $query->whereBetween('order_date', [
-                \Carbon\Carbon::parse($startDate)->startOfDay(),
-                \Carbon\Carbon::parse($endDate)->endOfDay(),
-            ]);
+        if ($startDate !== '') {
+            $query->where('order_date', '>=', \Carbon\Carbon::parse($startDate)->startOfDay());
+        }
+        if ($endDate !== '') {
+            $query->where('order_date', '<=', \Carbon\Carbon::parse($endDate)->endOfDay());
         }
 
         $channelFilter = trim((string) $request->query('channel', ''));

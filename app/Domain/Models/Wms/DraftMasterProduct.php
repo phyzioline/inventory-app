@@ -116,16 +116,26 @@ class DraftMasterProduct extends Model
                     'user_id' => $userId, 'master_product_id' => $product->id,
                     'name' => $this->proposed_name, 'type' => 'single',
                 ]);
-                $sku = \App\Domain\Models\Wms\Sku::create([
-                    'user_id' => $userId, 'offer_id' => $offer->id,
-                    'sku' => $skuCode, 'name' => $this->proposed_name,
-                    'image_url' => $this->specifications['image_url'] ?? null,
-                    'cost_price' => $this->decimalStringOrFallback($this->specifications['cost_price'] ?? null, '0'),
-                    'selling_price' => $this->decimalStringOrFallback($this->specifications['selling_price'] ?? null, '0'),
-                    'channel_id' => 1,
-                ]);
+                $sku = null;
+                if ($skuCode) {
+                    if (\App\Application\Services\SkuUniquenessGuard::existsForUser((int) $userId, (string) $skuCode)) {
+                        throw new \Exception(
+                            \App\Application\Services\SkuUniquenessGuard::conflictMessage((int) $userId, (string) $skuCode)['ar']
+                        );
+                    }
+                    $sku = \App\Domain\Models\Wms\Sku::create([
+                        'user_id' => $userId,
+                        'offer_id' => $offer->id,
+                        'sku' => $skuCode,
+                        'name' => $this->proposed_name,
+                        'image_url' => $this->specifications['image_url'] ?? null,
+                        'cost_price' => $this->decimalStringOrFallback($this->specifications['cost_price'] ?? null, '0'),
+                        'selling_price' => $this->decimalStringOrFallback($this->specifications['selling_price'] ?? null, '0'),
+                        'channel_id' => 1,
+                    ]);
+                }
                 $quantity = $this->specifications['quantity'] ?? 0;
-                if ($quantity > 0) {
+                if ($sku && $quantity > 0) {
                     $location = \App\Domain\Models\Wms\InventoryLocation::where('user_id', $userId)->first();
                     if ($location) {
                         \App\Domain\Models\Wms\SkuInventory::create([
