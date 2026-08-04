@@ -104,6 +104,15 @@ describe('SkuUniquenessGuard', function () {
             ->and($row['is_duplicate_sku'] ?? false)->toBeTrue()
             ->and($row['duplicate_action_required'] ?? false)->toBeTrue()
             ->and($row['duplicate_siblings'] ?? [])->not->toBeEmpty();
+
+        $filtered = $this->getJson('/api/inventory/skus?channel_id='.$chA->id.'&paginate=1&per_page=50&duplicates_only=1');
+        $filtered->assertOk();
+        $filteredRows = $filtered->json('data') ?? $filtered->json();
+        expect(collect($filteredRows)->pluck('id')->all())->toContain($skuA->id);
+
+        $summary = $this->getJson('/api/inventory/skus/channel-summary?channel_id='.$chA->id);
+        $summary->assertOk()
+            ->assertJsonPath('duplicate_sku_count', 1);
     });
 
     it('allows different users to reuse the same SKU code', function () {

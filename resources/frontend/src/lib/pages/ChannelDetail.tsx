@@ -148,6 +148,7 @@ export default function ChannelDetail() {
   const [linkingSku, setLinkingSku] = useState<any | null>(null);
   const [isImportSkusOpen, setIsImportSkusOpen] = useState(false);
   const [linkFilter, setLinkFilter] = useState<'all' | 'linked' | 'unlinked'>('all');
+  const [duplicatesOnly, setDuplicatesOnly] = useState(false);
   const [includeGeneral, setIncludeGeneral] = useState(false);
   const [stockSort, setStockSort] = useState<'desc' | 'asc'>('desc');
   const [priceSort, setPriceSort] = useState<'desc' | 'asc'>('desc');
@@ -210,6 +211,7 @@ export default function ChannelDetail() {
       pageSize,
       debouncedSearch,
       linkFilter,
+      duplicatesOnly,
       sortPriority,
       stockSort,
       priceSort,
@@ -220,9 +222,12 @@ export default function ChannelDetail() {
       }
       if (includeGeneral) {
         const all = await api.get('/skus', { timeout: 120000 });
-        const list = (Array.isArray(all) ? all : Array.isArray(all?.data) ? all.data : []).filter(
+        let list = (Array.isArray(all) ? all : Array.isArray(all?.data) ? all.data : []).filter(
           (s: any) => !s?.channel_id
         );
+        if (duplicatesOnly) {
+          list = list.filter((s: any) => Boolean(s?.is_duplicate_sku));
+        }
         return {
           data: list,
           current_page: 1,
@@ -242,6 +247,7 @@ export default function ChannelDetail() {
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (linkFilter === 'linked') params.set('linked', '1');
       if (linkFilter === 'unlinked') params.set('linked', '0');
+      if (duplicatesOnly) params.set('duplicates_only', '1');
       return await api.get(`/skus?${params.toString()}`, { timeout: 60000 });
     },
     enabled: !!channel?.id,
@@ -331,7 +337,7 @@ export default function ChannelDetail() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, linkFilter, pageSize, channel?.id, includeGeneral, sortPriority, stockSort, priceSort]);
+  }, [debouncedSearch, linkFilter, duplicatesOnly, pageSize, channel?.id, includeGeneral, sortPriority, stockSort, priceSort]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -584,13 +590,42 @@ export default function ChannelDetail() {
         ))}
       </div>
 
-      {pagedSkus.some((s: any) => s?.is_duplicate_sku) && (
+      {Number(channelSummary?.duplicate_sku_count ?? 0) > 0 && !duplicatesOnly && (
+        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold">
+                يوجد {Number(channelSummary.duplicate_sku_count)} منتج بـ SKU مكرر على هذا الحساب
+              </p>
+              <p className="text-xs mt-0.5 opacity-90">
+                اضغط «عرض المكرر فقط» لتصفية القائمة ومعالجتهم. بعد الحذف أو تغيير الكود تختفي العلامة تلقائياً.
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            className="shrink-0"
+            onClick={() => {
+              setDuplicatesOnly(true);
+              setIncludeGeneral(false);
+              setCurrentPage(1);
+            }}
+          >
+            عرض المكرر فقط ({Number(channelSummary.duplicate_sku_count)})
+          </Button>
+        </div>
+      )}
+
+      {pagedSkus.some((s: any) => s?.is_duplicate_sku) && duplicatesOnly && (
         <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200 flex items-start gap-2">
           <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
           <div>
-            <p className="font-semibold">يوجد SKU مكرر على هذا الحساب — يلزم اتخاذ إجراء</p>
+            <p className="font-semibold">فلتر المكرر مفعّل — عالج الصفوف ثم امسح الفلتر</p>
             <p className="text-xs mt-0.5 opacity-90">
-              نفس كود الـ SKU موجود في أكثر من قناة/عرض. الصفوف المعلّمة بالأحمر تحتاج معالجة يدوية (دمج أو حذف الزائد) بدون التأثير على الرصيد تلقائياً.
+              غيّر كود الـ SKU أو احذف النسخة الزائدة. بعد المعالجة تختفي العلامة الحمراء تلقائياً عند تحديث القائمة.
             </p>
           </div>
         </div>
@@ -663,6 +698,22 @@ export default function ChannelDetail() {
             </div>
             <Button
               type="button"
+              variant={duplicatesOnly ? 'destructive' : 'outline'}
+              size="sm"
+              className={duplicatesOnly ? '' : 'border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300'}
+              onClick={() => {
+                setDuplicatesOnly((p) => !p);
+                setIncludeGeneral(false);
+                setCurrentPage(1);
+              }}
+              title="يعرض فقط المنتجات التي نفس كود الـ SKU موجود في قناة/عرض آخر لنفس الحساب"
+            >
+              {duplicatesOnly
+                ? `إلغاء فلتر المكرر${Number(skuPage?.total ?? 0) > 0 ? ` (${Number(skuPage.total)})` : ''}`
+                : `المكرر فقط${Number(channelSummary?.duplicate_sku_count ?? 0) > 0 ? ` (${Number(channelSummary.duplicate_sku_count)})` : ''}`}
+            </Button>
+            <Button
+              type="button"
               variant={includeGeneral ? "default" : "outline"}
               size="sm"
               onClick={() => setIncludeGeneral((p) => !p)}
@@ -675,6 +726,7 @@ export default function ChannelDetail() {
               size="sm"
               onClick={() => {
                 setLinkFilter('all');
+                setDuplicatesOnly(false);
                 setStockSort('desc');
                 setPriceSort('desc');
                 setSortPriority('price');
@@ -814,7 +866,14 @@ export default function ChannelDetail() {
                   const isLinked = !!sku.offer_id;
 
                   return (
-                    <TableRow key={sku.id} className="group transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/30">
+                    <TableRow
+                      key={sku.id}
+                      className={
+                        sku.is_duplicate_sku
+                          ? 'group transition-colors bg-red-50/80 hover:bg-red-100/80 dark:bg-red-950/30 dark:hover:bg-red-950/50 border-s-4 border-s-red-500'
+                          : 'group transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/30'
+                      }
+                    >
                       <TableCell className="text-center">
                         <input
                           type="checkbox"
@@ -829,32 +888,46 @@ export default function ChannelDetail() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-semibold">{sku.name || masterProduct?.internal_name}</span>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`font-semibold ${sku.is_duplicate_sku ? 'text-red-800 dark:text-red-200' : ''}`}>
+                              {sku.name || masterProduct?.internal_name}
+                            </span>
+                            {sku.is_duplicate_sku && (
+                              <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5">
+                                مكرر — يلزم إجراء
+                              </Badge>
+                            )}
+                          </div>
                           <span className="text-[10px] text-muted-foreground uppercase">{sku.channel?.name || channel?.name}</span>
+                          {sku.is_duplicate_sku && (sku.duplicate_siblings || []).length > 0 && (
+                            <span className="text-[10px] text-red-600 dark:text-red-300">
+                              موجود أيضاً في:{' '}
+                              {(sku.duplicate_siblings || [])
+                                .map((s: any) => s.channel_name || `#${s.channel_id}`)
+                                .join('، ')}
+                            </span>
+                          )}
                         </div>
                       </TableCell>
-                                                      <TableCell className="font-mono text-xs">
-                                                        <div className="flex flex-col gap-1 items-start">
-                                                          <span>{sku.sku}</span>
-                                                          {sku.is_duplicate_sku && (
-                                                            <Badge
-                                                              variant="destructive"
-                                                              className="h-auto max-w-[220px] whitespace-normal text-start text-[10px] leading-snug px-1.5 py-0.5"
-                                                              title={(sku.duplicate_siblings || [])
-                                                                .map((s: any) => s.channel_name || `قناة #${s.channel_id}`)
-                                                                .join(' · ')}
-                                                            >
-                                                              مكرر — يلزم اتخاذ إجراء
-                                                              {(sku.duplicate_siblings || []).length > 0
-                                                                ? ` (${(sku.duplicate_siblings || [])
-                                                                    .map((s: any) => s.channel_name || `#${s.channel_id}`)
-                                                                    .join('، ')})`
-                                                                : ''}
-                                                            </Badge>
-                                                          )}
-                                                        </div>
-                                                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={sku.is_duplicate_sku ? 'text-red-700 dark:text-red-300 font-semibold' : ''}>
+                            {sku.sku}
+                          </span>
+                          {sku.is_duplicate_sku && (
+                            <Badge
+                              variant="destructive"
+                              className="h-auto max-w-[220px] whitespace-normal text-start text-[10px] leading-snug px-1.5 py-0.5"
+                              title={(sku.duplicate_siblings || [])
+                                .map((s: any) => s.channel_name || `قناة #${s.channel_id}`)
+                                .join(' · ')}
+                            >
+                              مكرر — يلزم اتخاذ إجراء
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1.5 font-bold">

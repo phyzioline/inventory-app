@@ -184,4 +184,44 @@ class SkuUniquenessGuard
 
         return $out;
     }
+
+    /**
+     * Restrict a SKU query to codes that appear more than once for this user (any channel).
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>|\Illuminate\Database\Query\Builder  $query
+     */
+    public static function scopeDuplicateCodesOnly($query, int $userId): void
+    {
+        if ($userId <= 0) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $query->whereIn('skus.sku', function ($sub) use ($userId) {
+            $sub->select('sku')
+                ->from('skus')
+                ->where('user_id', $userId)
+                ->whereNull('deleted_at')
+                ->whereNotNull('sku')
+                ->whereRaw("trim(sku) <> ''")
+                ->groupBy('sku')
+                ->havingRaw('COUNT(*) > 1');
+        });
+    }
+
+    /**
+     * How many listings on this channel share a SKU code that is duplicated elsewhere (or here) for the user.
+     */
+    public static function countDuplicateListingsOnChannel(int $userId, int $channelId): int
+    {
+        if ($userId <= 0 || $channelId <= 0) {
+            return 0;
+        }
+
+        $q = Sku::query()->where('channel_id', $channelId)->where('user_id', $userId);
+        self::scopeDuplicateCodesOnly($q, $userId);
+
+        return (int) $q->count();
+    }
 }

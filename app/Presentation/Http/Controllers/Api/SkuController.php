@@ -65,6 +65,11 @@ class SkuController extends Controller
             });
         }
 
+        if ($request->boolean('duplicates_only')) {
+            $userId = (int) (auth()->id() ?? 0);
+            SkuUniquenessGuard::scopeDuplicateCodesOnly($query, $userId);
+        }
+
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
             $like = '%'.$search.'%';
@@ -197,7 +202,11 @@ class SkuController extends Controller
             return response()->json(['message' => 'channel_id is required'], 422);
         }
 
-        return response()->json($this->valuation->channelCardMetrics($channelId));
+        $metrics = $this->valuation->channelCardMetrics($channelId);
+        $userId = (int) (auth()->id() ?? 0);
+        $metrics['duplicate_sku_count'] = SkuUniquenessGuard::countDuplicateListingsOnChannel($userId, $channelId);
+
+        return response()->json($metrics);
     }
 
     /**
