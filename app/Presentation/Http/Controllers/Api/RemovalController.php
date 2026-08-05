@@ -348,7 +348,11 @@ class RemovalController extends Controller
                     $existingItem->update(array_merge($itemPayload, $preserve));
                     $summary['items_updated']++;
                 } else {
-                    InventoryRemovalItem::create($itemPayload);
+                    // Live DB has NOT NULL receive_status/received_quantity without defaults.
+                    InventoryRemovalItem::create(array_merge($itemPayload, [
+                        'receive_status' => 'pending',
+                        'received_quantity' => 0,
+                    ]));
                     $summary['items_created']++;
                 }
             }

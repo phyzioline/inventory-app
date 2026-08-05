@@ -12,6 +12,17 @@ class InventoryRemovalItem extends Model
 
     protected $table = 'inventory_removal_items';
 
+    /** @var array<string, mixed> */
+    protected $attributes = [
+        'receive_status' => 'pending',
+        'received_quantity' => 0,
+        'requested_quantity' => 0,
+        'cancelled_quantity' => 0,
+        'disposed_quantity' => 0,
+        'shipped_quantity' => 0,
+        'in_process_quantity' => 0,
+    ];
+
     protected $fillable = [
         'user_id',
         'inventory_removal_order_id', 'sku_code', 'fnsku', 'disposition',
