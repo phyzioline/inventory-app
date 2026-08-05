@@ -257,11 +257,22 @@ export default function Returns() {
 
   const receiveRemovalMutation = useMutation({
     mutationFn: async (id: string) => api.post(`/removals/items/${id}/receive`, {}),
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['removals'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-by-location'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      toast.success(t('returns.removals.received') || 'Received and restocked');
+      queryClient.invalidateQueries({ queryKey: ['master-products'] });
+      const shopSku = res?.restocked_sku;
+      const listingSku = res?.listing_sku;
+      if (shopSku && listingSku && shopSku !== listingSku) {
+        toast.success(
+          isAr
+            ? `تم الاستلام — أُضيف المخزون لـ SKU المحل ${shopSku} (من ${listingSku})`
+            : `Received — restocked shop SKU ${shopSku} (from ${listingSku})`,
+        );
+      } else {
+        toast.success(t('returns.removals.received') || 'Received and restocked');
+      }
     },
     onError: (err: any) => {
       const data = err?.response?.data;

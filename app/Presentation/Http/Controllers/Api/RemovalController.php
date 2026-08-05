@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\SkuImageResolver;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryRemovalItem;
@@ -61,7 +62,7 @@ class RemovalController extends Controller
         return trim((string) ($row[$idx] ?? ''));
     }
 
-    /** Find a reasonable "shop" / main physical location. */
+    /** Find the live shop / physical warehouse (prefer the one that already holds stock). */
     private function resolveShopLocationId(): int
     {
         // Prefer is_main if present.
@@ -78,18 +79,34 @@ class RemovalController extends Controller
             }
         }
 
-        // Prefer "physical"/"shop"/"store" type if present.
-        if (Schema::hasColumn('inventory_locations', 'type')) {
-            $physical = InventoryLocation::query()
-                ->where(function ($q) {
-                    $q->where('is_active', true)->orWhereNull('is_active');
-                })
-                ->whereIn('type', ['physical', 'shop', 'store'])
-                ->orderBy('id')
-                ->first();
-            if ($physical) {
-                return (int) $physical->id;
+        $shopLike = InventoryLocation::query()
+            ->where(function ($q) {
+                $q->where('is_active', true)->orWhereNull('is_active');
+            })
+            ->where(function ($q) {
+                if (Schema::hasColumn('inventory_locations', 'type')) {
+                    $q->whereIn('type', ['physical', 'shop', 'store', 'pos']);
+                }
+                $q->orWhere('name', 'ilike', '%المحل%')
+                    ->orWhere('name', 'ilike', '%shop%')
+                    ->orWhere('name', 'ilike', '%store%');
+            })
+            ->orderBy('id')
+            ->get(['id']);
+
+        if ($shopLike->isNotEmpty()) {
+            $ids = $shopLike->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $best = (int) (SkuInventory::query()
+                ->whereIn('location_id', $ids)
+                ->selectRaw('location_id, COALESCE(SUM(quantity), 0) as total_qty')
+                ->groupBy('location_id')
+                ->orderByDesc('total_qty')
+                ->value('location_id') ?? 0);
+            if ($best > 0) {
+                return $best;
             }
+
+            return (int) $ids[array_key_last($ids)];
         }
 
         $any = InventoryLocation::query()
@@ -100,6 +117,59 @@ class RemovalController extends Controller
             ->first();
 
         return (int) ($any?->id ?? 1);
+    }
+
+    /**
+     * Prefer an existing inventory row location for this SKU (so restock lands where shop qty already lives).
+     */
+    private function resolveRestockLocationIdForSku(int $skuId, ?int $preferredLocationId = null): int
+    {
+        if ($preferredLocationId && $preferredLocationId > 0) {
+            return $preferredLocationId;
+        }
+
+        if ($skuId > 0) {
+            $existing = (int) (SkuInventory::query()
+                ->where('sku_id', $skuId)
+                ->orderByDesc('quantity')
+                ->orderByDesc('id')
+                ->value('location_id') ?? 0);
+            if ($existing > 0) {
+                return $existing;
+            }
+        }
+
+        return $this->resolveShopLocationId();
+    }
+
+    /**
+     * Removals return physical units to the shop listing — not the FBA/merchant listing SKU.
+     */
+    private function resolveRestockSku(Sku $listingSku): Sku
+    {
+        $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
+        $listingChannelId = (int) ($listingSku->channel_id ?? 0);
+
+        if ($listingChannelId > 0 && $storeChannelId > 0 && $listingChannelId === $storeChannelId) {
+            return $listingSku;
+        }
+
+        if ($listingSku->relationLoaded('channel')
+            ? ChannelStockResolver::isLocalStoreLikeChannel($listingSku->channel)
+            : ChannelStockResolver::isLocalStoreLikeChannel($listingSku->channel()->first())
+        ) {
+            return $listingSku;
+        }
+
+        $storeSkuId = ChannelStockResolver::resolveStoreSkuIdForListingSku($listingSku);
+        if ($storeSkuId && $storeSkuId > 0 && $storeSkuId !== (int) $listingSku->id) {
+            $storeSku = Sku::query()->with(['offer', 'channel'])->find($storeSkuId);
+            if ($storeSku) {
+                return $storeSku;
+            }
+        }
+
+        return $listingSku;
     }
 
     public function index(Request $request)
@@ -384,7 +454,7 @@ class RemovalController extends Controller
     }
 
     /**
-     * Confirm receipt and restock to shop (default) or a provided location.
+     * Confirm receipt and restock to the shop listing SKU (المحل), not the FBA/merchant MSKU.
      */
     public function receive(Request $request, string $id)
     {
@@ -410,35 +480,51 @@ class RemovalController extends Controller
             }
         }
 
-        $locationId = (int) ($validated['location_id'] ?? 0);
-        if ($locationId <= 0) {
-            $locationId = $this->resolveShopLocationId();
-        }
-
-        // Find SKU by sku code.
-        $sku = Sku::query()->where('sku', $item->sku_code)->first();
-        if (! $sku) {
+        // Find listing SKU from the removal sheet, then restock the linked shop SKU when present.
+        $listingSku = Sku::query()
+            ->with(['offer', 'channel'])
+            ->where('sku', $item->sku_code)
+            ->first();
+        if (! $listingSku) {
             return response()->json([
                 'message' => 'SKU not found in system for this removal item.',
                 'sku' => $item->sku_code,
             ], 422);
         }
 
+        $restockSku = $this->resolveRestockSku($listingSku);
+        $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
+        $restockIsShop = ((int) ($restockSku->channel_id ?? 0) === $storeChannelId && $storeChannelId > 0)
+            || ChannelStockResolver::isLocalStoreLikeChannel($restockSku->channel);
+
+        if (! $restockIsShop && (int) $restockSku->id === (int) $listingSku->id) {
+            return response()->json([
+                'message' => 'No shop (المحل) SKU is linked to this product. Link a shop SKU on the master product, then confirm receipt.',
+                'listing_sku' => $listingSku->sku,
+                'master_product_id' => $listingSku->offer?->master_product_id,
+            ], 422);
+        }
+
+        $locationId = $this->resolveRestockLocationIdForSku(
+            (int) $restockSku->id,
+            (int) ($validated['location_id'] ?? 0) ?: null
+        );
+
         DB::beginTransaction();
         try {
             // Lock inventory row and increment (race-safe).
             $inv = SkuInventory::query()
-                ->where('sku_id', $sku->id)
+                ->where('sku_id', $restockSku->id)
                 ->where('location_id', $locationId)
                 ->lockForUpdate()
                 ->first();
             if (! $inv) {
                 SkuInventory::firstOrCreate(
-                    ['sku_id' => $sku->id, 'location_id' => $locationId],
+                    ['sku_id' => $restockSku->id, 'location_id' => $locationId],
                     ['quantity' => 0, 'reserved' => 0]
                 );
                 $inv = SkuInventory::query()
-                    ->where('sku_id', $sku->id)
+                    ->where('sku_id', $restockSku->id)
                     ->where('location_id', $locationId)
                     ->lockForUpdate()
                     ->firstOrFail();
@@ -446,14 +532,19 @@ class RemovalController extends Controller
 
             $inv->increment('quantity', $qty);
 
+            $notes = 'Amazon removal received: '.($item->removalOrder?->removal_order_id ?? '-').' ('.($item->disposition ?? '-').')';
+            if ((int) $restockSku->id !== (int) $listingSku->id) {
+                $notes .= ' [listing '.$listingSku->sku.' → shop '.$restockSku->sku.']';
+            }
+
             InventoryTransaction::create([
-                'sku_id' => $sku->id,
+                'sku_id' => $restockSku->id,
                 'location_id' => $locationId,
                 'type' => 'IN',
                 'quantity' => $qty,
                 'reference_type' => 'Removal',
                 'reference_id' => (string) $item->id,
-                'notes' => 'Amazon removal received: '.($item->removalOrder?->removal_order_id ?? '-').' ('.($item->disposition ?? '-').')',
+                'notes' => $notes,
             ]);
 
             $item->update([
@@ -476,6 +567,9 @@ class RemovalController extends Controller
         return response()->json([
             'message' => 'Removal item received and restocked',
             'item' => $item->fresh(['removalOrder', 'receivedLocation']),
+            'restocked_sku' => $restockSku->sku,
+            'listing_sku' => $listingSku->sku,
+            'location_id' => $locationId,
         ]);
     }
 }
