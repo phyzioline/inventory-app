@@ -1341,23 +1341,37 @@ export default function Returns() {
                 <div className="text-sm text-muted-foreground">{t('returns.removals.empty') || 'No removal rows yet.'}</div>
               ) : (
                 <div className="overflow-auto rounded-lg border">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm min-w-[1100px]">
                     <thead className="bg-muted/30 text-muted-foreground">
                       <tr>
                         <th className="text-start px-3 py-2 w-14">{t('returns.table.image') || (isAr ? 'صورة' : 'Image')}</th>
-                        <th className="text-start px-3 py-2">{t('returns.removals.table.order') || 'Removal order'}</th>
+                        <th className="text-start px-3 py-2 whitespace-nowrap">{t('returns.removals.table.requestDate') || 'request-date'}</th>
+                        <th className="text-start px-3 py-2 whitespace-nowrap">{t('returns.removals.table.order') || 'order-id'}</th>
+                        <th className="text-start px-3 py-2 whitespace-nowrap">{t('returns.removals.table.orderStatus') || 'order-status'}</th>
+                        <th className="text-start px-3 py-2 whitespace-nowrap">{t('returns.removals.table.lastUpdated') || 'last-updated-date'}</th>
                         <th className="text-start px-3 py-2">SKU</th>
-                        <th className="text-start px-3 py-2">{t('returns.removals.table.disposition') || 'Disposition'}</th>
+                        <th className="text-start px-3 py-2 whitespace-nowrap">{t('returns.removals.table.disposition') || 'disposition'}</th>
+                        <th className="text-end px-3 py-2 whitespace-nowrap">{t('returns.removals.table.removalFee') || 'removal-fee'}</th>
                         <th className="text-end px-3 py-2">{t('returns.removals.table.qty') || 'Qty'}</th>
-                        <th className="text-start px-3 py-2">{t('returns.removals.table.status') || 'Status'}</th>
+                        <th className="text-start px-3 py-2">{t('returns.removals.table.status') || 'Receipt'}</th>
                         <th className="text-end px-3 py-2">{t('returns.removals.table.actions') || 'Actions'}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {removalItems.map((it: any) => {
-                        const orderId = it?.removal_order?.removal_order_id || it?.removalOrder?.removal_order_id || it?.removalOrder?.removal_order_id || it?.removal_order_id;
+                        const order = it?.removal_order || it?.removalOrder || {};
+                        const orderId = order?.removal_order_id || it?.removal_order_id;
                         const qty = Number(it?.shipped_quantity || 0) || Number(it?.requested_quantity || 0) || 0;
                         const received = String(it?.receive_status || '') === 'received';
+                        const fee = it?.removal_fee;
+                        const feeLabel =
+                          fee == null || fee === ''
+                            ? '—'
+                            : `${Number(fee).toLocaleString(undefined, { maximumFractionDigits: 4 })}${
+                                it?.currency || order?.currency ? ` ${it?.currency || order?.currency}` : ''
+                              }`;
+                        const orderStatus = String(order?.order_status || '').trim();
+                        const disposition = String(it?.disposition || '').trim();
                         return (
                           <tr key={it.id} className="border-t">
                             <td className="px-3 py-2 align-middle">
@@ -1367,9 +1381,47 @@ export default function Returns() {
                                 size="sm"
                               />
                             </td>
-                            <td className="px-3 py-2 font-mono text-xs">{String(orderId || '—')}</td>
+                            <td className="px-3 py-2 text-xs whitespace-nowrap">{formatTimestamp(order?.request_date)}</td>
+                            <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{String(orderId || '—')}</td>
+                            <td className="px-3 py-2">
+                              {orderStatus ? (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'text-[10px]',
+                                    /completed/i.test(orderStatus)
+                                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                      : /pending/i.test(orderStatus)
+                                        ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200'
+                                        : '',
+                                  )}
+                                >
+                                  {orderStatus}
+                                </Badge>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-xs whitespace-nowrap">{formatTimestamp(order?.last_updated_date)}</td>
                             <td className="px-3 py-2 font-mono text-xs">{it.sku_code || '—'}</td>
-                            <td className="px-3 py-2">{it.disposition || '—'}</td>
+                            <td className="px-3 py-2">
+                              {disposition ? (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'text-[10px]',
+                                    /sellable/i.test(disposition) && !/unsellable/i.test(disposition)
+                                      ? 'border-sky-500/40 bg-sky-500/10 text-sky-800 dark:text-sky-200'
+                                      : 'border-rose-500/40 bg-rose-500/10 text-rose-800 dark:text-rose-200',
+                                  )}
+                                >
+                                  {disposition}
+                                </Badge>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-end font-mono text-xs whitespace-nowrap">{feeLabel}</td>
                             <td className="px-3 py-2 text-end font-mono text-xs">{qty}</td>
                             <td className="px-3 py-2">
                               <Badge

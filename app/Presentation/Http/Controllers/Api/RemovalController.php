@@ -5,6 +5,7 @@ namespace App\Presentation\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use App\Application\Services\SkuImageResolver;
 use App\Domain\Models\Wms\InventoryLocation;
@@ -27,6 +28,37 @@ class RemovalController extends Controller
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    /** Strip BOM / quotes and normalize Amazon CSV header names. */
+    private function normalizeCsvHeader(string $name): string
+    {
+        $key = trim($name);
+        // UTF-8 BOM on first column is common in Seller Central exports.
+        $key = preg_replace('/^\xEF\xBB\xBF/', '', $key) ?? $key;
+        $key = trim($key, " \t\n\r\0\x0B\"'");
+
+        return strtolower($key);
+    }
+
+    /**
+     * Read a CSV cell by header name without triggering PHP 8 undefined-key ErrorException
+     * when optional Amazon columns are absent from the file.
+     *
+     * @param  array<int, string|null>  $row
+     * @param  array<string, int>  $map
+     */
+    private function csvCell(array $row, array $map, string $column): string
+    {
+        if (! array_key_exists($column, $map)) {
+            return '';
+        }
+        $idx = $map[$column];
+        if (! array_key_exists($idx, $row)) {
+            return '';
+        }
+
+        return trim((string) ($row[$idx] ?? ''));
     }
 
     /** Find a reasonable "shop" / main physical location. */
@@ -127,34 +159,92 @@ class RemovalController extends Controller
 
         $source = strtolower((string) $request->input('source', 'amazon')) ?: 'amazon';
         $path = $uploadedFile->getRealPath();
-        $fh = @fopen($path, 'rb');
-        if (! $fh) {
+        $raw = @file_get_contents($path);
+        if ($raw === false) {
             return response()->json(['message' => 'Cannot read file'], 422);
         }
 
-        $header = fgetcsv($fh);
+        // Seller Central sometimes exports UTF-16 (with BOM) tab-separated reports.
+        if (str_starts_with($raw, "\xFF\xFE") || str_starts_with($raw, "\xFE\xFF")) {
+            $raw = mb_convert_encoding($raw, 'UTF-8', 'UTF-16');
+        } elseif (str_starts_with($raw, "\xEF\xBB\xBF")) {
+            $raw = substr($raw, 3);
+        }
+
+        $firstLine = strtok($raw, "\r\n") ?: '';
+        $delimiter = substr_count($firstLine, "\t") > substr_count($firstLine, ',') ? "\t" : ',';
+
+        $tmp = tempnam(sys_get_temp_dir(), 'removal_csv_');
+        if ($tmp === false || file_put_contents($tmp, $raw) === false) {
+            return response()->json(['message' => 'Cannot prepare file for import'], 422);
+        }
+
+        $fh = @fopen($tmp, 'rb');
+        if (! $fh) {
+            @unlink($tmp);
+
+            return response()->json(['message' => 'Cannot read file'], 422);
+        }
+
+        $header = fgetcsv($fh, 0, $delimiter);
         if (! $header || ! is_array($header)) {
             fclose($fh);
+            @unlink($tmp);
 
             return response()->json(['message' => 'Invalid CSV header'], 422);
         }
 
         $map = [];
         foreach ($header as $i => $name) {
-            $key = trim((string) $name);
+            $key = $this->normalizeCsvHeader((string) $name);
             if ($key === '') {
                 continue;
             }
-            $map[$key] = $i;
+            // Keep first occurrence if Amazon duplicates a header.
+            if (! array_key_exists($key, $map)) {
+                $map[$key] = (int) $i;
+            }
+        }
+
+        // Seller Central sometimes uses spaced / alternate headers.
+        $aliases = [
+            'order-id' => ['order id', 'orderid', 'removal-order-id', 'removal order id'],
+            'sku' => ['merchant-sku', 'merchant sku', 'msku', 'seller-sku', 'seller sku'],
+            'disposition' => ['disposition-status', 'disposition status'],
+            'requested-quantity' => ['requested quantity', 'requested-qty'],
+            'shipped-quantity' => ['shipped quantity', 'shipped-qty'],
+            'cancelled-quantity' => ['cancelled quantity', 'canceled-quantity', 'canceled quantity'],
+            'disposed-quantity' => ['disposed quantity'],
+            'in-process-quantity' => ['in-process quantity', 'in process quantity'],
+            'removal-fee' => ['removal fee'],
+            'request-date' => ['request date'],
+            'last-updated-date' => ['last updated date', 'last-updated'],
+            'order-status' => ['order status'],
+            'order-type' => ['order type'],
+            'order-source' => ['order source'],
+            'service-speed' => ['service speed'],
+        ];
+        foreach ($aliases as $canonical => $alts) {
+            if (array_key_exists($canonical, $map)) {
+                continue;
+            }
+            foreach ($alts as $alt) {
+                if (array_key_exists($alt, $map)) {
+                    $map[$canonical] = $map[$alt];
+                    break;
+                }
+            }
         }
 
         $required = ['order-id', 'sku'];
         foreach ($required as $col) {
             if (! array_key_exists($col, $map)) {
                 fclose($fh);
+                @unlink($tmp);
 
                 return response()->json([
                     'message' => "Missing required column: {$col}",
+                    'headers_found' => array_keys($map),
                 ], 422);
             }
         }
@@ -172,26 +262,36 @@ class RemovalController extends Controller
 
         DB::beginTransaction();
         try {
-            while (($row = fgetcsv($fh)) !== false) {
+            while (($row = fgetcsv($fh, 0, $delimiter)) !== false) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                // Skip blank lines.
+                if (count(array_filter($row, static fn ($v) => trim((string) $v) !== '')) === 0) {
+                    continue;
+                }
+
                 $summary['total_rows']++;
 
-                $oid = trim((string) ($row[$map['order-id']] ?? ''));
-                $skuCode = trim((string) ($row[$map['sku']] ?? ''));
+                $oid = $this->csvCell($row, $map, 'order-id');
+                $skuCode = $this->csvCell($row, $map, 'sku');
                 if ($oid === '' || $skuCode === '') {
                     continue;
                 }
+
+                $currency = $this->csvCell($row, $map, 'currency') ?: null;
 
                 $orderPayload = [
                     'user_id' => $userId,
                     'source' => $source,
                     'removal_order_id' => $oid,
-                    'order_source' => trim((string) ($row[$map['order-source']] ?? '')) ?: null,
-                    'order_type' => trim((string) ($row[$map['order-type']] ?? '')) ?: null,
-                    'service_speed' => trim((string) ($row[$map['service-speed']] ?? '')) ?: null,
-                    'order_status' => trim((string) ($row[$map['order-status']] ?? '')) ?: null,
-                    'request_date' => $this->normalizeDateTime((string) ($row[$map['request-date']] ?? '')),
-                    'last_updated_date' => $this->normalizeDateTime((string) ($row[$map['last-updated-date']] ?? '')),
-                    'currency' => trim((string) ($row[$map['currency']] ?? '')) ?: null,
+                    'order_source' => $this->csvCell($row, $map, 'order-source') ?: null,
+                    'order_type' => $this->csvCell($row, $map, 'order-type') ?: null,
+                    'service_speed' => $this->csvCell($row, $map, 'service-speed') ?: null,
+                    'order_status' => $this->csvCell($row, $map, 'order-status') ?: null,
+                    'request_date' => $this->normalizeDateTime($this->csvCell($row, $map, 'request-date')),
+                    'last_updated_date' => $this->normalizeDateTime($this->csvCell($row, $map, 'last-updated-date')),
+                    'currency' => $currency,
                 ];
 
                 $existingOrder = InventoryRemovalOrder::query()
@@ -208,22 +308,21 @@ class RemovalController extends Controller
                     $summary['orders_created']++;
                 }
 
-                $disposition = trim((string) ($row[$map['disposition']] ?? '')) ?: null;
+                $disposition = $this->csvCell($row, $map, 'disposition') ?: null;
+                $removalFeeRaw = $this->csvCell($row, $map, 'removal-fee');
                 $itemPayload = [
                     'user_id' => $userId,
                     'inventory_removal_order_id' => $order->id,
                     'sku_code' => $skuCode,
-                    'fnsku' => trim((string) ($row[$map['fnsku']] ?? '')) ?: null,
+                    'fnsku' => $this->csvCell($row, $map, 'fnsku') ?: null,
                     'disposition' => $disposition,
-                    'requested_quantity' => (int) ($row[$map['requested-quantity']] ?? 0),
-                    'cancelled_quantity' => (int) ($row[$map['cancelled-quantity']] ?? 0),
-                    'disposed_quantity' => (int) ($row[$map['disposed-quantity']] ?? 0),
-                    'shipped_quantity' => (int) ($row[$map['shipped-quantity']] ?? 0),
-                    'in_process_quantity' => (int) ($row[$map['in-process-quantity']] ?? 0),
-                    'removal_fee' => array_key_exists('removal-fee', $map) && ($row[$map['removal-fee']] ?? '') !== ''
-                        ? (float) ($row[$map['removal-fee']] ?? 0)
-                        : null,
-                    'currency' => trim((string) ($row[$map['currency']] ?? '')) ?: null,
+                    'requested_quantity' => (int) $this->csvCell($row, $map, 'requested-quantity'),
+                    'cancelled_quantity' => (int) $this->csvCell($row, $map, 'cancelled-quantity'),
+                    'disposed_quantity' => (int) $this->csvCell($row, $map, 'disposed-quantity'),
+                    'shipped_quantity' => (int) $this->csvCell($row, $map, 'shipped-quantity'),
+                    'in_process_quantity' => (int) $this->csvCell($row, $map, 'in-process-quantity'),
+                    'removal_fee' => $removalFeeRaw !== '' ? (float) $removalFeeRaw : null,
+                    'currency' => $currency,
                 ];
 
                 $existingItem = InventoryRemovalItem::query()
@@ -258,6 +357,12 @@ class RemovalController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
             fclose($fh);
+            @unlink($tmp);
+            Log::error('Removal import failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
 
             return response()->json([
                 'message' => 'Removal import failed',
@@ -266,6 +371,7 @@ class RemovalController extends Controller
         }
 
         fclose($fh);
+        @unlink($tmp);
 
         return response()->json([
             'message' => 'Removal import done',

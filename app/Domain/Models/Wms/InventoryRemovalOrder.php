@@ -13,6 +13,7 @@ class InventoryRemovalOrder extends Model
     protected $table = 'inventory_removal_orders';
 
     protected $fillable = [
+        'user_id',
         'source', 'removal_order_id', 'order_source', 'order_type',
         'service_speed', 'order_status', 'request_date', 'last_updated_date', 'currency',
     ];

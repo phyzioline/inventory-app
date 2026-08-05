@@ -13,6 +13,7 @@ class InventoryRemovalItem extends Model
     protected $table = 'inventory_removal_items';
 
     protected $fillable = [
+        'user_id',
         'inventory_removal_order_id', 'sku_code', 'fnsku', 'disposition',
         'requested_quantity', 'cancelled_quantity', 'disposed_quantity',
         'shipped_quantity', 'in_process_quantity',

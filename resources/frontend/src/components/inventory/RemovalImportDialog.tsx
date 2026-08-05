@@ -49,7 +49,14 @@ export function RemovalImportDialog({ open, onOpenChange, onSuccess }: Props) {
       onSuccess?.();
     } catch (err: any) {
       const data = err?.response?.data;
-      toast.error(data?.message || data?.error || (isAr ? 'فشل الاستيراد' : 'Import failed'));
+      const detail = data?.error || data?.message || (isAr ? 'فشل الاستيراد' : 'Import failed');
+      const missing = data?.message?.startsWith?.('Missing required column')
+        ? data.message
+        : null;
+      toast.error(missing || detail);
+      if (Array.isArray(data?.headers_found) && data.headers_found.length) {
+        console.warn('Removal CSV headers found:', data.headers_found);
+      }
     } finally {
       setBusy(false);
     }
