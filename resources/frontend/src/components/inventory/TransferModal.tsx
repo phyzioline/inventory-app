@@ -35,6 +35,17 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Badge } from '@/components/ui/badge';
+import {
+    getTransferStockKind,
+    resolveSkuChannelMeta,
+    transferStockKindBadgeClass,
+    transferStockKindLabel,
+    type TransferSkuChannelMeta,
+    type TransferStockKind,
+} from '@/lib/transferStockKind';
+
+export type { TransferStockKind } from '@/lib/transferStockKind';
+export { getTransferStockKind } from '@/lib/transferStockKind';
 
 interface TransferModalProps {
     isOpen: boolean;
@@ -64,83 +75,18 @@ function stockQtyBadgeClass(qty: number): string {
     return 'bg-muted text-muted-foreground';
 }
 
-/** Where stock "sits" for UI tagging — المحل vs marketplace seller vs FBA. */
-export type TransferStockKind = 'shop' | 'merchant' | 'fba';
-
-export function getTransferStockKind(item: any, location: any): TransferStockKind {
-    const loc = location || {};
-    const type = String(loc.type || '').toLowerCase();
-    const name = String(loc.name || '').toLowerCase();
-    const rowId = String(item?.id ?? '');
-    const isSyntheticChannel = rowId.startsWith('channel-sku-');
-
-    if (type === 'amazon_fba') return 'fba';
-    if (/\bfba\b/i.test(name) || /\bamazon\b.*\bfba\b/i.test(name)) return 'fba';
-
-    if (type === 'channel' || type === 'marketplace') return 'merchant';
-    if (type === 'store' && loc.channel_id) return 'merchant';
-
-    if (isSyntheticChannel && loc.channel_id) return 'merchant';
-
-    return 'shop';
-}
-
-function transferStockKindBadgeClass(kind: TransferStockKind): string {
-    switch (kind) {
-        case 'fba':
-            return 'border-amber-300 bg-amber-100 text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100';
-        case 'merchant':
-            return 'border-violet-300 bg-violet-100 text-violet-950 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-100';
-        default:
-            return 'border-emerald-300 bg-emerald-100 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-100';
-    }
-}
-
-function truncateStockKindBadgeText(raw: string, max = 22): string {
-    const s = raw.trim();
-    if (!s) return '';
-    if (s.length <= max) return s;
-    return `${s.slice(0, Math.max(1, max - 1))}…`;
-}
-
-/** Badge text: shop vs channel listing vs FBA. For marketplaces, prefer warehouse name (e.g. نون) over generic "merchant". */
-function transferStockKindLabel(
-    kind: TransferStockKind,
-    isAr: boolean,
-    location?: { name?: string } | null
-): string {
-    const locLabel = truncateStockKindBadgeText(String(location?.name ?? ''));
-    if (kind === 'merchant' && locLabel) return locLabel;
-
-    if (isAr) {
-        switch (kind) {
-            case 'fba':
-                return 'FBA';
-            case 'merchant':
-                return 'قناة';
-            default:
-                return 'المحل';
-        }
-    }
-    switch (kind) {
-        case 'fba':
-            return 'FBA';
-        case 'merchant':
-            return 'Channel';
-        default:
-            return 'Shop';
-    }
-}
-
 function StockKindTag({
     kind,
     isAr,
     location,
+    channel,
 }: {
     kind: TransferStockKind;
     isAr: boolean;
-    /** When set, marketplace (`merchant`) rows show this name (e.g. destination "نون") instead of a generic label. */
+    /** Fallback when SKU has no channel — marketplace warehouses show their name (e.g. نون). */
     location?: { name?: string } | null;
+    /** SKU listing channel — wins over warehouse so تاجر rows are never labeled المحل. */
+    channel?: TransferSkuChannelMeta | null;
 }) {
     return (
         <Badge
@@ -151,7 +97,7 @@ function StockKindTag({
                 transferStockKindBadgeClass(kind)
             )}
         >
-            {transferStockKindLabel(kind, isAr, location)}
+            {transferStockKindLabel(kind, isAr, location, channel)}
         </Badge>
     );
 }
@@ -247,6 +193,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
             available: resolveInventoryRowQty(item),
             image: item?.sku?.offer?.master_product?.image_url || item?.sku?.offer?.masterProduct?.image_url || '',
             stockKind: getTransferStockKind(item, toLocation),
+            channel: resolveSkuChannelMeta(item),
         })).filter((s: any) => s.sku_id);
     }, [destInventory, toLocation]);
 
@@ -279,6 +226,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                     item.sku?.image ||
                     '',
                 stockKind: getTransferStockKind(item, fromLocation),
+                channel: resolveSkuChannelMeta(item),
                 _invRowId: String(item?.id ?? ''),
             }));
 
@@ -769,16 +717,20 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                             )}>
                                                                 <span className="flex min-w-0 flex-1 items-center gap-1 font-mono">
                                                                     {row.to_sku_id ? (
-                                                                        <StockKindTag
-                                                                            kind={
-                                                                                allDestSkus.find(
-                                                                                    (d: any) =>
-                                                                                        String(d.sku_id) === String(row.to_sku_id)
-                                                                                )?.stockKind || 'shop'
-                                                                            }
-                                                                            isAr={isAr}
-                                                                            location={toLocation}
-                                                                        />
+                                                                        (() => {
+                                                                            const destSku = allDestSkus.find(
+                                                                                (d: any) =>
+                                                                                    String(d.sku_id) === String(row.to_sku_id)
+                                                                            );
+                                                                            return (
+                                                                                <StockKindTag
+                                                                                    kind={destSku?.stockKind || 'shop'}
+                                                                                    isAr={isAr}
+                                                                                    location={toLocation}
+                                                                                    channel={destSku?.channel}
+                                                                                />
+                                                                            );
+                                                                        })()
                                                                     ) : null}
                                                                     <span className="min-w-0 truncate">
                                                                         {row.to_sku_id
@@ -816,7 +768,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                                                     >
                                                                                         <Check className={cn('mr-2 mt-0.5 h-4 w-4 shrink-0', row.to_sku_id === dsku.sku_id ? 'opacity-100' : 'opacity-0')} />
                                                                                         <div className="flex flex-1 min-w-0 items-start gap-2">
-                                                                                            <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} />
+                                                                                            <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} channel={dsku.channel} />
                                                                                             <div className="min-w-0 flex-1">
                                                                                                 <div className="font-mono text-xs font-bold break-all">{dsku.sku_code}</div>
                                                                                                 <div className="text-xs text-muted-foreground line-clamp-2 whitespace-normal break-words leading-snug">{dsku.name}</div>
@@ -844,7 +796,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                                             >
                                                                                 <Check className={cn('mr-2 mt-0.5 h-4 w-4 shrink-0', row.to_sku_id === dsku.sku_id ? 'opacity-100' : 'opacity-0')} />
                                                                                 <div className="flex flex-1 min-w-0 items-start gap-2">
-                                                                                    <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} />
+                                                                                    <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} channel={dsku.channel} />
                                                                                     <div className="min-w-0 flex-1">
                                                                                         <div className="font-mono text-xs font-bold break-all">{dsku.sku_code}</div>
                                                                                         <div className="text-xs text-muted-foreground line-clamp-2 whitespace-normal break-words leading-snug">{dsku.name}</div>
@@ -920,7 +872,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                         >
                                             <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-start">
                                                 {selectedSku?.stockKind ? (
-                                                    <StockKindTag kind={selectedSku.stockKind} isAr={isAr} location={fromLocation} />
+                                                    <StockKindTag kind={selectedSku.stockKind} isAr={isAr} location={fromLocation} channel={selectedSku.channel} />
                                                 ) : null}
                                                 <span className="min-w-0 truncate">
                                                     {selectedSku
@@ -960,7 +912,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                             >
                                                                 <Check className={cn('mr-2 mt-0.5 h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')} />
                                                                 <div className="flex min-w-0 flex-1 items-start gap-2">
-                                                                    <StockKindTag kind={sku.stockKind || 'shop'} isAr={isAr} location={fromLocation} />
+                                                                    <StockKindTag kind={sku.stockKind || 'shop'} isAr={isAr} location={fromLocation} channel={sku.channel} />
                                                                     <span className="min-w-0 flex-1 whitespace-normal break-words text-start leading-snug line-clamp-2">
                                                                         {sku.sku_code} — {sku.name}
                                                                     </span>
@@ -1001,6 +953,10 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                         }
                                                         isAr={isAr}
                                                         location={toLocation}
+                                                        channel={
+                                                            allDestSkus.find((d: any) => String(d.sku_id) === String(pendingDestSkuId))
+                                                                ?.channel
+                                                        }
                                                     />
                                                 ) : null}
                                                 <span className="min-w-0 truncate">
@@ -1061,7 +1017,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                                                 )}
                                                                             />
                                                                             <div className="flex flex-1 min-w-0 items-start gap-2">
-                                                                                <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} />
+                                                                                <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} channel={dsku.channel} />
                                                                                 <div className="min-w-0 flex-1">
                                                                                     <div className="font-mono text-xs font-bold break-all">
                                                                                         {dsku.sku_code}
@@ -1106,7 +1062,7 @@ export default function TransferModal({ isOpen, onClose, defaultSourceId }: Tran
                                                                                 )}
                                                                             />
                                                                             <div className="flex flex-1 min-w-0 items-start gap-2">
-                                                                                <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} />
+                                                                                <StockKindTag kind={dsku.stockKind || 'shop'} isAr={isAr} location={toLocation} channel={dsku.channel} />
                                                                                 <div className="min-w-0 flex-1">
                                                                                     <div className="font-mono text-xs font-bold break-all">
                                                                                         {dsku.sku_code}
