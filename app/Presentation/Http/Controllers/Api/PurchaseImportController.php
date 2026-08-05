@@ -702,7 +702,8 @@ class PurchaseImportController extends Controller
             $payload['supplier_matched'] = false;
         }
 
-        DB::transaction(function () use ($request, $batch, $payload, $isReceived, $oldVendorId, $oldLocationId, $oldOutstanding, $status) {
+        try {
+            DB::transaction(function () use ($request, $batch, $payload, $isReceived, $oldVendorId, $oldLocationId, $oldOutstanding, $status) {
             $batch->update($payload);
 
             // For received invoices, warehouse relink means stock transfer from old location to new location.
@@ -884,6 +885,11 @@ class PurchaseImportController extends Controller
                 }
             }
         });
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => $e->getMessage() ?: 'Failed to update purchase batch',
+            ], 422);
+        }
 
         return response()->json([
             'message' => 'Batch updated',
@@ -1020,43 +1026,49 @@ class PurchaseImportController extends Controller
         $oldOutstanding = $this->calculateOutstandingAmountFromBatch($batch->loadMissing('items'));
         $wasApprovedOrReceived = in_array((string) $batch->status, ['approved', 'received'], true);
 
-        if ((string) $batch->status === 'received') {
-            $receiveLocationId = (int) ($batch->location_id ?? 0);
-            if ($receiveLocationId <= 0) {
-                return response()->json(['message' => 'Received invoice is missing warehouse/location'], 422);
-            }
-            $resolvedSkuId = $this->importService->resolveSkuIdForBatchItemLine(
-                $item,
-                $receiveLocationId,
-                (int) ($batch->user_id ?? 0)
-            );
-            $skuId = (int) ($resolvedSkuId ?? $item->sku_id ?? 0);
-            $qty = (float) ($item->received_quantity ?? $item->quantity ?? 0);
-            if ($qty > 0 && $skuId <= 0) {
-                return response()->json(['message' => 'Cannot remove line from received invoice: missing SKU mapping'], 422);
-            }
-            if ($skuId > 0 && $qty > 0) {
-                $stockLocationId = $this->importService->resolveStockLocationIdForSku($skuId, $receiveLocationId);
-                $this->importService->applyReceivedStockDelta(
-                    $batch,
-                    $skuId,
-                    $stockLocationId,
-                    -$qty,
-                    "Purchase batch {$batch->batch_number} remove line {$item->id}"
+        try {
+            if ((string) $batch->status === 'received') {
+                $receiveLocationId = (int) ($batch->location_id ?? 0);
+                if ($receiveLocationId <= 0) {
+                    return response()->json(['message' => 'Received invoice is missing warehouse/location'], 422);
+                }
+                $resolvedSkuId = $this->importService->resolveSkuIdForBatchItemLine(
+                    $item,
+                    $receiveLocationId,
+                    (int) ($batch->user_id ?? 0)
                 );
+                $skuId = (int) ($resolvedSkuId ?? $item->sku_id ?? 0);
+                $qty = (float) ($item->received_quantity ?? $item->quantity ?? 0);
+                if ($qty > 0 && $skuId <= 0) {
+                    return response()->json(['message' => 'Cannot remove line from received invoice: missing SKU mapping'], 422);
+                }
+                if ($skuId > 0 && $qty > 0) {
+                    $stockLocationId = $this->importService->resolveStockLocationIdForSku($skuId, $receiveLocationId);
+                    $this->importService->applyReceivedStockDelta(
+                        $batch,
+                        $skuId,
+                        $stockLocationId,
+                        -$qty,
+                        "Purchase batch {$batch->batch_number} remove line {$item->id}"
+                    );
+                }
             }
-        }
 
-        $item->delete();
+            $item->delete();
 
-        $batch->recalculateTotals();
+            $batch->recalculateTotals();
 
-        if ($wasApprovedOrReceived && $batch->vendor_id) {
-            $newOutstanding = $this->calculateOutstandingAmountFromBatch($batch->refresh()->loadMissing('items'));
-            $delta = (float) $newOutstanding - (float) $oldOutstanding;
-            if (abs($delta) > 0.0000001) {
-                $this->importService->adjustVendorPayableBalance((int) $batch->vendor_id, $delta);
+            if ($wasApprovedOrReceived && $batch->vendor_id) {
+                $newOutstanding = $this->calculateOutstandingAmountFromBatch($batch->refresh()->loadMissing('items'));
+                $delta = (float) $newOutstanding - (float) $oldOutstanding;
+                if (abs($delta) > 0.0000001) {
+                    $this->importService->adjustVendorPayableBalance((int) $batch->vendor_id, $delta);
+                }
             }
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => $e->getMessage() ?: 'Failed to remove purchase line',
+            ], 422);
         }
 
         return response()->json(['message' => 'Item removed']);

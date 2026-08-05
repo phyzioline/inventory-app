@@ -2048,7 +2048,13 @@ PROMPT;
 
         $totalAvailable = (float) $inventories->sum(fn ($inv) => (float) ($inv->quantity ?? 0));
         if ($totalAvailable + 1e-9 < $quantity) {
-            throw new \Exception("Insufficient stock for SKU {$skuId}. Required {$quantity}, available {$totalAvailable}.");
+            $skuCode = (string) (Sku::query()->whereKey($skuId)->value('sku') ?: $skuId);
+            $need = rtrim(rtrim(number_format($quantity, 4, '.', ''), '0'), '.');
+            $have = rtrim(rtrim(number_format($totalAvailable, 4, '.', ''), '0'), '.');
+            throw new \Exception(
+                "لا يمكن تعديل/حذف البند: مخزون {$skuCode} غير كافٍ. المطلوب خصم {$need} والمتاح حالياً {$have} "
+                .'(غالباً تم بيع أو تحويل جزء من الكمية المستلمة).'
+            );
         }
 
         $pool = $inventories
