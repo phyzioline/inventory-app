@@ -82,12 +82,21 @@ export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initi
                 offer_id: offerId || base.offer_id,
             });
         },
-        onSuccess: () => {
+        onSuccess: (data: any) => {
             queryClient.invalidateQueries({ queryKey: ['master-products'] });
             queryClient.invalidateQueries({ queryKey: ['channel-skus'] });
             queryClient.invalidateQueries({ queryKey: ['warehouses-summary'] });
             queryClient.invalidateQueries({ queryKey: ['channels-all-skus-metrics'] });
-            toast.success(isAr ? 'تم حفظ SKU بنجاح' : 'SKU saved successfully');
+            queryClient.invalidateQueries({ queryKey: ['inventory-transactions'] });
+            const rehome = data?.stock_rehome;
+            if (rehome?.moved > 0) {
+                const msg = isAr
+                    ? (rehome.message || `تم نقل ${rehome.moved} قطعة تلقائياً إلى المحل على الـ SKU: ${rehome.to_store_sku || ''}`)
+                    : (rehome.message_en || `Auto-transferred ${rehome.moved} pcs to store SKU: ${rehome.to_store_sku || ''}`);
+                toast.warning(msg, { duration: 10000 });
+            } else {
+                toast.success(isAr ? 'تم حفظ SKU بنجاح' : 'SKU saved successfully');
+            }
             onOpenChange(false);
             if (!skuId) resetForm();
         },

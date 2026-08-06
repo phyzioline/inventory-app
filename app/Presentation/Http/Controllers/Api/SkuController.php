@@ -9,18 +9,21 @@ use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\InventoryValuationService;
 use App\Application\Services\ProfitEngineService;
 use App\Application\Services\SkuUniquenessGuard;
+use App\Application\Services\StockRehomeTransferService;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryAdjustment;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\QuotationItem;
 use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
+use Illuminate\Validation\ValidationException;
 
 class SkuController extends Controller
 {
     public function __construct(
         private readonly InventoryValuationService $valuation,
         private readonly ProfitEngineService $profitEngine,
+        private readonly StockRehomeTransferService $stockRehome,
     ) {}
 
     /**
@@ -441,6 +444,10 @@ class SkuController extends Controller
 
         $previousOfferId = (int) ($sku->offer_id ?? 0);
         $nextOfferId = array_key_exists('offer_id', $validated) ? (int) ($validated['offer_id'] ?? 0) : $previousOfferId;
+        $previousChannelId = (int) ($sku->channel_id ?? 0);
+        $nextChannelId = array_key_exists('channel_id', $validated)
+            ? (int) ($validated['channel_id'] ?? 0)
+            : $previousChannelId;
 
         if (array_key_exists('sku', $validated)) {
             $newSku = SkuUniquenessGuard::normalize((string) $validated['sku']);
@@ -451,18 +458,84 @@ class SkuController extends Controller
             SkuUniquenessGuard::assertAvailable((int) $sku->user_id, $newSku, (int) $sku->id);
         }
 
-        DB::transaction(function () use ($sku, $validated, $previousOfferId, $nextOfferId) {
-            $sku->update($validated);
+        $stockRehomeMeta = null;
 
-            // When a channel SKU gets linked to an offer (offer_id becomes non-null),
-            // ensure the MAIN STORE has a SKU for the same offer so marketplace merchant orders
-            // deduct from shop stock instead of creating negative balances on the channel SKU.
-            if ($previousOfferId === 0 && $nextOfferId > 0) {
-                $this->ensureMainStoreSkuForOfferAndRehomeStoreInventory($sku);
-            }
-        });
+        try {
+            DB::transaction(function () use (
+                $sku,
+                $validated,
+                $previousOfferId,
+                $nextOfferId,
+                $previousChannelId,
+                $nextChannelId,
+                &$stockRehomeMeta
+            ) {
+                // Link first when needed so FBA→Merchant can resolve the store SKU target.
+                if ($previousOfferId === 0 && $nextOfferId > 0) {
+                    $sku->fill(['offer_id' => $nextOfferId])->save();
+                    $sku->refresh();
+                    $this->ensureMainStoreSkuForOfferAndRehomeStoreInventory($sku);
+                }
 
-        return response()->json($sku->load(['offer', 'channel']));
+                if (
+                    $previousChannelId > 0
+                    && $nextChannelId > 0
+                    && $previousChannelId !== $nextChannelId
+                    && ChannelStockResolver::isFbaChannel($previousChannelId)
+                    && ChannelStockResolver::isMerchantChannel($nextChannelId)
+                ) {
+                    $fbaQty = ChannelStockResolver::availableQuantityForChannelSku((int) $sku->id, $previousChannelId);
+                    if ($fbaQty > 0) {
+                        $storeSkuId = ChannelStockResolver::resolveStoreSkuIdForListingSku($sku->fresh(['offer']));
+                        if ($storeSkuId === null || $storeSkuId <= 0) {
+                            throw ValidationException::withMessages([
+                                'channel_id' => [
+                                    'هذا المنتج به مخزون FBA ('.(int) $fbaQty.' قطعة). اربط العرض بـ SKU المحل أولاً حتى يتم نقل المخزون تلقائياً إلى المحل قبل التحويل إلى التاجر.',
+                                ],
+                            ]);
+                        }
+
+                        $storeSku = Sku::query()->find($storeSkuId);
+                        $storeCode = (string) ($storeSku?->sku ?? '');
+
+                        $result = $this->stockRehome->rehomeFbaStockToStoreForMerchantConversion(
+                            $sku->fresh(['offer']),
+                            $previousChannelId
+                        );
+                        $moved = (float) ($result['moved'] ?? 0);
+                        $storeCode = (string) ($result['store_sku_code'] ?: $storeCode);
+
+                        $stockRehomeMeta = [
+                            'moved' => $moved,
+                            'from_channel_id' => $previousChannelId,
+                            'to_store_sku_id' => $storeSkuId,
+                            'to_store_sku' => $storeCode,
+                            'message' => 'هذا المنتج به مخزون FBA ('.(int) $moved.' قطعة). تم نقل المخزون تلقائياً إلى المحل على الـ SKU المربوط: '.$storeCode,
+                            'message_en' => 'This listing had FBA stock ('.(int) $moved.' pcs). Stock was auto-transferred to the linked store SKU: '.$storeCode,
+                        ];
+                    }
+                }
+
+                $sku->update($validated);
+
+                // When a channel SKU gets linked to an offer (offer_id becomes non-null),
+                // ensure the MAIN STORE has a SKU for the same offer so marketplace merchant orders
+                // deduct from shop stock instead of creating negative balances on the channel SKU.
+                if ($previousOfferId === 0 && $nextOfferId > 0) {
+                    $this->ensureMainStoreSkuForOfferAndRehomeStoreInventory($sku->fresh(['offer']));
+                }
+            });
+        } catch (ValidationException $e) {
+            throw $e;
+        }
+
+        $payload = $sku->fresh()->load(['offer', 'channel'])->toArray();
+        if (is_array($stockRehomeMeta)) {
+            $payload['stock_rehome'] = $stockRehomeMeta;
+            $payload['message'] = $stockRehomeMeta['message'];
+        }
+
+        return response()->json($payload);
     }
 
     private function ensureMainStoreSkuForOfferAndRehomeStoreInventory(Sku $linkedChannelSku): void

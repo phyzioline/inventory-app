@@ -85,6 +85,40 @@ class ChannelStockResolver
             || str_contains($slug, 'fbm');
     }
 
+    public static function isFbaChannel(?int $channelId): bool
+    {
+        if ($channelId === null || $channelId <= 0) {
+            return false;
+        }
+        $channel = Channel::query()->find($channelId);
+        if (! $channel) {
+            return false;
+        }
+
+        return self::isFbaChannelModel($channel);
+    }
+
+    public static function isFbaChannelModel(Channel $channel): bool
+    {
+        $explicitType = strtolower(trim((string) ($channel->type ?? '')));
+        if ($explicitType !== '') {
+            if (str_contains($explicitType, 'fba') || $explicitType === 'afn') {
+                return true;
+            }
+        }
+        $name = strtolower((string) ($channel->name ?? ''));
+        $slug = strtolower((string) ($channel->slug ?? ''));
+
+        // Avoid matching "التاجر" / merchant when checking FBA.
+        if (self::isMerchantChannelModel($channel)) {
+            return false;
+        }
+
+        return str_contains($name, 'fba')
+            || str_contains($slug, 'fba')
+            || (bool) preg_match('/\bfba\b|\bafn\b/', $name.' '.$slug);
+    }
+
     /**
      * @param  list<int>  $channelIds
      * @return array<int, true>
@@ -751,6 +785,7 @@ class ChannelStockResolver
 
     /**
      * Move mistaken merchant-bucket stock (e.g. old return restocks) into the main store SKU.
+     * Writes TRANSFER + IN ledger rows so الترحيلات / تتبع الحركة stay accurate.
      *
      * @return float Quantity moved
      */
@@ -760,48 +795,10 @@ class ChannelStockResolver
             return 0.0;
         }
 
-        $storeChannelId = self::resolveMainStoreChannelId();
-        $storeSkuId = self::resolveStoreSkuIdForListingSku($listingSku);
-        if ($storeSkuId <= 0 || $storeChannelId <= 0) {
-            return 0.0;
-        }
+        $result = app(StockRehomeTransferService::class)
+            ->reconcilePhantomMerchantStockWithLedger($listingSku, $merchantChannelId);
 
-        $merchantLocationIds = self::resolveLocationIdsForChannel($merchantChannelId);
-        if ($merchantLocationIds === []) {
-            return 0.0;
-        }
-
-        $storeLocationId = self::resolveDeductionLocationIdAtChannel((int) $storeSkuId, $storeChannelId, 1)
-            ?? self::resolveFirstLocationIdForChannel($storeChannelId);
-        if ($storeLocationId <= 0) {
-            return 0.0;
-        }
-
-        $moved = 0.0;
-        $rows = SkuInventory::query()
-            ->where('sku_id', (int) $listingSku->id)
-            ->whereIn('location_id', $merchantLocationIds)
-            ->where('quantity', '>', 0)
-            ->lockForUpdate()
-            ->get();
-
-        foreach ($rows as $row) {
-            $qty = (float) ($row->quantity ?? 0);
-            if ($qty <= 0) {
-                continue;
-            }
-
-            $row->decrement('quantity', $qty);
-
-            $storeRow = SkuInventory::query()->firstOrCreate(
-                ['sku_id' => (int) $storeSkuId, 'location_id' => $storeLocationId],
-                ['quantity' => 0, 'reserved' => 0]
-            );
-            $storeRow->increment('quantity', $qty);
-            $moved += $qty;
-        }
-
-        return $moved;
+        return (float) ($result['moved'] ?? 0.0);
     }
 
     /**
