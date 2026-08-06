@@ -249,7 +249,9 @@ class ProfitEngineService
     private function collectSkuMatchKeys(?string $skuCode, ?Sku $sku): array
     {
         $keys = [];
-        foreach ([$skuCode, $sku?->sku, $sku?->code] as $candidate) {
+        // Include marketplace_id so Noon payment-sheet SKUs match orders that stored partner_sku
+        // (or the reverse) when the catalog links both identifiers on the same Sku row.
+        foreach ([$skuCode, $sku?->sku, $sku?->marketplace_id, $sku?->code] as $candidate) {
             $k = $this->normalizeSkuKey($candidate);
             if ($k !== '') {
                 $keys[$k] = true;

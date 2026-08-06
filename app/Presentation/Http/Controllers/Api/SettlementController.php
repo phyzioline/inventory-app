@@ -33,9 +33,10 @@ class SettlementController extends Controller
      */
     public function index()
     {
+        // Newest uploads first so operators can see the last sheet raised on the system.
         $query = Settlement::with(['channel'])
-            ->orderBy('start_date', 'desc')
-            ->orderBy('id', 'desc');
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
 
         $channelIds = $this->parseChannelIdsFromRequest(request());
         if (! empty($channelIds)) {

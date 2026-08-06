@@ -1229,6 +1229,19 @@ class MarketplaceImportService
                 if ($existingItem) {
                     // Use the sku_id stored on the item (may differ from current resolved $sku->id after remapping).
                     $itemSkuId = (int) ($existingItem->sku_id ?? $sku->id);
+
+                    // Noon (and remaps): keep order-line sku_code aligned with the sheet identifier
+                    // used by payment/settlement matching (prefer marketplace `sku` over partner_sku).
+                    if (
+                        $externalSkuCode !== ''
+                        && trim((string) ($existingItem->sku_code ?? '')) !== $externalSkuCode
+                    ) {
+                        $existingItem->update($this->filterOrderItemColumns([
+                            'sku_code' => $externalSkuCode,
+                        ]));
+                        $anyNewItem = true;
+                    }
+
                     if ((int) $existingItem->quantity === $lineQty && (float) $existingItem->unit_price === $lineUnit) {
                         // Backfill: if this line exists but stock was never deducted (historical bug / prior imports),
                         // deduct once for this order+SKU when eligible.
@@ -1994,10 +2007,11 @@ class MarketplaceImportService
                     'fulfillment channel',
                     'نوع التنفيذ',
                 ]),
-                'sku_hint' => $this->pick($row, ['partner_sku', 'partner sku', 'sku', 'msku', 'رقم تخزين سلعة التاجر msku']),
+                // Prefer Noon marketplace `sku` (matches settlement/payment sheets) over seller `partner_sku`.
+                'sku_hint' => $this->pick($row, ['sku', 'partner_sku', 'partner sku', 'msku', 'رقم تخزين سلعة التاجر msku']),
                 'items' => [
                     [
-                        'sku_code' => $this->pick($row, ['partner_sku', 'partner sku', 'sku', 'msku', 'رقم تخزين سلعة التاجر msku']) ?? 'UNKNOWN',
+                        'sku_code' => $this->pick($row, ['sku', 'partner_sku', 'partner sku', 'msku', 'رقم تخزين سلعة التاجر msku']) ?? 'UNKNOWN',
                         'quantity' => $isCancelled ? 0 : 1,
                         'unit_price' => $isCancelled ? 0.0 : $unitPrice,
                     ],

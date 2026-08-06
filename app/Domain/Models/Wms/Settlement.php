@@ -42,6 +42,8 @@ class Settlement extends Model
 
     public function items(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
-        return $this->hasMany(\App\Domain\Models\Wms\SettlementItem::class);
+        return $this->hasMany(\App\Domain\Models\Wms\SettlementItem::class)
+            ->orderByDesc('transaction_date')
+            ->orderByDesc('id');
     }
 }
