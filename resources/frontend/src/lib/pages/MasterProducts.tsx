@@ -462,22 +462,34 @@ const MasterProducts = () => {
         if (!skuId) return;
         const skuCode = String(sku?.sku || sku?.sku_code || "").trim() || skuId;
         const confirmed = confirm(
-            `حذف SKU «${skuCode}»؟\n\nسيتم حذف العرض الفرعي (SKU) والمخزون المرتبط به. المنتج الأساسي لن يُحذف.`
+            `حذف SKU «${skuCode}»؟\n\nإذا كان عليه مخزون فسيتم نقله تلقائياً إلى SKU المحل المربوط قبل الحذف. المنتج الأساسي لن يُحذف.`
         );
         if (!confirmed) return;
 
         try {
-            await skuService.delete(skuId);
-            toast({
-                title: "تم حذف الـ SKU",
-                description: `تم حذف ${skuCode} بنجاح.`,
-            });
+            const result: any = await skuService.delete(skuId);
+            const rehome = result?.stock_rehome;
+            if (rehome?.moved > 0) {
+                toast({
+                    title: "تم الحذف مع نقل المخزون",
+                    description: rehome.message || `تم نقل ${rehome.moved} قطعة إلى المحل (${rehome.to_store_sku || ''}) ثم حذف ${skuCode}.`,
+                });
+            } else {
+                toast({
+                    title: "تم حذف الـ SKU",
+                    description: `تم حذف ${skuCode} بنجاح.`,
+                });
+            }
             invalidateMasterProductPageData();
         } catch (error: any) {
+            const data = error?.response?.data;
+            const msg = data?.errors
+                ? Object.values(data.errors).flat().join(' | ')
+                : (data?.message || error?.message || "تعذر حذف الـ SKU");
             toast({
                 variant: "destructive",
                 title: "فشل حذف الـ SKU",
-                description: error?.response?.data?.message || error?.message || "تعذر حذف الـ SKU",
+                description: msg,
             });
         }
     };

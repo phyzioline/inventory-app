@@ -679,15 +679,30 @@ class SkuController extends Controller
 
     public function destroy(string $id)
     {
-        $sku = Sku::findOrFail($id);
+        $sku = Sku::with('offer')->findOrFail($id);
+        $stockRehomeMeta = null;
 
         try {
-            DB::transaction(function () use ($sku) {
+            DB::transaction(function () use ($sku, &$stockRehomeMeta) {
+                $result = $this->stockRehome->rehomeAllPositiveStockToStoreBeforeDelete($sku);
+                $moved = (float) ($result['moved'] ?? 0);
+                if ($moved > 0) {
+                    $storeCode = (string) ($result['store_sku_code'] ?? '');
+                    $stockRehomeMeta = [
+                        'moved' => $moved,
+                        'to_store_sku' => $storeCode,
+                        'message' => 'هذا العرض به مخزون ('.(int) $moved.' قطعة). تم نقل المخزون تلقائياً إلى المحل على الـ SKU المربوط: '.$storeCode.' ثم حُذف العرض.',
+                        'message_en' => 'This listing had stock ('.(int) $moved.' pcs). Stock was auto-transferred to the linked store SKU: '.$storeCode.' then the listing was deleted.',
+                    ];
+                }
+
                 InventoryAdjustment::query()->where('sku_id', $sku->id)->delete();
                 QuotationItem::query()->where('sku_id', $sku->id)->delete();
                 $sku->inventory()->delete();
                 $sku->delete();
             });
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             report($e);
 
@@ -696,6 +711,14 @@ class SkuController extends Controller
             ], 422);
         }
 
-        return response()->json(null, 204);
+        if (is_array($stockRehomeMeta)) {
+            return response()->json([
+                'deleted' => true,
+                'stock_rehome' => $stockRehomeMeta,
+                'message' => $stockRehomeMeta['message'],
+            ]);
+        }
+
+        return response()->json(['deleted' => true], 200);
     }
 }

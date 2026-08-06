@@ -385,17 +385,26 @@ export default function ChannelDetail() {
       const ids = Array.from(selectedSkus);
       const results = await Promise.allSettled(ids.map((id: string) => api.delete(`/skus/${id}`)));
       const failed = results.filter((r) => r.status === 'rejected').length;
-      return { ok: ids.length - failed, failed, total: ids.length };
+      const rehomed = results
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map((r) => r.value?.stock_rehome)
+        .filter((meta) => meta && Number(meta.moved) > 0);
+      const movedTotal = rehomed.reduce((sum, meta) => sum + Number(meta.moved || 0), 0);
+      return { ok: ids.length - failed, failed, total: ids.length, movedTotal, rehomedCount: rehomed.length };
     },
-    onSuccess: ({ ok, failed, total }) => {
+    onSuccess: ({ ok, failed, total, movedTotal, rehomedCount }) => {
       queryClient.invalidateQueries({ queryKey: ['channel-skus', channel?.id] });
       queryClient.invalidateQueries({ queryKey: ['channel-sku-summary', channel?.id] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-transactions'] });
       broadcastInventoryCatalogUpdated('channel-skus');
       setSelectedSkus(new Set());
       if (failed === 0) {
-        toast({ title: 'تم', description: 'تم حذف المنتجات المحددة' });
+        const extra = movedTotal > 0
+          ? ` — نُقل ${movedTotal} قطعة إلى المحل من ${rehomedCount} عرض`
+          : '';
+        toast({ title: 'تم', description: `تم حذف المنتجات المحددة${extra}` });
       } else if (ok === 0) {
-        toast({ title: 'خطأ', description: 'تعذر حذف المنتجات المحددة', variant: 'destructive' });
+        toast({ title: 'خطأ', description: 'تعذر حذف المنتجات المحددة (تحقق من الربط بالمحل إن كان عليها مخزون)', variant: 'destructive' });
       } else {
         toast({
           title: 'تم جزئياً',

@@ -79,7 +79,6 @@ const navItems: NavItem[] = [
       { key: 'nav.purchaseOrders', path: '/purchases' },
       { key: 'nav.purchaseReturns', path: '/purchases/returns' },
       { key: 'nav.smartImport', path: '/purchases/smart-import' },
-      { key: 'nav.sulfa', path: '/finance/sulfa' },
     ],
   },
 
@@ -118,6 +117,7 @@ const navItems: NavItem[] = [
       { key: 'nav.reconciliationHub', path: '/reconciliation' },
       { key: 'nav.bankAccounts', path: '/finance/bank-accounts' },
       { key: 'nav.capitalManagement', path: '/finance/capital' },
+      { key: 'nav.sulfa', path: '/finance/sulfa' },
       { key: 'nav.receipts', path: '/finance/receipts' },
       { key: 'nav.payments', path: '/finance/payments' },
       { key: 'nav.expenses', path: '/expenses' },

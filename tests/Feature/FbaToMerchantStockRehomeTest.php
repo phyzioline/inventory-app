@@ -243,4 +243,69 @@ describe('FBA to Merchant stock rehome + phantom merchant ledger', function () {
                 ->exists()
         )->toBeTrue();
     });
+
+    it('auto-transfers stock to store SKU before deleting a listing with balance', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+        $fx = seedFbaMerchantStoreFixture($user);
+
+        SkuInventory::query()->create([
+            'sku_id' => $fx['fbaSku']->id,
+            'location_id' => $fx['fbaLoc']->id,
+            'quantity' => 5,
+            'reserved' => 0,
+            'user_id' => $user->id,
+        ]);
+
+        $response = $this->deleteJson('/api/inventory/skus/'.$fx['fbaSku']->id);
+
+        $response->assertOk();
+        expect((float) ($response->json('stock_rehome.moved') ?? 0))->toBe(5.0)
+            ->and($response->json('stock_rehome.to_store_sku'))->toBe($fx['storeSku']->sku);
+
+        expect(Sku::query()->find($fx['fbaSku']->id))->toBeNull();
+
+        $storeQty = (float) SkuInventory::query()
+            ->where('sku_id', $fx['storeSku']->id)
+            ->where('location_id', $fx['storeLoc']->id)
+            ->value('quantity');
+        expect($storeQty)->toBe(5.0);
+
+        expect(
+            InventoryTransaction::query()
+                ->where('sku_id', $fx['fbaSku']->id)
+                ->where('type', 'TRANSFER')
+                ->where('quantity', 5)
+                ->where('reference_type', 'like', 'transfer_out:delete-rehome:%')
+                ->exists()
+        )->toBeTrue();
+    });
+
+    it('blocks deleting a listing with stock when it is not linked to a store SKU', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+        $fx = seedFbaMerchantStoreFixture($user);
+
+        $fx['fbaSku']->update(['offer_id' => null]);
+
+        SkuInventory::query()->create([
+            'sku_id' => $fx['fbaSku']->id,
+            'location_id' => $fx['fbaLoc']->id,
+            'quantity' => 2,
+            'reserved' => 0,
+            'user_id' => $user->id,
+        ]);
+
+        $response = $this->deleteJson('/api/inventory/skus/'.$fx['fbaSku']->id);
+
+        $response->assertStatus(422);
+        $blob = (string) ($response->json('message') ?? '').' '.json_encode($response->json('errors') ?? [], JSON_UNESCAPED_UNICODE);
+        expect($blob)->toContain('مخزون');
+
+        expect(Sku::query()->find($fx['fbaSku']->id))->not->toBeNull();
+        expect((float) SkuInventory::query()
+            ->where('sku_id', $fx['fbaSku']->id)
+            ->where('location_id', $fx['fbaLoc']->id)
+            ->value('quantity'))->toBe(2.0);
+    });
 });

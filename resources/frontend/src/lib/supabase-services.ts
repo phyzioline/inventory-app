@@ -508,7 +508,7 @@ export const skuService = {
     },
 
     async delete(id: string) {
-        await api.delete(`skus/${id}`);
+        return await api.delete(`skus/${id}`);
     }
 };
 
@@ -549,7 +549,7 @@ export const asinService = {
         return await api.put(`skus/${id}`, data);
     },
     async delete(id: string) {
-        await api.delete(`skus/${id}`);
+        return await api.delete(`skus/${id}`);
     },
     async getPriceHistory(id: string) {
         return []; // To be implemented later

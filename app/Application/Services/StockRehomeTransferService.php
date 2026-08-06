@@ -8,6 +8,7 @@ use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
 use App\Infrastructure\Support\StockUpdateBroadcaster;
 use Illuminate\Database\QueryException;
+use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 /**
@@ -266,6 +267,114 @@ class StockRehomeTransferService
             'Reconcile phantom merchant stock → المحل',
             'phantom-merchant',
         );
+    }
+
+    /**
+     * Before deleting a channel listing SKU: move every positive inventory row to the linked store SKU.
+     * Must run inside a DB transaction.
+     *
+     * @return array{moved: float, store_sku_code: string|null, transfers: list<array<string, mixed>>}
+     */
+    public function rehomeAllPositiveStockToStoreBeforeDelete(Sku $sku): array
+    {
+        $empty = ['moved' => 0.0, 'transfers' => [], 'store_sku_code' => null];
+        if ((int) $sku->id <= 0) {
+            return $empty;
+        }
+
+        $rows = SkuInventory::query()
+            ->where('sku_id', (int) $sku->id)
+            ->where('quantity', '>', 0)
+            ->lockForUpdate()
+            ->get();
+
+        $totalQty = 0.0;
+        foreach ($rows as $row) {
+            $totalQty += max(0.0, (float) ($row->quantity ?? 0));
+        }
+        if ($totalQty <= 0) {
+            return $empty;
+        }
+
+        $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
+        $skuChannelId = (int) ($sku->channel_id ?? 0);
+        $isStoreListing = $storeChannelId > 0 && $skuChannelId === $storeChannelId;
+
+        if ($isStoreListing) {
+            throw ValidationException::withMessages([
+                'sku' => [
+                    'لا يمكن حذف SKU المحل وفيه مخزون ('.(int) $totalQty.' قطعة). انقل أو صفّر المخزون أولاً.',
+                ],
+            ]);
+        }
+
+        $sku->loadMissing('offer');
+        $storeSkuId = ChannelStockResolver::resolveStoreSkuIdForListingSku($sku);
+        if ($storeSkuId === null || $storeSkuId <= 0 || (int) $storeSkuId === (int) $sku->id) {
+            throw ValidationException::withMessages([
+                'sku' => [
+                    'هذا العرض به مخزون ('.(int) $totalQty.' قطعة). اربط العرض بـ SKU المحل أولاً حتى يتم نقل المخزون تلقائياً إلى المحل قبل الحذف.',
+                ],
+            ]);
+        }
+
+        $storeSku = Sku::query()->find($storeSkuId);
+        if (! $storeSku) {
+            throw ValidationException::withMessages([
+                'sku' => [
+                    'هذا العرض به مخزون ('.(int) $totalQty.' قطعة) ولا يوجد SKU محل مربوط صالح.',
+                ],
+            ]);
+        }
+
+        $storeLocationId = ChannelStockResolver::resolveDeductionLocationIdAtChannel((int) $storeSkuId, $storeChannelId, 1)
+            ?? ChannelStockResolver::resolveFirstLocationIdForChannel($storeChannelId);
+        if ($storeLocationId === null || $storeLocationId <= 0) {
+            throw ValidationException::withMessages([
+                'sku' => [
+                    'تعذر تحديد موقع المحل لنقل المخزون قبل الحذف.',
+                ],
+            ]);
+        }
+
+        $moved = 0.0;
+        $transfers = [];
+        $index = 0;
+
+        foreach ($rows as $row) {
+            $qty = (int) round((float) ($row->quantity ?? 0));
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $clientId = sprintf(
+                'delete-rehome:%d:%d:%d:%d',
+                (int) $sku->id,
+                (int) $row->location_id,
+                (int) $storeSkuId,
+                $index
+            );
+            $index++;
+
+            $result = $this->transferWithLedger(
+                $sku,
+                (int) $row->location_id,
+                $storeSku,
+                (int) $storeLocationId,
+                $qty,
+                'Auto-rehome stock → المحل before deleting listing SKU',
+                $clientId,
+            );
+
+            $moved += (float) $result['moved'];
+            $transfers[] = $result;
+        }
+
+        return [
+            'moved' => $moved,
+            'transfers' => $transfers,
+            'store_sku_code' => (string) ($storeSku->sku ?? ''),
+        ];
     }
 
     private function ensureTransactionOwner(InventoryTransaction $tx, int $ownerUserId): void
