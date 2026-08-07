@@ -14,6 +14,7 @@
         "php": "^8.2",
         "laravel/framework": "^12.61",
         "laravel/reverb": "^1.10",
+        "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.9",
         "phpoffice/phpspreadsheet": "^1.30",
         "picqer/php-barcode-generator": "^3.2",

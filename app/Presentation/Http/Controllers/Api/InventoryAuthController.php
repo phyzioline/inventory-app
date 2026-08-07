@@ -37,10 +37,20 @@ class InventoryAuthController extends Controller
         /** @var User $user */
         $user = Auth::user();
 
-        return response()->json([
+        $payload = [
             'success' => true,
             'user' => $this->userPayload($user),
-        ]);
+        ];
+
+        // Desktop (Tauri) client: also mint a portable Sanctum token so the
+        // app can authenticate a background sync while offline, without the
+        // session cookie the web SPA relies on. Web logins are unaffected.
+        if ($request->header('X-Client') === 'tauri') {
+            $deviceId = (string) $request->string('device_id', 'unknown-device');
+            $payload['token'] = $user->createToken('desktop:'.$deviceId)->plainTextToken;
+        }
+
+        return response()->json($payload);
     }
 
     public function logout(Request $request): JsonResponse

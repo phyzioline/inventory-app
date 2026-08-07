@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getDeviceId, isDesktop } from '@/lib/desktopSync';
 
 // Create axios instance with default config
 export const apiClient = axios.create({
@@ -106,7 +107,15 @@ export const api = {
 
     // Auth specific methods
     login: async (credentials: any) => {
-        const response = await apiClient.post('/auth/login', credentials);
+        // Desktop shell: ask the backend to also mint a Sanctum token (see
+        // InventoryAuthController::login) so the Tauri app can sync while offline.
+        const response = isDesktop()
+            ? await apiClient.post(
+                '/auth/login',
+                { ...credentials, device_id: getDeviceId() },
+                { headers: { 'X-Client': 'tauri' } },
+            )
+            : await apiClient.post('/auth/login', credentials);
         return response.data;
     },
 

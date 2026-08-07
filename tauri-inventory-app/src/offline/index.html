@@ -162,9 +162,9 @@
 
   function retryConnection() {
     // Try to reach the server; if successful, navigate back to the live app
-    fetch('https://phyzioline.com/api/health', { method: 'HEAD', cache: 'no-store' })
+    fetch('https://inventory.phyzioline.com/api/inventory/auth/me', { method: 'HEAD', cache: 'no-store' })
       .then(function () {
-        window.location.href = 'https://phyzioline.com/erp';
+        window.location.href = 'https://inventory.phyzioline.com/app/index.html#/login';
       })
       .catch(function () {
         var btn = document.querySelector('.btn-primary');
@@ -175,8 +175,8 @@
 
   // Auto-retry every 15 seconds
   setInterval(function () {
-    fetch('https://phyzioline.com/api/health', { method: 'HEAD', cache: 'no-store' })
-      .then(function () { window.location.href = 'https://phyzioline.com/erp'; })
+    fetch('https://inventory.phyzioline.com/api/inventory/auth/me', { method: 'HEAD', cache: 'no-store' })
+      .then(function () { window.location.href = 'https://inventory.phyzioline.com/app/index.html#/login'; })
       .catch(function () {});
   }, 15000);
 </script>

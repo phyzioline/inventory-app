@@ -1,0 +1,68 @@
+name: Tauri Desktop Release
+
+# Builds the Phyzioline Inventory desktop app (Windows + macOS) and
+# publishes the installers as GitHub Release assets. Triggered by pushing
+# a tag like `desktop-v1.0.1`. Icons are generated here at build time from
+# the committed Phyzioline logo (see tauri-inventory-app/src-tauri/icons/README.md)
+# since no icon binaries are committed to the repo.
+#
+# Requires repo secrets:
+#   TAURI_SIGNING_PRIVATE_KEY          — updater private key (see icons/README.md sibling doc)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD — password for that key
+# After a release, set INVENTORY_DOWNLOAD_WINDOWS / INVENTORY_DOWNLOAD_MACOS
+# (and INVENTORY_SIG_WINDOWS / INVENTORY_SIG_MACOS / INVENTORY_APP_VERSION)
+# in production .env to the published asset URLs — config/inventory_downloads.php
+# and TauriDesktopUpdateService already read them, no code change needed.
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'macos-latest'
+            args: '--target universal-apple-darwin'
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tauri-inventory-app/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install frontend deps
+        working-directory: tauri-inventory-app
+        run: npm ci
+
+      - name: Generate app icons from the Phyzioline logo
+        working-directory: tauri-inventory-app
+        run: npx tauri icon ../public/web/assets/images/phyzioline-logo.png
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: tauri-inventory-app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Phyzioline Inventory ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

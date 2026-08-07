@@ -25,12 +25,15 @@ return Application::configure(basePath: dirname(__DIR__))
         );
 
         // Every POST/PUT/PATCH/DELETE from the Inventory SPA goes through the
-        // `web` group and must carry a CSRF token. The one exception is Paymob's
+        // `web` group and must carry a CSRF token. The exceptions are Paymob's
         // server-to-server payment webhook (App\Presentation\Http\Controllers\
         // Api\PaymobWebhookController), which is verified by HMAC instead — see
-        // routes/web.php.
+        // routes/web.php — and the Tauri desktop sync endpoints, which
+        // authenticate with a Sanctum bearer token (no session cookie, so no
+        // CSRF token to send) — see InventoryDesktopSyncController.
         $middleware->validateCsrfTokens(except: [
             'webhooks/paymob',
+            'api/v1/inventory/desktop/sync/*',
         ]);
 
         $middleware->alias([

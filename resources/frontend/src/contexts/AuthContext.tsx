@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import api from '@/lib/api';
+import { clearDesktopToken, isDesktop, storeDesktopToken } from '@/lib/desktopSync';
 
 export interface User {
     id: number;
@@ -74,6 +75,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             await api.initializeCsrf();
             const payload = await api.login({ email, password });
+            if (isDesktop() && payload?.token) {
+                await storeDesktopToken(payload.token);
+            }
             setUser(unwrapUser(payload));
             window.location.hash = '#/';
             window.location.reload();
@@ -104,6 +108,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const signOut = async () => {
         try {
             await api.logout();
+            if (isDesktop()) {
+                await clearDesktopToken();
+            }
             setUser(null);
             window.location.reload();
         } catch (error) {

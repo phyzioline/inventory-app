@@ -293,3 +293,13 @@ Route::prefix('api/v1/inventory/desktop')->group(function (): void {
     Route::get('version', [\App\Presentation\Http\Controllers\Api\InventoryDesktopUpdateController::class, 'latest']);
     Route::get('update/{target}/{arch}/{current}', [\App\Presentation\Http\Controllers\Api\InventoryDesktopUpdateController::class, 'check']);
 });
+
+// Tauri offline sync — Sanctum bearer-token auth (see InventoryAuthController::login,
+// which mints a token for X-Client: tauri logins), not the session cookie the web
+// SPA uses. See App\Application\Services\DesktopSyncService for the offline v1 scope
+// (read-only catalog/stock snapshot + queued stock adjustments).
+Route::prefix('api/v1/inventory/desktop/sync')->middleware(['auth:sanctum'])->group(function (): void {
+    Route::get('bootstrap', [\App\Presentation\Http\Controllers\Api\InventoryDesktopSyncController::class, 'bootstrap']);
+    Route::get('delta', [\App\Presentation\Http\Controllers\Api\InventoryDesktopSyncController::class, 'delta']);
+    Route::post('push', [\App\Presentation\Http\Controllers\Api\InventoryDesktopSyncController::class, 'push']);
+});

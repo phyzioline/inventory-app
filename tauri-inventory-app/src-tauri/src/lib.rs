@@ -5,6 +5,9 @@ use tauri::{
 };
 use tauri_plugin_updater::UpdaterExt;
 
+mod db;
+mod sync;
+
 /// Expose app version to the webview via JavaScript
 #[tauri::command]
 fn get_app_version() -> String {
@@ -28,9 +31,22 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         // ── Commands ───────────────────────────────────────────────────────────
-        .invoke_handler(tauri::generate_handler![get_app_version, check_for_update])
+        .invoke_handler(tauri::generate_handler![
+            get_app_version,
+            check_for_update,
+            sync::store_desktop_token,
+            sync::clear_desktop_token,
+            sync::get_sync_status,
+            sync::list_cached_stock,
+            sync::record_offline_adjustment,
+            sync::sync_now,
+        ])
         // ── Setup ──────────────────────────────────────────────────────────────
         .setup(|app| {
+            // ── Offline sync state (local SQLite cache + outbox) ───────────────
+            let sync_state = sync::init_state(app.handle())?;
+            app.manage(sync_state);
+
             // ── System Tray ───────────────────────────────────────────────────
             let quit    = MenuItem::with_id(app, "quit",  "Quit Phyzioline Inventory", true, None::<&str>)?;
             let open    = MenuItem::with_id(app, "open",  "Open",            true, None::<&str>)?;

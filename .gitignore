@@ -3,6 +3,7 @@
 /public/hot
 /public/storage
 /public/app
+/public/downloads
 /storage/*.key
 /storage/pail
 /bootstrap/cache/*.php

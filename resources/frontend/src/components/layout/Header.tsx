@@ -20,6 +20,7 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
+import { DesktopSyncBadge } from './DesktopSyncBadge';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -78,6 +79,8 @@ export function Header({ onMenuClick }: HeaderProps) {
 
       {/* Right section */}
       <div className="flex items-center gap-2">
+        <DesktopSyncBadge />
+
         {/* Language & Theme */}
         <div className="flex items-center gap-1 sm:gap-2">
           {/* Language Switcher */}

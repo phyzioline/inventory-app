@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-record-offline-adjustment"
+description = "Enables the record_offline_adjustment command without any pre-configured scope."
+commands.allow = ["record_offline_adjustment"]
+
+[[permission]]
+identifier = "deny-record-offline-adjustment"
+description = "Denies the record_offline_adjustment command without any pre-configured scope."
+commands.deny = ["record_offline_adjustment"]

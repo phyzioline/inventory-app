@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-cached-stock"
+description = "Enables the list_cached_stock command without any pre-configured scope."
+commands.allow = ["list_cached_stock"]
+
+[[permission]]
+identifier = "deny-list-cached-stock"
+description = "Denies the list_cached_stock command without any pre-configured scope."
+commands.deny = ["list_cached_stock"]

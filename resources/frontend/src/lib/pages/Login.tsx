@@ -332,6 +332,12 @@ export default function Login() {
                                 {isSignUp ? t('auth.signIn') || 'Sign In' : t('auth.signUp') || 'Sign Up'}
                             </button>
                         </div>
+                        <Link
+                            to="/download"
+                            className="text-sm text-center text-primary hover:underline underline-offset-4"
+                        >
+                            حمّل تطبيق سطح المكتب أو ثبّته على جهازك
+                        </Link>
                     </CardFooter>
                 </Card>
             </motion.div>

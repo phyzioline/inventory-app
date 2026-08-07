@@ -1,0 +1,22 @@
+{
+  "identifier": "default",
+  "description": "Grants the main window (which loads the live production Inventory site) access to the app's own commands, since the content is remote rather than bundled locally.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://inventory.phyzioline.com/*"]
+  },
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "notification:default",
+    "updater:default",
+    "allow-get-app-version",
+    "allow-check-for-update",
+    "allow-store-desktop-token",
+    "allow-clear-desktop-token",
+    "allow-get-sync-status",
+    "allow-list-cached-stock",
+    "allow-record-offline-adjustment",
+    "allow-sync-now"
+  ]
+}
