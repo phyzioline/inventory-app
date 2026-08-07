@@ -390,7 +390,23 @@ export default function Reconciliation() {
     importMutation.mutate(selectedImportFile);
   };
 
-  const filtered = settlements;
+  /** Newest cycle period first — makes gaps in uploaded sheets easy to spot. */
+  const filtered = useMemo(() => {
+    const list = Array.isArray(settlements) ? [...settlements] : [];
+    const ts = (value: unknown) => {
+      if (!value) return 0;
+      const n = new Date(String(value)).getTime();
+      return Number.isFinite(n) ? n : 0;
+    };
+    list.sort((a: any, b: any) => {
+      const endDiff = ts(b.end_date) - ts(a.end_date);
+      if (endDiff !== 0) return endDiff;
+      const startDiff = ts(b.start_date) - ts(a.start_date);
+      if (startDiff !== 0) return startDiff;
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
+    return list;
+  }, [settlements]);
 
   const totals = useMemo(() => {
     const totalAmount = filtered.reduce((sum: number, s: any) => sum + toNumber(s.total_amount), 0);
