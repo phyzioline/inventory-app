@@ -11,7 +11,8 @@ use App\Domain\Models\Wms\SkuInventory;
 
 /**
  * Single place for "where does this channel's sales consume stock from?"
- * Merchant/MFN: deduct from merchant-channel stock first; if insufficient, fall back to main store (المحل).
+ * Merchant/MFN: deducts from main store (المحل) only — merchant-channel locations are virtual/phantom
+ * and never counted as available (see planMerchantOrderDeduction() and reconcilePhantomMerchantStockForListingSku()).
  */
 class ChannelStockResolver
 {
