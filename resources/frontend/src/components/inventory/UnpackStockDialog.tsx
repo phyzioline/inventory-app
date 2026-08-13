@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,11 @@ import api from '@/lib/api';
 import { offerService } from '@/lib/supabase-services';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import {
+    buildCompositionSkuLocationOptions,
+    pickCompositionDestOption,
+    pickCompositionSourceOption,
+} from '@/lib/compositionStockOptions';
 
 interface Props {
     open: boolean;
@@ -23,28 +28,6 @@ interface Props {
 function stockQtyBadgeClass(qty: number): string {
     if (qty > 0) return 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800';
     return 'bg-muted text-muted-foreground';
-}
-
-type SkuLocationOption = { value: string; label: string; qty: number; skuId: string; locationId: string };
-
-function buildSkuLocationOptions(offerDetail: any): SkuLocationOption[] {
-    const skus = Array.isArray(offerDetail?.skus) ? offerDetail.skus : [];
-    const rows: SkuLocationOption[] = [];
-    for (const sku of skus) {
-        const invRows = Array.isArray(sku.inventory) ? sku.inventory : [];
-        for (const inv of invRows) {
-            const locId = String(inv.location_id ?? inv.location?.id ?? '');
-            if (!locId) continue;
-            rows.push({
-                value: `${sku.id}:${locId}`,
-                label: `${sku.sku} (${sku.channel?.name || 'بدون قناة'}) @ ${inv.location?.name || ('#' + locId)}`,
-                qty: Number(inv.quantity || 0),
-                skuId: String(sku.id),
-                locationId: locId,
-            });
-        }
-    }
-    return rows.sort((a, b) => b.qty - a.qty);
 }
 
 /**
@@ -60,6 +43,7 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
     const [parentSelection, setParentSelection] = useState('');
     const [componentSelection, setComponentSelection] = useState('');
     const [quantity, setQuantity] = useState('1');
+    const destTouchedRef = useRef(false);
 
     const { data: componentsData, isLoading: loadingLinks } = useQuery({
         queryKey: ['offer-components', offer?.id],
@@ -93,10 +77,12 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
     useEffect(() => {
         if (!open) return;
         setActiveTab('unpack');
+        destTouchedRef.current = false;
+        setSelectedLinkId('');
         setParentSelection('');
         setComponentSelection('');
         setQuantity('1');
-    }, [open]);
+    }, [open, offer?.id]);
 
     useEffect(() => {
         if (!selectedLinkId && links.length > 0) {
@@ -118,16 +104,47 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
         enabled: open && !!activeLink?.componentOfferId,
     });
 
-    const parentOptions = useMemo(() => buildSkuLocationOptions(parentOfferDetail), [parentOfferDetail]);
-    const componentOptions = useMemo(() => buildSkuLocationOptions(componentOfferDetail), [componentOfferDetail]);
+    const parentOptions = useMemo(() => buildCompositionSkuLocationOptions(parentOfferDetail), [parentOfferDetail]);
+    const componentOptions = useMemo(() => buildCompositionSkuLocationOptions(componentOfferDetail), [componentOfferDetail]);
 
     useEffect(() => {
-        setParentSelection(parentOptions[0]?.value || '');
-    }, [parentOptions]);
+        destTouchedRef.current = false;
+        setParentSelection('');
+        setComponentSelection('');
+    }, [activeTab, selectedLinkId]);
 
     useEffect(() => {
-        setComponentSelection(componentOptions[0]?.value || '');
-    }, [componentOptions]);
+        if (!open || !activeLink) return;
+        if (activeTab === 'unpack') {
+            const src = parentSelection
+                ? parentOptions.find((o) => o.value === parentSelection) ?? null
+                : pickCompositionSourceOption(parentOptions);
+            if (!parentSelection && src) {
+                setParentSelection(src.value);
+                return;
+            }
+            if (!destTouchedRef.current && src) {
+                const dest = pickCompositionDestOption(componentOptions, src.locationId);
+                if (dest && dest.value !== componentSelection) {
+                    setComponentSelection(dest.value);
+                }
+            }
+            return;
+        }
+        const src = componentSelection
+            ? componentOptions.find((o) => o.value === componentSelection) ?? null
+            : pickCompositionSourceOption(componentOptions);
+        if (!componentSelection && src) {
+            setComponentSelection(src.value);
+            return;
+        }
+        if (!destTouchedRef.current && src) {
+            const dest = pickCompositionDestOption(parentOptions, src.locationId);
+            if (dest && dest.value !== parentSelection) {
+                setParentSelection(dest.value);
+            }
+        }
+    }, [open, activeTab, activeLink, parentOptions, componentOptions, parentSelection, componentSelection]);
 
     const parentPick = parentOptions.find((o) => o.value === parentSelection) || null;
     const componentPick = componentOptions.find((o) => o.value === componentSelection) || null;
@@ -159,6 +176,7 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
                 description: 'تم تحديث المخزون بنجاح.',
             });
             queryClient.invalidateQueries({ queryKey: ['master-products'] });
+            queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
             queryClient.invalidateQueries({ queryKey: ['offer-detail', activeLink?.parentOfferId] });
             queryClient.invalidateQueries({ queryKey: ['offer-detail', activeLink?.componentOfferId] });
             queryClient.invalidateQueries({ queryKey: ['offer-components', offer?.id] });
@@ -174,7 +192,20 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
 
     const isLoading = loadingLinks || loadingParent || loadingComponent;
     const sourcePick = activeTab === 'unpack' ? parentPick : componentPick;
+    const destPick = activeTab === 'unpack' ? componentPick : parentPick;
     const insufficient = !!sourcePick && qtyNum > sourcePick.qty;
+    const crossWarehouse = !!sourcePick && !!destPick && sourcePick.locationId !== destPick.locationId;
+
+    const setSourceSelection = (value: string) => {
+        destTouchedRef.current = false;
+        if (activeTab === 'unpack') setParentSelection(value);
+        else setComponentSelection(value);
+    };
+    const setDestSelection = (value: string) => {
+        destTouchedRef.current = true;
+        if (activeTab === 'unpack') setComponentSelection(value);
+        else setParentSelection(value);
+    };
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -203,7 +234,7 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
                             {activeTab === 'unpack'
                                 ? 'فك: بتاخد كمية من مخزون المنتج المجمّع (زي الكرتونة) وتحوّلها لقطع في مخزون المنتج المفرد المربوط بيه.'
                                 : 'تجميع: العكس — بتاخد قطع من مخزون المنتج المفرد وتجمّعها لتكوين وحدات من المنتج المجمّع (زي تكوين كراتين من قطع فضلت).'}
-                            {' '}العملية فورية ومباشرة على المخزون الفعلي، والكمية والموقع اللي تختارهم هما اللي هيتأثروا.
+                            {' '}الافتراضي نفس المخزن على المصدر والوجهة (مثلاً المحل → المحل).
                         </div>
 
                         {links.length > 1 && (
@@ -238,7 +269,7 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
                                     <Label>{activeTab === 'unpack' ? `المصدر (${activeLink.parentOfferName})` : `المصدر (${activeLink.componentOfferName})`}</Label>
                                     <Select
                                         value={activeTab === 'unpack' ? parentSelection : componentSelection}
-                                        onValueChange={activeTab === 'unpack' ? setParentSelection : setComponentSelection}
+                                        onValueChange={setSourceSelection}
                                     >
                                         <SelectTrigger><SelectValue placeholder="اختر SKU وموقع" /></SelectTrigger>
                                         <SelectContent>
@@ -258,7 +289,7 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
                                     <Label>{activeTab === 'unpack' ? `الوجهة (${activeLink.componentOfferName})` : `الوجهة (${activeLink.parentOfferName})`}</Label>
                                     <Select
                                         value={activeTab === 'unpack' ? componentSelection : parentSelection}
-                                        onValueChange={activeTab === 'unpack' ? setComponentSelection : setParentSelection}
+                                        onValueChange={setDestSelection}
                                     >
                                         <SelectTrigger><SelectValue placeholder="اختر SKU وموقع" /></SelectTrigger>
                                         <SelectContent>
@@ -285,13 +316,23 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
                                     )}
                                 </div>
 
-                                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                                <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
                                     {preview.valid ? (
                                         <span>→ ينتج <b>{preview.resultQty}</b> × {preview.resultLabel}</span>
                                     ) : (
                                         <span className="text-muted-foreground">أدخل كمية صالحة لمعاينة الناتج.</span>
                                     )}
+                                    {sourcePick && destPick && (
+                                        <p className="text-xs text-muted-foreground">
+                                            من <b>{sourcePick.locationName}</b> → إلى <b>{destPick.locationName}</b>
+                                        </p>
+                                    )}
                                 </div>
+                                {crossWarehouse && (
+                                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                                        تحذير: المصدر والوجهة مخازن مختلفة. الكمية هتتنقل بين المخزنين دول مش على نفس مكان العرض.
+                                    </p>
+                                )}
                             </>
                         ) : null}
                     </div>
