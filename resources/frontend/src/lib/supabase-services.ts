@@ -489,7 +489,49 @@ export const offerService = {
 
     async delete(id: string) {
         await api.delete(`inventory-offers/${id}`);
-    }
+    },
+
+    async getComponents(offerId: string) {
+        return await api.get(`inventory-offers/${offerId}/components`);
+    },
+
+    async attachComponent(offerId: string, payload: { component_offer_id: string; quantity_per: number; notes?: string }) {
+        return await api.post(`inventory-offers/${offerId}/components`, payload);
+    },
+
+    async updateComponent(compositionId: string, payload: { quantity_per: number; notes?: string }) {
+        return await api.put(`product-compositions/${compositionId}`, payload);
+    },
+
+    async detachComponent(compositionId: string) {
+        await api.delete(`product-compositions/${compositionId}`);
+    },
+
+    async unpack(parentOfferId: string, payload: {
+        component_offer_id: string;
+        parent_sku_id: string;
+        parent_location_id: string;
+        component_sku_id: string;
+        component_location_id: string;
+        quantity: number;
+        notes?: string;
+        client_operation_id?: string;
+    }) {
+        return await api.post(`inventory-offers/${parentOfferId}/unpack`, payload);
+    },
+
+    async pack(parentOfferId: string, payload: {
+        component_offer_id: string;
+        parent_sku_id: string;
+        parent_location_id: string;
+        component_sku_id: string;
+        component_location_id: string;
+        quantity: number;
+        notes?: string;
+        client_operation_id?: string;
+    }) {
+        return await api.post(`inventory-offers/${parentOfferId}/pack`, payload);
+    },
 };
 
 // ========== SKU SERVICE (Channel Specifics) ==========

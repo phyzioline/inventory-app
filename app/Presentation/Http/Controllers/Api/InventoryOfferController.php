@@ -25,7 +25,6 @@ class InventoryOfferController extends Controller
             'master_product_id' => 'required|exists:master_products,id',
             'name' => 'required|string',
             'type' => 'required|string', // single, bundle
-            'components' => 'nullable|array', // if bundle, list of other products/offers
             'description' => 'nullable|string',
         ]);
 
@@ -36,7 +35,9 @@ class InventoryOfferController extends Controller
 
     public function show(string $id)
     {
-        return response()->json(InventoryOffer::with(['masterProduct', 'skus'])->findOrFail($id));
+        return response()->json(
+            InventoryOffer::with(['masterProduct', 'skus.channel', 'skus.inventory.location'])->findOrFail($id)
+        );
     }
 
     public function update(Request $request, string $id)
@@ -47,7 +48,6 @@ class InventoryOfferController extends Controller
             'master_product_id' => 'sometimes|exists:master_products,id',
             'name' => 'sometimes|string|max:255',
             'type' => 'sometimes|string|max:50',
-            'components' => 'nullable|array',
         ]);
 
         $offer->update($validated);

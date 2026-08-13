@@ -21,6 +21,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import AddSKUDialog from "@/components/inventory/AddSKUDialog";
+import LinkComponentDialog from "@/components/inventory/LinkComponentDialog";
+import UnpackStockDialog from "@/components/inventory/UnpackStockDialog";
+import CompositionBadgeList from "@/components/inventory/CompositionBadgeList";
 
 export default function MasterProductDetail() {
     const { id } = useParams();
@@ -30,6 +33,8 @@ export default function MasterProductDetail() {
     const [isOfferDialogOpen, setIsOfferDialogOpen] = useState(false);
     const [isSkuDialogOpen, setIsSkuDialogOpen] = useState(false);
     const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
+    const [linkComponentOffer, setLinkComponentOffer] = useState<{ id: string; name: string } | null>(null);
+    const [unpackOffer, setUnpackOffer] = useState<{ id: string; name: string } | null>(null);
 
     // Initial state for forms
     const [offerForm, setOfferForm] = useState({ name: "", type: "single", description: "" });
@@ -214,22 +219,40 @@ export default function MasterProductDetail() {
                                                     <ShoppingBag className="h-5 w-5 text-blue-500" />
                                                     {offer.name}
                                                 </CardTitle>
-                                                <div className="text-sm text-muted-foreground mt-1 flex gap-2">
+                                                <div className="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
                                                     <Badge variant="secondary">{offer.type}</Badge>
-                                                    {offer.components && <Badge variant="outline">Has Components</Badge>}
+                                                    <CompositionBadgeList offer={{ id: offer.id, name: offer.name }} />
                                                 </div>
                                             </div>
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setSelectedOfferId(offer.id);
-                                                    setIsSkuDialogOpen(true);
-                                                }}
-                                            >
-                                                <Plus className="mr-2 h-3 w-3" />
-                                                Add SKU
-                                            </Button>
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    title="اربط هذا العرض بمنتج تاني (زي كرتونة فيها عدة قطع من منتج مفرد) عشان تقدر تحوّل المخزون بينهم لاحقاً"
+                                                    onClick={() => setLinkComponentOffer({ id: offer.id, name: offer.name })}
+                                                >
+                                                    ربط مكوّن
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    title="حوّل المخزون يدوياً بين هذا العرض والمنتج المربوط به (فك كرتونة لقطع، أو تجميع قطع لكرتونة)"
+                                                    onClick={() => setUnpackOffer({ id: offer.id, name: offer.name })}
+                                                >
+                                                    فك/تجميع
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        setSelectedOfferId(offer.id);
+                                                        setIsSkuDialogOpen(true);
+                                                    }}
+                                                >
+                                                    <Plus className="mr-2 h-3 w-3" />
+                                                    Add SKU
+                                                </Button>
+                                            </div>
                                         </div>
                                     </CardHeader>
                                     <CardContent className="mt-4">
@@ -302,6 +325,18 @@ export default function MasterProductDetail() {
                 open={isSkuDialogOpen}
                 onOpenChange={setIsSkuDialogOpen}
                 offerId={selectedOfferId || undefined}
+            />
+
+            <LinkComponentDialog
+                open={!!linkComponentOffer}
+                onOpenChange={(open) => { if (!open) setLinkComponentOffer(null); }}
+                parentOffer={linkComponentOffer}
+            />
+
+            <UnpackStockDialog
+                open={!!unpackOffer}
+                onOpenChange={(open) => { if (!open) setUnpackOffer(null); }}
+                offer={unpackOffer}
             />
         </div>
     );

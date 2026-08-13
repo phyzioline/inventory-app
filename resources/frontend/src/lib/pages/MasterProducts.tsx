@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, Package, Upload, Search, ChevronRight, ChevronDown, ExternalLink, Tag, Image as ImageIcon, AlertCircle, RefreshCw, ChevronLeft, X, Warehouse, Info, ArrowDownWideNarrow, ArrowUpWideNarrow, Route } from "lucide-react";
+import { Plus, Edit, Trash2, Package, Upload, Search, ChevronRight, ChevronDown, ExternalLink, Tag, Image as ImageIcon, AlertCircle, RefreshCw, ChevronLeft, X, Warehouse, Info, ArrowDownWideNarrow, ArrowUpWideNarrow, Route, Link as LinkIcon, PackageOpen } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -29,6 +29,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useWarehouses } from "@/hooks/useWarehouses";
 import AddSKUDialog from "@/components/inventory/AddSKUDialog";
 import { SkuMovementTrackerDialog } from "@/components/inventory/SkuMovementTrackerDialog";
+import LinkComponentDialog from "@/components/inventory/LinkComponentDialog";
+import UnpackStockDialog from "@/components/inventory/UnpackStockDialog";
+import CompositionBadgeList from "@/components/inventory/CompositionBadgeList";
 import { ChannelsWidget } from "@/components/inventory/ChannelsWidget";
 import { getProductImageSrc } from "@/lib/utils";
 import { sumWarehouseSummary, type WarehouseSummaryRow } from "@/lib/warehouseSummaryAggregation";
@@ -144,6 +147,8 @@ const MasterProducts = () => {
     const [trackerSkuId, setTrackerSkuId] = useState<number | null>(null);
     const [trackerMasterId, setTrackerMasterId] = useState<number | null>(null);
     const [trackerTitle, setTrackerTitle] = useState("");
+    const [linkComponentOffer, setLinkComponentOffer] = useState<{ id: string; name: string } | null>(null);
+    const [unpackOffer, setUnpackOffer] = useState<{ id: string; name: string } | null>(null);
 
     // Fetch master products page-by-page (show first chunk immediately).
     const [masterProducts, setMasterProducts] = useState<MasterProduct[] | undefined>(undefined);
@@ -1376,12 +1381,23 @@ const MasterProducts = () => {
                                                             <div className="space-y-4">
                                                                 {product.offers.map((offer) => (
                                                                     <div key={offer.id} className="bg-background rounded-lg border p-3">
-                                                                        <div className="flex items-center justify-between mb-2">
-                                                                            <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded">
-                                                                                عرض: {offer.name}
-                                                                            </span>
+                                                                        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                                <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded">
+                                                                                    عرض: {offer.name}
+                                                                                </span>
+                                                                                <CompositionBadgeList offer={{ id: offer.id, name: offer.name }} />
+                                                                            </div>
                                                                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                                                                                 <span className="text-[10px] text-muted-foreground">النوع: {offer.type}</span>
+                                                                                <Button type="button" size="sm" variant="outline" className="h-6 text-[9px] px-2 shrink-0" title="اربط هذا العرض بمنتج تاني (زي كرتونة فيها عدة قطع من منتج مفرد) عشان تقدر تحوّل المخزون بينهم لاحقاً" onClick={(e) => { e.stopPropagation(); setLinkComponentOffer({ id: offer.id, name: offer.name }); }}>
+                                                                                    <LinkIcon className="h-3 w-3 mr-1" />
+                                                                                    ربط مكوّن
+                                                                                </Button>
+                                                                                <Button type="button" size="sm" variant="outline" className="h-6 text-[9px] px-2 shrink-0" title="حوّل المخزون يدوياً بين هذا العرض والمنتج المربوط به (فك كرتونة لقطع، أو تجميع قطع لكرتونة)" onClick={(e) => { e.stopPropagation(); setUnpackOffer({ id: offer.id, name: offer.name }); }}>
+                                                                                    <PackageOpen className="h-3 w-3 mr-1" />
+                                                                                    فك/تجميع
+                                                                                </Button>
                                                                                 <Button type="button" size="sm" variant="outline" className="h-6 text-[9px] px-2 shrink-0" onClick={(e) => { e.stopPropagation(); handleAddSku(offer.id); }}>
                                                                                     <Plus className="h-3 w-3 mr-1" />
                                                                                     إضافة عرض بيع (SKU)
@@ -1699,6 +1715,18 @@ const MasterProducts = () => {
                 skuId={trackerSkuId}
                 masterProductId={trackerMasterId}
                 title={trackerTitle || undefined}
+            />
+
+            <LinkComponentDialog
+                open={!!linkComponentOffer}
+                onOpenChange={(open) => { if (!open) setLinkComponentOffer(null); }}
+                parentOffer={linkComponentOffer}
+            />
+
+            <UnpackStockDialog
+                open={!!unpackOffer}
+                onOpenChange={(open) => { if (!open) setUnpackOffer(null); }}
+                offer={unpackOffer}
             />
         </div >
     );

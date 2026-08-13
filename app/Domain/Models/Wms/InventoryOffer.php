@@ -12,17 +12,13 @@ class InventoryOffer extends Model
     use HasFactory, IsIsolatedByUser;
 
     protected $fillable = [
-        'master_product_id', 'name', 'type', 'components',
+        'master_product_id', 'name', 'type',
     ];
 
     protected static function newFactory(): InventoryOfferFactory
     {
         return InventoryOfferFactory::new();
     }
-
-    protected $casts = [
-        'components' => 'array',
-    ];
 
     public function masterProduct()
     {
@@ -32,5 +28,21 @@ class InventoryOffer extends Model
     public function skus()
     {
         return $this->hasMany(\App\Domain\Models\Wms\Sku::class, 'offer_id');
+    }
+
+    /**
+     * This offer's own components (it is the parent/kit in the link).
+     */
+    public function components()
+    {
+        return $this->hasMany(\App\Domain\Models\Wms\ProductComposition::class, 'parent_offer_id');
+    }
+
+    /**
+     * Compositions where this offer is used as someone else's component.
+     */
+    public function usedInCompositions()
+    {
+        return $this->hasMany(\App\Domain\Models\Wms\ProductComposition::class, 'component_offer_id');
     }
 }

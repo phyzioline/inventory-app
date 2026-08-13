@@ -32,6 +32,7 @@ use App\Presentation\Http\Controllers\Api\InvoiceEditController;
 use App\Presentation\Http\Controllers\Api\MarketplaceOrderController;
 use App\Presentation\Http\Controllers\Api\MasterProductController;
 use App\Presentation\Http\Controllers\Api\PaymentController;
+use App\Presentation\Http\Controllers\Api\ProductCompositionController;
 use App\Presentation\Http\Controllers\Api\ProductImportController;
 use App\Presentation\Http\Controllers\Api\ProfitDistributionController;
 use App\Presentation\Http\Controllers\Api\ProfitReportController;
@@ -94,6 +95,12 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('master-products/{id}/ensure-channel-listing', [MasterProductController::class, 'ensureChannelListing']);
 
         Route::apiResource('inventory-offers', InventoryOfferController::class);
+        Route::get('inventory-offers/{id}/components', [ProductCompositionController::class, 'index']);
+        Route::post('inventory-offers/{id}/components', [ProductCompositionController::class, 'store']);
+        Route::put('product-compositions/{compositionId}', [ProductCompositionController::class, 'update']);
+        Route::delete('product-compositions/{compositionId}', [ProductCompositionController::class, 'destroy']);
+        Route::post('inventory-offers/{id}/unpack', [ProductCompositionController::class, 'unpack']);
+        Route::post('inventory-offers/{id}/pack', [ProductCompositionController::class, 'pack']);
         Route::get('skus/channel-summary', [SkuController::class, 'channelSummary']);
         Route::apiResource('skus', SkuController::class);
         Route::get('channels/metrics', [ChannelController::class, 'metrics']);

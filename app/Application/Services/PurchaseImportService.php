@@ -897,7 +897,6 @@ class PurchaseImportService
             ],
             [
                 'name' => 'Default Offer',
-                'components' => null,
                 'user_id' => $userId,
             ]
         );

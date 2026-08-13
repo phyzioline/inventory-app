@@ -386,7 +386,13 @@ class StockRehomeTransferService
         $tx->forceFill(['user_id' => $ownerUserId])->save();
     }
 
-    private function lockedInventoryRow(int $skuId, int $locationId): SkuInventory
+    /**
+     * Tenant-safe locked (or created) SkuInventory row for (sku, location), merging any
+     * duplicate rows left over from legacy null-user_id data. Public so other services
+     * (e.g. ProductCompositionService) can reuse this locking/upsert logic instead of
+     * re-implementing it.
+     */
+    public function lockedInventoryRow(int $skuId, int $locationId): SkuInventory
     {
         $userId = auth()->id();
 
