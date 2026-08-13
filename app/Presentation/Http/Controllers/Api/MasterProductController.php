@@ -178,7 +178,11 @@ class MasterProductController extends Controller
         $paginate = $request->boolean('paginate', false) || $page > 0;
         $perPage = max(1, min((int) $request->query('per_page', 40), 60));
 
-        $query = MasterProduct::with(['offers.skus.channel', 'offers.skus.inventory'])
+        $query = MasterProduct::with([
+            'offers.skus.channel',
+            'offers.skus.inventory',
+            'offers' => fn ($q) => $q->withCount(['components', 'usedInCompositions']),
+        ])
             ->orderByDesc('created_at')
             ->orderByDesc('id');
 

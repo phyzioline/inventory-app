@@ -29,7 +29,7 @@ class ProductCompositionController extends Controller
                 ->with(['componentOffer.masterProduct', 'componentOffer.skus.channel', 'componentOffer.skus.inventory'])
                 ->get(),
             'used_in' => $offer->usedInCompositions()
-                ->with(['parentOffer.masterProduct', 'parentOffer.skus.channel'])
+                ->with(['parentOffer.masterProduct', 'parentOffer.skus.channel', 'parentOffer.skus.inventory'])
                 ->get(),
         ]);
     }

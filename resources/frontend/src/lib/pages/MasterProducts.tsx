@@ -67,6 +67,12 @@ interface MasterProduct {
 
 type SortField = "internal_name" | "original_supplier" | "last_purchase_price" | "selling_price" | "total_stock" | "is_active";
 
+/** True if any of this product's offers is linked to (or used inside) a composition. */
+const productHasCompositionLink = (product: MasterProduct): boolean =>
+    Array.isArray(product.offers) && product.offers.some((o: any) =>
+        Number(o.components_count || 0) > 0 || Number(o.used_in_compositions_count || 0) > 0
+    );
+
 const resolveMasterPurchasePrice = (product: MasterProduct): number => {
     const skus = Array.isArray(product.offers) ? product.offers.flatMap((o: any) => Array.isArray(o.skus) ? o.skus : []) : [];
     const skuWithCost = skus.find((s: any) => Number(s.cost_price || 0) > 0);
@@ -1225,13 +1231,19 @@ const MasterProducts = () => {
                                             }}
                                         >
                                             <TableCell onClick={(e) => { e.stopPropagation(); toggleSelectProduct(String(product.id)); }} className="p-0">
-                                                <div className="flex items-center justify-center h-full">
+                                                <div className="flex items-center justify-center gap-1 h-full">
                                                     <input
                                                         type="checkbox"
                                                         className="w-4 h-4 rounded border-gray-300"
                                                         checked={selectedProducts.has(String(product.id))}
                                                         onChange={() => { }} // Controlled by outer click
                                                     />
+                                                    {productHasCompositionLink(product) && (
+                                                        <span
+                                                            title="فيه عرض لهذا المنتج مربوط بمكوّن (افتح الصف عشان تشوف التفاصيل)"
+                                                            className="w-2 h-2 rounded-full bg-primary shrink-0"
+                                                        />
+                                                    )}
                                                 </div>
                                             </TableCell>
                                             <TableCell onClick={(e) => { e.stopPropagation(); toggleRow(String(product.id)); }}>
