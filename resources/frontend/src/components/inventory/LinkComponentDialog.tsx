@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, Search, Package, Link as LinkIcon } from 'lucide-react';
+import { Loader2, Search, Package, Link as LinkIcon, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { offerService } from '@/lib/supabase-services';
@@ -84,6 +84,11 @@ export default function LinkComponentDialog({ open, onOpenChange, parentOffer }:
         [offers, parentOffer]
     );
 
+    const selectedOffer = useMemo(
+        () => filteredOffers.find((o: any) => String(o.id) === String(selectedOfferId)) || null,
+        [filteredOffers, selectedOfferId]
+    );
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-xl">
@@ -94,9 +99,28 @@ export default function LinkComponentDialog({ open, onOpenChange, parentOffer }:
                     </DialogTitle>
                 </DialogHeader>
 
-                <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-                    استخدم هذا لو <b>{parentOffer?.name || 'هذا المنتج'}</b> عبارة عن كذا وحدة من منتج تاني عندك بالفعل (زي كرتونة فيها 3 قطع من منتج مفرد).
-                    اختر المنتج المفرد وحدد كام وحدة منه بتساوي 1 × {parentOffer?.name || 'هذا المنتج'}. بعد الربط تقدر تستخدم زر "فك/تجميع" لتحويل المخزون بينهم وقت ما تحتاج.
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex gap-2 items-start">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>
+                        فتحت "ربط مكوّن" من على <b>{parentOffer?.name || 'هذا المنتج'}</b> — يبقى ده هو <b>العرض الأكبر</b> (الكرتونة/الطقم) وهيفضل ثابت.
+                        دلوقتي هتختار العرض <b>الأصغر</b> (زي القطعة المفردة) اللي بيتكون منه.
+                        {' '}لو ده غلط (يعني {parentOffer?.name || 'هذا المنتج'} هو في الحقيقة الأصغر)، اقفل الديالوج ده وافتح "ربط مكوّن" من على المنتج الكبير بدل كدا.
+                    </span>
+                </div>
+
+                <div className="flex items-center justify-center gap-3 py-1">
+                    <div className="flex-1 rounded-lg border-2 border-primary bg-primary/5 px-3 py-2 text-center">
+                        <p className="text-[10px] text-muted-foreground">الأكبر (ثابت)</p>
+                        <p className="text-sm font-bold truncate">{parentOffer?.name || '—'}</p>
+                    </div>
+                    <div className="flex flex-col items-center text-muted-foreground shrink-0">
+                        <ArrowLeft className="w-4 h-4" />
+                        <span className="text-[10px]">= {Math.max(1, parseInt(quantityPer, 10) || 1)} ×</span>
+                    </div>
+                    <div className={`flex-1 rounded-lg border-2 px-3 py-2 text-center ${selectedOffer ? 'border-emerald-500 bg-emerald-500/5' : 'border-dashed border-muted-foreground/40'}`}>
+                        <p className="text-[10px] text-muted-foreground">الأصغر (بتختاره)</p>
+                        <p className="text-sm font-bold truncate">{selectedOffer?.name || 'لسه ما اخترتش'}</p>
+                    </div>
                 </div>
 
                 <div className="space-y-4 py-4">
@@ -168,16 +192,16 @@ export default function LinkComponentDialog({ open, onOpenChange, parentOffer }:
 
                             {selectedOfferId && (
                                 <div className="space-y-2 pt-2 border-t">
-                                    <Label>الكمية لكل وحدة من {parentOffer?.name}</Label>
+                                    <Label>كام وحدة من "{selectedOffer?.name}" في كل 1 × "{parentOffer?.name}"؟</Label>
                                     <Input
                                         type="number"
                                         min={1}
                                         value={quantityPer}
                                         onChange={(e) => setQuantityPer(e.target.value)}
                                     />
-                                    <p className="text-xs text-muted-foreground">
-                                        مثال: 3 يعني كل 1 × {parentOffer?.name} = 3 × المكوّن المختار.
-                                    </p>
+                                    <div className="rounded-lg bg-primary/10 border border-primary/30 px-3 py-2 text-sm font-medium text-center">
+                                        1 × {parentOffer?.name} = {Math.max(1, parseInt(quantityPer, 10) || 1)} × {selectedOffer?.name}
+                                    </div>
                                 </div>
                             )}
                         </div>
