@@ -222,4 +222,83 @@ describe('Inventory API pagination (Phase B)', function () {
         $asc->assertOk();
         expect(collect($asc->json('data'))->pluck('sku')->all())->toBe([$low->sku, $high->sku]);
     });
+
+    it('orders channel skus by total cost (qty × unit cost) when sort_by=cost', function () {
+        \App\Application\Services\ChannelStockResolver::clearCache();
+
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $channel = Channel::query()->create([
+            'name' => 'المحل',
+            'slug' => 'store-cost-'.uniqid(),
+            'type' => 'pos',
+            'is_active' => true,
+        ]);
+        $channel->update(['user_id' => $user->id]);
+
+        $location = InventoryLocation::query()->create([
+            'name' => 'المحل',
+            'type' => 'physical',
+            'channel_id' => $channel->id,
+            'is_active' => true,
+        ]);
+        $location->update(['user_id' => $user->id]);
+
+        $makeSku = function (string $code, float $qty, float $unitCost) use ($user, $channel, $location) {
+            $master = MasterProduct::query()->create([
+                'internal_name' => 'Product '.$code,
+                'is_active' => true,
+                'cost_price' => $unitCost,
+            ]);
+            $master->update(['user_id' => $user->id]);
+
+            $offer = InventoryOffer::query()->create([
+                'master_product_id' => $master->id,
+                'name' => 'Offer '.$code,
+                'type' => 'single',
+            ]);
+            $offer->update(['user_id' => $user->id]);
+
+            $sku = Sku::query()->create([
+                'offer_id' => $offer->id,
+                'sku' => $code,
+                'channel_id' => $channel->id,
+                'cost_price' => $unitCost,
+                'selling_price' => $unitCost,
+                'is_active' => true,
+            ]);
+            $sku->update(['user_id' => $user->id]);
+
+            SkuInventory::query()->create([
+                'sku_id' => $sku->id,
+                'location_id' => $location->id,
+                'quantity' => $qty,
+                'reserved' => 0,
+                'user_id' => $user->id,
+            ]);
+
+            return $sku;
+        };
+
+        // High qty / low unit cost = 200 total. Low qty / high unit cost = 500 total.
+        $volume = $makeSku('COST-VOL-'.uniqid(), 100, 2);
+        $value = $makeSku('COST-VAL-'.uniqid(), 10, 50);
+
+        $desc = $this->getJson(
+            '/api/inventory/skus?paginate=1&per_page=10&page=1'
+            .'&channel_id='.$channel->id
+            .'&sort_by=cost&sort_dir=desc'
+        );
+        $desc->assertOk();
+        expect(collect($desc->json('data'))->pluck('sku')->all())->toBe([$value->sku, $volume->sku]);
+
+        $asc = $this->getJson(
+            '/api/inventory/skus?paginate=1&per_page=10&page=1'
+            .'&channel_id='.$channel->id
+            .'&sort_by=cost&sort_dir=asc'
+        );
+        $asc->assertOk();
+        expect(collect($asc->json('data'))->pluck('sku')->all())->toBe([$volume->sku, $value->sku]);
+    });
 });

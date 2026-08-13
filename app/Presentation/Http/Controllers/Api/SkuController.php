@@ -5,6 +5,7 @@ namespace App\Presentation\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\InventoryValuationService;
 use App\Application\Services\ProfitEngineService;
@@ -88,7 +89,7 @@ class SkuController extends Controller
 
         $sortBy = strtolower(trim((string) $request->query('sort_by', '')));
         $sortDir = strtolower(trim((string) $request->query('sort_dir', 'desc'))) === 'asc' ? 'asc' : 'desc';
-        if ($channelId > 0 && in_array($sortBy, ['stock', 'price'], true)) {
+        if ($channelId > 0 && in_array($sortBy, ['stock', 'price', 'cost', 'total_cost'], true)) {
             $this->applyChannelListSort($query, $channelId, $sortBy, $sortDir);
         } else {
             $query->orderBy('skus.id');
@@ -115,8 +116,8 @@ class SkuController extends Controller
     }
 
     /**
-     * Order channel SKU list by stock or price before pagination.
-     * Stock must be ordered in SQL — client-side sort only reorders the current page.
+     * Order channel SKU list by stock, price, or total cost before pagination.
+     * Must be ordered in SQL — client-side sort only reorders the current page.
      *
      * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
      */
@@ -133,6 +134,12 @@ class SkuController extends Controller
             return;
         }
 
+        if ($sortBy === 'cost' || $sortBy === 'total_cost') {
+            $this->orderByChannelTotalCost($query, $channelId, $dir);
+
+            return;
+        }
+
         // sort_by=stock
         if (ChannelStockResolver::deductsFromMainStoreBucket($channelId)) {
             $this->orderByMerchantStoreStock($query, $dir);
@@ -140,11 +147,10 @@ class SkuController extends Controller
             return;
         }
 
-        $this->orderBySkuInventoryQty(
-            $query,
-            $dir,
-            $this->resolveSortLocationIdsForChannel($channelId)
-        );
+        $this->joinSkuInventoryQty($query, $this->resolveSortLocationIdsForChannel($channelId));
+        $query->orderByRaw('COALESCE(channel_stock_sort.sort_stock_qty, 0) '.$dir)
+            ->orderBy('skus.sku')
+            ->select('skus.*');
     }
 
     /**
@@ -170,7 +176,7 @@ class SkuController extends Controller
      * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
      * @param  list<int>  $locationIds
      */
-    private function orderBySkuInventoryQty($query, string $dir, array $locationIds): void
+    private function joinSkuInventoryQty($query, array $locationIds): void
     {
         $stockSub = DB::table('sku_inventory')
             ->select('sku_id', DB::raw('COALESCE(SUM(quantity), 0) as sort_stock_qty'))
@@ -181,10 +187,7 @@ class SkuController extends Controller
 
         $query->leftJoinSub($stockSub, 'channel_stock_sort', function ($join) {
             $join->on('channel_stock_sort.sku_id', '=', 'skus.id');
-        })
-            ->orderByRaw('COALESCE(channel_stock_sort.sort_stock_qty, 0) '.$dir)
-            ->orderBy('skus.sku')
-            ->select('skus.*');
+        });
     }
 
     /**
@@ -194,11 +197,25 @@ class SkuController extends Controller
      */
     private function orderByMerchantStoreStock($query, string $dir): void
     {
-        $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
-        if ($storeChannelId <= 0) {
+        if (! $this->joinMerchantStoreStock($query)) {
             $query->orderBy('skus.sku');
 
             return;
+        }
+
+        $query->orderByRaw('COALESCE(merchant_stock_sort.sort_stock_qty, 0) '.$dir)
+            ->orderBy('skus.sku')
+            ->select('skus.*');
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
+     */
+    private function joinMerchantStoreStock($query): bool
+    {
+        $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
+        if ($storeChannelId <= 0) {
+            return false;
         }
 
         $storeLocationIds = ChannelStockResolver::resolveLocationIdsForChannel($storeChannelId);
@@ -216,10 +233,82 @@ class SkuController extends Controller
 
         $query->leftJoinSub($offerStock, 'merchant_stock_sort', function ($join) {
             $join->on('merchant_stock_sort.offer_id', '=', 'skus.offer_id');
-        })
-            ->orderByRaw('COALESCE(merchant_stock_sort.sort_stock_qty, 0) '.$dir)
+        });
+
+        return true;
+    }
+
+    /**
+     * Total cost = channel qty × effective unit cost (batch avg → master → sku.cost_price).
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
+     */
+    private function orderByChannelTotalCost($query, int $channelId, string $dir): void
+    {
+        $qtyExpr = 'COALESCE(channel_stock_sort.sort_stock_qty, 0)';
+        if (ChannelStockResolver::deductsFromMainStoreBucket($channelId)) {
+            if (! $this->joinMerchantStoreStock($query)) {
+                $query->orderBy('skus.sku');
+
+                return;
+            }
+            $qtyExpr = 'COALESCE(merchant_stock_sort.sort_stock_qty, 0)';
+        } else {
+            $this->joinSkuInventoryQty($query, $this->resolveSortLocationIdsForChannel($channelId));
+        }
+
+        $this->joinSortUnitCost($query);
+        $query->orderByRaw($qtyExpr.' * '.$this->sortUnitCostSql().' '.$dir)
             ->orderBy('skus.sku')
             ->select('skus.*');
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
+     */
+    private function joinSortUnitCost($query): void
+    {
+        $query->leftJoin('inventory_offers as sort_offers', 'sort_offers.id', '=', 'skus.offer_id')
+            ->leftJoin('master_products as sort_mp', 'sort_mp.id', '=', 'sort_offers.master_product_id');
+
+        if (! Schema::hasTable('purchase_batch_items')) {
+            return;
+        }
+
+        $batchCost = DB::table('purchase_batch_items')
+            ->groupBy('master_product_id')
+            ->select('master_product_id')
+            ->selectRaw(
+                'CASE WHEN SUM(GREATEST(COALESCE(received_quantity, 0), COALESCE(quantity, 0))) > 0'
+                .' THEN SUM(CAST(total_price AS DECIMAL(18,4)))'
+                .' / SUM(GREATEST(COALESCE(received_quantity, 0), COALESCE(quantity, 0)))'
+                .' ELSE 0 END as sort_avg_cost'
+            );
+
+        $query->leftJoinSub($batchCost, 'sort_batch_cost', function ($join) {
+            $join->on('sort_batch_cost.master_product_id', '=', 'sort_offers.master_product_id');
+        });
+    }
+
+    private function sortUnitCostSql(): string
+    {
+        $parts = [];
+        if (Schema::hasTable('purchase_batch_items')) {
+            $parts[] = 'NULLIF(sort_batch_cost.sort_avg_cost, 0)';
+        }
+        if (Schema::hasColumn('master_products', 'last_purchase_price')) {
+            $parts[] = 'NULLIF(sort_mp.last_purchase_price, 0)';
+        }
+        if (Schema::hasColumn('master_products', 'avg_purchase_price')) {
+            $parts[] = 'NULLIF(sort_mp.avg_purchase_price, 0)';
+        }
+        $parts[] = 'NULLIF(sort_mp.cost_price, 0)';
+        if (Schema::hasColumn('skus', 'last_purchase_price')) {
+            $parts[] = 'NULLIF(skus.last_purchase_price, 0)';
+        }
+        $parts[] = 'COALESCE(skus.cost_price, 0)';
+
+        return 'COALESCE('.implode(', ', $parts).')';
     }
 
     /**

@@ -152,7 +152,8 @@ export default function ChannelDetail() {
   const [includeGeneral, setIncludeGeneral] = useState(false);
   const [stockSort, setStockSort] = useState<'desc' | 'asc'>('desc');
   const [priceSort, setPriceSort] = useState<'desc' | 'asc'>('desc');
-  const [sortPriority, setSortPriority] = useState<'price' | 'stock'>('price');
+  const [costSort, setCostSort] = useState<'desc' | 'asc'>('desc');
+  const [sortPriority, setSortPriority] = useState<'price' | 'stock' | 'cost'>('price');
   const [pageSize, setPageSize] = useState<number>(100);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -215,6 +216,7 @@ export default function ChannelDetail() {
       sortPriority,
       stockSort,
       priceSort,
+      costSort,
     ],
     queryFn: async () => {
       if (!channel?.id) {
@@ -241,8 +243,8 @@ export default function ChannelDetail() {
         paginate: '1',
         page: String(currentPage),
         per_page: String(Math.min(pageSize, 200)),
-        sort_by: sortPriority === 'stock' ? 'stock' : 'price',
-        sort_dir: sortPriority === 'stock' ? stockSort : priceSort,
+        sort_by: sortPriority === 'stock' ? 'stock' : sortPriority === 'cost' ? 'cost' : 'price',
+        sort_dir: sortPriority === 'stock' ? stockSort : sortPriority === 'cost' ? costSort : priceSort,
       });
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (linkFilter === 'linked') params.set('linked', '1');
@@ -314,21 +316,30 @@ export default function ChannelDetail() {
       const priceB = resolveDisplayUnitPrice(b);
       const qtyA = getSkuQty(a);
       const qtyB = getSkuQty(b);
+      const costA = resolvePurchaseUnitCost(a) * qtyA;
+      const costB = resolvePurchaseUnitCost(b) * qtyB;
 
       const priceDelta = priceSort === 'desc' ? priceB - priceA : priceA - priceB;
       const qtyDelta = stockSort === 'desc' ? qtyB - qtyA : qtyA - qtyB;
+      const costDelta = costSort === 'desc' ? costB - costA : costA - costB;
 
       if (sortPriority === 'stock') {
+        if (qtyDelta !== 0) return qtyDelta;
+        if (costDelta !== 0) return costDelta;
+        if (priceDelta !== 0) return priceDelta;
+      } else if (sortPriority === 'cost') {
+        if (costDelta !== 0) return costDelta;
         if (qtyDelta !== 0) return qtyDelta;
         if (priceDelta !== 0) return priceDelta;
       } else {
         if (priceDelta !== 0) return priceDelta;
+        if (costDelta !== 0) return costDelta;
         if (qtyDelta !== 0) return qtyDelta;
       }
 
       return String(a?.sku || '').localeCompare(String(b?.sku || ''));
     });
-  }, [skus, stockSort, priceSort, sortPriority, includeGeneral]);
+  }, [skus, stockSort, priceSort, costSort, sortPriority, includeGeneral]);
 
   const totalFiltered = Number(skuPage?.total ?? filteredSkus.length);
   const totalPages = Math.max(1, Number(skuPage?.last_page ?? 1));
@@ -337,7 +348,7 @@ export default function ChannelDetail() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, linkFilter, duplicatesOnly, pageSize, channel?.id, includeGeneral, sortPriority, stockSort, priceSort]);
+  }, [debouncedSearch, linkFilter, duplicatesOnly, pageSize, channel?.id, includeGeneral, sortPriority, stockSort, priceSort, costSort]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -738,6 +749,7 @@ export default function ChannelDetail() {
                 setDuplicatesOnly(false);
                 setStockSort('desc');
                 setPriceSort('desc');
+                setCostSort('desc');
                 setSortPriority('price');
                 setIncludeGeneral(false);
               }}
@@ -821,7 +833,22 @@ export default function ChannelDetail() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
-                <TableHead>إجمالي التكلفة</TableHead>
+                <TableHead>
+                  <div className="flex items-center gap-1">
+                    <span>إجمالي التكلفة</span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button className="inline-flex items-center text-muted-foreground hover:text-foreground">
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        <DropdownMenuItem onClick={() => { setCostSort('desc'); setSortPriority('cost'); }}>الأعلى للأدنى</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => { setCostSort('asc'); setSortPriority('cost'); }}>الأدنى للأعلى</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </TableHead>
                 <TableHead className="text-right">إجراءات</TableHead>
               </TableRow>
             </TableHeader>
