@@ -26,7 +26,7 @@ class ProductCompositionController extends Controller
         return response()->json([
             'offer_id' => (int) $offer->id,
             'components' => $offer->components()
-                ->with(['componentOffer.masterProduct', 'componentOffer.skus.channel'])
+                ->with(['componentOffer.masterProduct', 'componentOffer.skus.channel', 'componentOffer.skus.inventory'])
                 ->get(),
             'used_in' => $offer->usedInCompositions()
                 ->with(['parentOffer.masterProduct', 'parentOffer.skus.channel'])

@@ -1382,12 +1382,9 @@ const MasterProducts = () => {
                                                                 {product.offers.map((offer) => (
                                                                     <div key={offer.id} className="bg-background rounded-lg border p-3">
                                                                         <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                                                                            <div className="flex items-center gap-2 flex-wrap">
-                                                                                <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded">
-                                                                                    عرض: {offer.name}
-                                                                                </span>
-                                                                                <CompositionBadgeList offer={{ id: offer.id, name: offer.name }} />
-                                                                            </div>
+                                                                            <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded">
+                                                                                عرض: {offer.name}
+                                                                            </span>
                                                                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                                                                                 <span className="text-[10px] text-muted-foreground">النوع: {offer.type}</span>
                                                                                 <Button type="button" size="sm" variant="outline" className="h-6 text-[9px] px-2 shrink-0" title="اربط هذا العرض بمنتج تاني (زي كرتونة فيها عدة قطع من منتج مفرد) عشان تقدر تحوّل المخزون بينهم لاحقاً" onClick={(e) => { e.stopPropagation(); setLinkComponentOffer({ id: offer.id, name: offer.name }); }}>
@@ -1403,6 +1400,10 @@ const MasterProducts = () => {
                                                                                     إضافة عرض بيع (SKU)
                                                                                 </Button>
                                                                             </div>
+                                                                        </div>
+
+                                                                        <div className="mb-2" onClick={(e) => e.stopPropagation()}>
+                                                                            <CompositionBadgeList offer={{ id: offer.id, name: offer.name }} />
                                                                         </div>
 
                                                                         {offer.skus && offer.skus.length > 0 ? (

@@ -219,9 +219,8 @@ export default function MasterProductDetail() {
                                                     <ShoppingBag className="h-5 w-5 text-blue-500" />
                                                     {offer.name}
                                                 </CardTitle>
-                                                <div className="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
+                                                <div className="text-sm text-muted-foreground mt-1">
                                                     <Badge variant="secondary">{offer.type}</Badge>
-                                                    <CompositionBadgeList offer={{ id: offer.id, name: offer.name }} />
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
@@ -256,6 +255,9 @@ export default function MasterProductDetail() {
                                         </div>
                                     </CardHeader>
                                     <CardContent className="mt-4">
+                                        <div className="mb-4">
+                                            <CompositionBadgeList offer={{ id: offer.id, name: offer.name }} />
+                                        </div>
                                         <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
                                             <Barcode className="h-4 w-4" />
                                             Associated SKUs ({offer.skus?.length || 0})
