@@ -140,16 +140,43 @@ class SkuController extends Controller
             return;
         }
 
-        $locationIds = ChannelStockResolver::resolveLocationIdsForChannel($channelId);
-        if ($locationIds === []) {
-            $query->orderByRaw('0 '.$dir)->orderBy('skus.sku');
+        $this->orderBySkuInventoryQty(
+            $query,
+            $dir,
+            $this->resolveSortLocationIdsForChannel($channelId)
+        );
+    }
 
-            return;
+    /**
+     * Locations used to ORDER BY stock. Tagged channel warehouses first; if none
+     * (common for المحل when inventory_locations.channel_id is null), fall back to
+     * the same first-location rule as display_quantity so PostgreSQL never sees ORDER BY 0.
+     *
+     * @return list<int>
+     */
+    private function resolveSortLocationIdsForChannel(int $channelId): array
+    {
+        $locationIds = ChannelStockResolver::resolveLocationIdsForChannel($channelId);
+        if ($locationIds !== []) {
+            return $locationIds;
         }
 
+        $fallback = (int) (ChannelStockResolver::resolveFirstLocationIdForChannel($channelId) ?? 0);
+
+        return $fallback > 0 ? [$fallback] : [];
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Domain\Models\Wms\Sku>  $query
+     * @param  list<int>  $locationIds
+     */
+    private function orderBySkuInventoryQty($query, string $dir, array $locationIds): void
+    {
         $stockSub = DB::table('sku_inventory')
             ->select('sku_id', DB::raw('COALESCE(SUM(quantity), 0) as sort_stock_qty'))
-            ->whereIn('location_id', $locationIds)
+            ->when($locationIds !== [], static function ($q) use ($locationIds) {
+                $q->whereIn('location_id', $locationIds);
+            })
             ->groupBy('sku_id');
 
         $query->leftJoinSub($stockSub, 'channel_stock_sort', function ($join) {
@@ -169,7 +196,7 @@ class SkuController extends Controller
     {
         $storeChannelId = ChannelStockResolver::resolveMainStoreChannelId();
         if ($storeChannelId <= 0) {
-            $query->orderByRaw('0 '.$dir)->orderBy('skus.sku');
+            $query->orderBy('skus.sku');
 
             return;
         }

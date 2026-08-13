@@ -143,4 +143,83 @@ describe('Inventory API pagination (Phase B)', function () {
         $asc->assertOk();
         expect(collect($asc->json('data'))->pluck('sku')->all())->toBe([$low->sku, $mid->sku, $high->sku]);
     });
+
+    it('orders store skus by stock when the shop warehouse is not tagged to the channel', function () {
+        \App\Application\Services\ChannelStockResolver::clearCache();
+
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $channel = Channel::query()->create([
+            'name' => 'المحل',
+            'slug' => 'store-untagged-'.uniqid(),
+            'type' => 'pos',
+            'is_active' => true,
+        ]);
+        $channel->update(['user_id' => $user->id]);
+
+        // Production المحل: location exists but inventory_locations.channel_id is null.
+        $location = InventoryLocation::query()->create([
+            'name' => 'المحل',
+            'type' => 'physical',
+            'channel_id' => null,
+            'is_active' => true,
+        ]);
+        $location->update(['user_id' => $user->id]);
+
+        $makeSku = function (string $code, float $qty) use ($user, $channel, $location) {
+            $master = MasterProduct::query()->create([
+                'internal_name' => 'Product '.$code,
+                'is_active' => true,
+            ]);
+            $master->update(['user_id' => $user->id]);
+
+            $offer = InventoryOffer::query()->create([
+                'master_product_id' => $master->id,
+                'name' => 'Offer '.$code,
+                'type' => 'single',
+            ]);
+            $offer->update(['user_id' => $user->id]);
+
+            $sku = Sku::query()->create([
+                'offer_id' => $offer->id,
+                'sku' => $code,
+                'channel_id' => $channel->id,
+                'cost_price' => 1,
+                'selling_price' => 10,
+                'is_active' => true,
+            ]);
+            $sku->update(['user_id' => $user->id]);
+
+            SkuInventory::query()->create([
+                'sku_id' => $sku->id,
+                'location_id' => $location->id,
+                'quantity' => $qty,
+                'reserved' => 0,
+                'user_id' => $user->id,
+            ]);
+
+            return $sku;
+        };
+
+        $low = $makeSku('STORE-LOW-'.uniqid(), 3);
+        $high = $makeSku('STORE-HIGH-'.uniqid(), 40);
+
+        $desc = $this->getJson(
+            '/api/inventory/skus?paginate=1&per_page=10&page=1'
+            .'&channel_id='.$channel->id
+            .'&sort_by=stock&sort_dir=desc'
+        );
+        $desc->assertOk();
+        expect(collect($desc->json('data'))->pluck('sku')->all())->toBe([$high->sku, $low->sku]);
+        expect((float) $desc->json('data.0.display_quantity'))->toBe(40.0);
+
+        $asc = $this->getJson(
+            '/api/inventory/skus?paginate=1&per_page=10&page=1'
+            .'&channel_id='.$channel->id
+            .'&sort_by=stock&sort_dir=asc'
+        );
+        $asc->assertOk();
+        expect(collect($asc->json('data'))->pluck('sku')->all())->toBe([$low->sku, $high->sku]);
+    });
 });
