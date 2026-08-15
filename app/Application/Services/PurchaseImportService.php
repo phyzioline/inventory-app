@@ -553,16 +553,32 @@ class PurchaseImportService
 
     /**
      * Whether a SKU may receive stock at the given warehouse/location (channel rules).
+     * Uses the same المحل → store-channel mapping as receiveBatch — never read the raw
+     * inventory_locations.channel_id alone (production المحل is often NULL).
      */
     public function isSkuCompatibleWithReceiveLocation(Sku $sku, int $locationId): bool
     {
-        $receiveChannelId = null;
-        if ($locationId > 0) {
-            $rawChannelId = InventoryLocation::query()->whereKey($locationId)->value('channel_id');
-            $receiveChannelId = $rawChannelId !== null ? (int) $rawChannelId : null;
-        }
+        $receiveChannelId = $locationId > 0
+            ? $this->resolveReceiveChannelIdForLocation($locationId)
+            : null;
 
         return $this->isSkuCompatibleWithReceiveChannel($sku, $receiveChannelId);
+    }
+
+    /**
+     * Reject SKUs that belong to a different master product than the invoice line.
+     */
+    private function skuBelongsToLineMaster(Sku $sku, PurchaseBatchItem $item): bool
+    {
+        $masterId = (int) ($item->master_product_id ?? 0);
+        if ($masterId <= 0) {
+            return true;
+        }
+
+        $sku->loadMissing('offer');
+        $skuMasterId = (int) ($sku->offer?->master_product_id ?? 0);
+
+        return $skuMasterId > 0 && $skuMasterId === $masterId;
     }
 
     /**
@@ -577,16 +593,24 @@ class PurchaseImportService
         ?int $preferredSkuId = null
     ): ?int {
         if ($preferredSkuId > 0) {
-            $preferred = Sku::query()->find($preferredSkuId);
-            if ($preferred && $this->isSkuCompatibleWithReceiveLocation($preferred, $receiveLocationId)) {
+            $preferred = Sku::query()->with('offer')->find($preferredSkuId);
+            if (
+                $preferred
+                && $this->isSkuCompatibleWithReceiveLocation($preferred, $receiveLocationId)
+                && $this->skuBelongsToLineMaster($preferred, $item)
+            ) {
                 return $preferredSkuId;
             }
-            // Wrong-channel SKU on the line — do not silently redirect stock to another listing.
+            // Wrong-channel or wrong-product SKU — do not silently keep it.
         }
 
         if ((int) ($item->sku_id ?? 0) > 0) {
-            $current = Sku::query()->find((int) $item->sku_id);
-            if ($current && $this->isSkuCompatibleWithReceiveLocation($current, $receiveLocationId)) {
+            $current = Sku::query()->with('offer')->find((int) $item->sku_id);
+            if (
+                $current
+                && $this->isSkuCompatibleWithReceiveLocation($current, $receiveLocationId)
+                && $this->skuBelongsToLineMaster($current, $item)
+            ) {
                 return (int) $item->sku_id;
             }
         }
@@ -605,18 +629,32 @@ class PurchaseImportService
     }
 
     /**
+     * Morph aliases written on inventory_transactions.reference_type.
+     * Pre-extraction rows used the Inventory-module class name.
+     *
+     * @return list<string>
+     */
+    private function purchaseBatchTransactionReferenceTypes(): array
+    {
+        return [
+            PurchaseBatch::class,
+            'Modules\\Inventory\\app\\Domain\\Models\\Wms\\PurchaseBatch',
+        ];
+    }
+
+    /**
      * Net quantity posted to inventory for this batch + SKU (IN minus OUT).
      */
     private function netBatchStockPostedForSku(PurchaseBatch $batch, int $skuId): float
     {
         $in = (float) InventoryTransaction::query()
-            ->where('reference_type', PurchaseBatch::class)
+            ->whereIn('reference_type', $this->purchaseBatchTransactionReferenceTypes())
             ->where('reference_id', $batch->id)
             ->where('sku_id', $skuId)
             ->where('type', 'IN')
             ->sum('quantity');
         $out = (float) InventoryTransaction::query()
-            ->where('reference_type', PurchaseBatch::class)
+            ->whereIn('reference_type', $this->purchaseBatchTransactionReferenceTypes())
             ->where('reference_id', $batch->id)
             ->where('sku_id', $skuId)
             ->where('type', 'OUT')
@@ -676,7 +714,7 @@ class PurchaseImportService
     private function findBatchPostedSkuIdForItem(PurchaseBatch $batch, PurchaseBatchItem $item): ?int
     {
         $inBySku = InventoryTransaction::query()
-            ->where('reference_type', PurchaseBatch::class)
+            ->whereIn('reference_type', $this->purchaseBatchTransactionReferenceTypes())
             ->where('reference_id', $batch->id)
             ->where('type', 'IN')
             ->selectRaw('sku_id, SUM(quantity) as qty')
@@ -708,17 +746,11 @@ class PurchaseImportService
             $candidates[$skuId] = (float) $qty;
         }
 
-        if (empty($candidates) && (int) ($item->sku_id ?? 0) > 0) {
-            $lineSkuId = (int) $item->sku_id;
-            if ($inBySku->has($lineSkuId)) {
-                return $lineSkuId;
-            }
-        }
-
         if (empty($candidates)) {
-            $fallback = (int) ($inBySku->sortByDesc(fn ($qty) => (float) $qty)->keys()->first() ?? 0);
-
-            return $fallback > 0 ? $fallback : null;
+            // Never steal another product's posted SKU on this batch (e.g. PHY464
+            // just because it had the highest IN qty). That mixed four different
+            // lines onto one SKU when editing a received invoice at المحل.
+            return null;
         }
 
         arsort($candidates);
@@ -735,8 +767,12 @@ class PurchaseImportService
         $receiveChannelId = ! empty($preferredChannelId) ? (int) $preferredChannelId : null;
 
         if ($item->sku_id) {
-            $currentSku = Sku::find((int) $item->sku_id);
-            if ($currentSku && $this->isSkuCompatibleWithReceiveChannel($currentSku, $receiveChannelId)) {
+            $currentSku = Sku::query()->with('offer')->find((int) $item->sku_id);
+            if (
+                $currentSku
+                && $this->isSkuCompatibleWithReceiveChannel($currentSku, $receiveChannelId)
+                && $this->skuBelongsToLineMaster($currentSku, $item)
+            ) {
                 return (int) $currentSku->id;
             }
         }

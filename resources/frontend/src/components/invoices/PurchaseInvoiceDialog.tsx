@@ -936,24 +936,31 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
+            <DialogContent
+                className="flex h-[min(98dvh,98vh)] w-[min(99vw,96rem)] max-w-none flex-col gap-2 overflow-hidden p-3 sm:p-4"
+                onPointerDownOutside={(e) => e.preventDefault()}
+                onInteractOutside={(e) => e.preventDefault()}
+            >
+                <DialogHeader className="space-y-1 pr-8">
                     <DialogTitle>{isAr ? 'إنشاء فاتورة شراء' : 'Create Purchase Invoice'}</DialogTitle>
-                    <DialogDescription>
-                        {isAr ? 'إضافة مخزون جديد وتحديث رصيد المورد.' : 'Add new stock and update supplier balance.'}
+                    <DialogDescription className="text-xs">
+                        {isAr
+                            ? 'إضافة مخزون جديد وتحديث رصيد المورد. النافذة لا تُغلق بالضغط خارجها — استخدم إلغاء أو ×.'
+                            : 'Add new stock and update supplier balance. Clicking outside will not close this window — use Cancel or ×.'}
                     </DialogDescription>
                 </DialogHeader>
 
-                <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label>{isAr ? 'رقم الفاتورة' : 'Invoice Number'}</Label>
-                            <Input {...register('invoice_number', { required: true })} />
+                <form onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                    <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+                        <div className="space-y-1">
+                            <Label className="text-xs">{isAr ? 'رقم الفاتورة' : 'Invoice Number'}</Label>
+                            <Input className="h-8" {...register('invoice_number', { required: true })} />
                         </div>
-                        <div className="space-y-2">
-                            <Label>{isAr ? 'المستودع' : 'Store'}</Label>
+                        <div className="space-y-1">
+                            <Label className="text-xs">{isAr ? 'المستودع' : 'Store'}</Label>
                             <Select value={watch('store_id') || undefined} onValueChange={(val) => setValue('store_id', val)}>
-                                <SelectTrigger>
+                                <SelectTrigger className="h-8">
                                     <SelectValue placeholder={isAr ? 'اختر المستودع' : 'Select Store'} />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -966,30 +973,30 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                             </Select>
                             {watch('store_id') ? (
                                 loadingStoreInventory ? (
-                                    <p className="text-xs text-muted-foreground">{isAr ? 'جارٍ تحميل أصناف المستودع…' : 'Loading warehouse catalog…'}</p>
+                                    <p className="text-[10px] text-muted-foreground">{isAr ? 'جارٍ تحميل أصناف المستودع…' : 'Loading warehouse catalog…'}</p>
                                 ) : storeAllowed.skuIds.size === 0 && storeAllowed.masterIds.size === 0 ? (
-                                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                                    <p className="text-[10px] text-amber-700 dark:text-amber-400">
                                         {isAr
-                                            ? 'لا توجد أصناف مسجلة في هذا المستودع بعد. يمكنك شراء منتج جديد أو تعديل المخزون.'
+                                            ? 'لا توجد أصناف مسجلة في هذا المستودع بعد.'
                                             : 'No SKUs are recorded for this warehouse yet.'}
                                     </p>
                                 ) : (
-                                    <p className="text-xs text-muted-foreground">
+                                    <p className="text-[10px] text-muted-foreground">
                                         {isAr
-                                            ? `البحث يعرض المنتجات/SKU المربوطة بهذا المستودع فقط (${storeAllowed.skuIds.size} SKU).`
-                                            : `Product search is limited to this warehouse (${storeAllowed.skuIds.size} SKUs).`}
+                                            ? `البحث على هذا المستودع فقط (${storeAllowed.skuIds.size} SKU).`
+                                            : `Search limited to this warehouse (${storeAllowed.skuIds.size} SKUs).`}
                                     </p>
                                 )
                             ) : (
-                                <p className="text-xs text-muted-foreground">
-                                    {isAr ? 'اختر المستودع أولاً لتصفية قائمة المنتجات حسب ما هو مسجل فيه.' : 'Select a warehouse to filter products by that location.'}
+                                <p className="text-[10px] text-muted-foreground">
+                                    {isAr ? 'اختر المستودع أولاً لتصفية المنتجات.' : 'Select a warehouse to filter products.'}
                                 </p>
                             )}
                         </div>
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <Label>{isAr ? 'المورد' : 'Supplier'}</Label>
-                                <Button type="button" variant="outline" size="sm" onClick={() => setIsSupplierCreateOpen(true)}>
+                        <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                                <Label className="text-xs">{isAr ? 'المورد' : 'Supplier'}</Label>
+                                <Button type="button" variant="outline" size="sm" className="h-7 px-2" onClick={() => setIsSupplierCreateOpen(true)}>
                                     <Plus className="w-3 h-3 mr-1" />
                                     {isAr ? 'إضافة مورد' : 'Add Supplier'}
                                 </Button>
@@ -1001,7 +1008,7 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                         variant="outline"
                                         role="combobox"
                                         className={cn(
-                                            "w-full justify-between h-9 text-sm font-normal",
+                                            "w-full justify-between h-8 text-xs font-normal",
                                             !watch('supplier_id') && "text-muted-foreground border-dashed"
                                         )}
                                     >
@@ -1042,27 +1049,28 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                 </PopoverContent>
                             </Popover>
                         </div>
-                        <div className="space-y-2">
-                            <Label>{isAr ? 'التاريخ' : 'Date'}</Label>
-                            <Input type="date" {...register('invoice_date')} defaultValue={new Date().toISOString().split('T')[0]} />
+                        <div className="space-y-1">
+                            <Label className="text-xs">{isAr ? 'التاريخ' : 'Date'}</Label>
+                            <Input className="h-8" type="date" {...register('invoice_date')} defaultValue={new Date().toISOString().split('T')[0]} />
                         </div>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-lg font-semibold">{isAr ? 'بنود الفاتورة' : 'Items'}</h3>
+                            <h3 className="text-sm font-semibold">{isAr ? 'بنود الفاتورة' : 'Items'}</h3>
                             <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
+                                className="h-7"
                                 onClick={() => openCreateProductDialog()}
                             >
                                 <Plus className="w-4 h-4 mr-2" /> {isAr ? 'إضافة منتج جديد' : 'Add New Product'}
                             </Button>
                         </div>
 
-                        <div className="rounded-lg border overflow-hidden">
-                            <div className="grid grid-cols-12 gap-2 bg-muted/40 px-3 py-2 text-xs font-medium">
+                        <div className="rounded-md border overflow-hidden">
+                            <div className="grid grid-cols-12 gap-1.5 bg-muted/40 px-2 py-1.5 text-[11px] font-medium">
                                 <div className="col-span-1 text-center">#</div>
                                 <div className="col-span-5">{isAr ? 'المنتج' : 'Product'}</div>
                                 <div className="col-span-2">{isAr ? 'الكمية' : 'Qty'}</div>
@@ -1073,7 +1081,7 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
 
                             <div className="divide-y">
                                 {fields.map((field, index) => (
-                                    <div key={field.id} className="grid grid-cols-12 gap-2 px-3 py-3 items-center">
+                                    <div key={field.id} className="grid grid-cols-12 gap-1.5 px-2 py-1 items-center">
                                         <div className="col-span-1 text-xs text-muted-foreground text-center">{index + 1}</div>
                                         <div className="col-span-5 relative">
                                             <Popover
@@ -1087,11 +1095,11 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                                         role="combobox"
                                                         disabled={!watch('store_id')}
                                                         className={cn(
-                                                            "w-full justify-between h-9 text-xs font-normal",
+                                                            "w-full justify-between h-8 text-xs font-normal",
                                                             !watch(`items.${index}.product_id`) && "text-muted-foreground border-dashed"
                                                         )}
                                                     >
-                                                        <span className="truncate max-w-[280px]">
+                                                        <span className="truncate max-w-[min(52vw,560px)]">
                                                             {resolveLineItemLabel(index)}
                                                         </span>
                                                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -1227,19 +1235,17 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                                 {...register(`items.${index}.quantity`, { required: true, valueAsNumber: true })}
                                             />
                                         </div>
-                                        <div className="col-span-2 space-y-1 min-w-0">
-                                            <div className="text-[10px] text-muted-foreground">
-                                                {(() => {
-                                                    const productId = watch(`items.${index}.product_id`);
-                                                    const lastPurchase = getProductLastPurchasePrice(productId);
-                                                    return lastPurchase > 0
-                                                        ? (isAr ? `آخر سعر شراء: ${lastPurchase.toLocaleString()} ج.م` : `Last purchase: ${lastPurchase.toLocaleString()} EGP`)
-                                                        : (isAr ? 'آخر سعر شراء: -' : 'Last purchase: -');
-                                                })()}
-                                            </div>
-                                            <div className="flex items-center gap-2">
+                                        <div className="col-span-2 min-w-0 space-y-0.5">
+                                            <Input
+                                                type="number"
+                                                step="0.01"
+                                                className="h-8"
+                                                {...register(`items.${index}.unit_price`, { required: true, valueAsNumber: true })}
+                                            />
+                                            <div className="flex min-w-0 items-center gap-1">
                                                 <Checkbox
                                                     id={`apply-last-price-${field.id}`}
+                                                    className="h-3.5 w-3.5"
                                                     checked={!!applyLastPurchasePriceByFieldId[field.id]}
                                                     onCheckedChange={(v) => {
                                                         const on = v === true;
@@ -1255,26 +1261,29 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                                 />
                                                 <label
                                                     htmlFor={`apply-last-price-${field.id}`}
-                                                    className="text-[11px] leading-tight cursor-pointer select-none text-muted-foreground hover:text-foreground"
+                                                    className="truncate text-[10px] leading-none cursor-pointer select-none text-muted-foreground hover:text-foreground"
                                                 >
-                                                    {isAr ? 'تطبيق آخر سعر شراء' : 'Apply last purchase price'}
+                                                    {(() => {
+                                                        const productId = watch(`items.${index}.product_id`);
+                                                        const lastPurchase = getProductLastPurchasePrice(productId);
+                                                        if (lastPurchase > 0) {
+                                                            return isAr
+                                                                ? `آخر سعر ${lastPurchase.toLocaleString()}`
+                                                                : `Last ${lastPurchase.toLocaleString()}`;
+                                                        }
+                                                        return isAr ? 'تطبيق آخر سعر' : 'Apply last price';
+                                                    })()}
                                                 </label>
                                             </div>
-                                            <Input
-                                                type="number"
-                                                step="0.01"
-                                                className="h-8"
-                                                {...register(`items.${index}.unit_price`, { required: true, valueAsNumber: true })}
-                                            />
                                         </div>
-                                        <div className="col-span-1 text-xs font-semibold">
+                                        <div className="col-span-1 text-xs font-semibold tabular-nums">
                                             {(
                                                 Number(watchedItems[index]?.quantity || 0) *
                                                 Number(watchedItems[index]?.unit_price || 0)
                                             ).toLocaleString()}
                                         </div>
                                         <div className="col-span-1 text-center">
-                                            <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(index)}>
+                                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => remove(index)}>
                                                 <Trash2 className="w-4 h-4" />
                                             </Button>
                                         </div>
@@ -1286,8 +1295,9 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                         <div className="flex justify-start">
                             <Button
                                 type="button"
+                                size="sm"
                                 onClick={() => append({ product_id: '', sku_id: null, quantity: 1, unit_price: 0 })}
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
                             >
                                 <Plus className="w-4 h-4 mr-2" />
                                 {isAr ? 'إضافة بند' : 'Add Item'}
@@ -1295,39 +1305,42 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                         </div>
                     </div>
 
-                    <div className="space-y-2">
-                        <Label>{isAr ? 'ملاحظات' : 'Notes'}</Label>
-                        <Input {...register('notes')} placeholder={isAr ? 'ملاحظات اختيارية...' : 'Optional notes...'} />
+                    <div className="space-y-1">
+                        <Label className="text-xs">{isAr ? 'ملاحظات' : 'Notes'}</Label>
+                        <Input className="h-8" {...register('notes')} placeholder={isAr ? 'ملاحظات اختيارية...' : 'Optional notes...'} />
                     </div>
 
-                    <div className="rounded-lg border p-4 space-y-4">
+                    <div className="rounded-md border p-2.5 space-y-2">
                         <h4 className="text-sm font-semibold">{isAr ? 'بيانات الدفع' : 'Payment'}</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="space-y-2">
-                                <Label>{isAr ? 'نوع الدفع' : 'Payment Type'}</Label>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                                <Label className="text-xs">{isAr ? 'نوع الدفع' : 'Payment Type'}</Label>
                                 <div className="flex gap-2">
                                     <Button
                                         type="button"
+                                        size="sm"
                                         variant={watchedPaymentType === 'cash' ? 'default' : 'outline'}
                                         onClick={() => handlePaymentTypeChange('cash')}
-                                        className="flex-1"
+                                        className="h-8 flex-1"
                                     >
                                         {isAr ? 'كاش' : 'Cash'}
                                     </Button>
                                     <Button
                                         type="button"
+                                        size="sm"
                                         variant={watchedPaymentType === 'credit' ? 'default' : 'outline'}
                                         onClick={() => handlePaymentTypeChange('credit')}
-                                        className="flex-1"
+                                        className="h-8 flex-1"
                                     >
                                         {isAr ? 'آجل' : 'Credit'}
                                     </Button>
                                 </div>
                             </div>
-                            <div className="space-y-2">
-                                <Label>{isAr ? 'المدفوع الآن' : 'Paid Now'}</Label>
+                            <div className="space-y-1">
+                                <Label className="text-xs">{isAr ? 'المدفوع الآن' : 'Paid Now'}</Label>
                                 <Input
                                     type="number"
+                                    className="h-8"
                                     step="0.01"
                                     min={0}
                                     value={Number(watch('paid_amount') || 0)}
@@ -1346,7 +1359,7 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                         setValue('paid_amount', safe, { shouldDirty: true, shouldTouch: true });
                                     }}
                                 />
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-[10px] text-muted-foreground">
                                     {isAr
                                         ? (watchedPaymentType === 'cash'
                                             ? 'افتراضيًا = إجمالي الفاتورة (كاش)، ويمكنك التعديل.'
@@ -1356,31 +1369,32 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                             : 'You can enter any upfront paid amount for credit.')}
                                 </p>
                             </div>
-                            <div className="space-y-2">
-                                <Label>{isAr ? 'الباقي' : 'Remaining'}</Label>
-                                <Input value={computedTotals.remaining.toLocaleString()} readOnly />
-                                <p className="text-xs text-muted-foreground">
+                            <div className="space-y-1">
+                                <Label className="text-xs">{isAr ? 'الباقي' : 'Remaining'}</Label>
+                                <Input className="h-8" value={computedTotals.remaining.toLocaleString()} readOnly />
+                                <p className="text-[10px] text-muted-foreground">
                                     {isAr ? 'يتم حسابه تلقائياً.' : 'Calculated automatically.'}
                                 </p>
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                            <div className="rounded border bg-muted/30 p-3">
-                                <p className="text-xs text-muted-foreground">{isAr ? 'إجمالي الفاتورة' : 'Invoice Total'}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                            <div className="rounded border bg-muted/30 px-2.5 py-1.5">
+                                <p className="text-[10px] text-muted-foreground">{isAr ? 'إجمالي الفاتورة' : 'Invoice Total'}</p>
                                 <p className="font-semibold">{computedTotals.total.toLocaleString()} EGP</p>
                             </div>
-                            <div className="rounded border bg-muted/30 p-3">
-                                <p className="text-xs text-muted-foreground">{isAr ? 'المدفوع' : 'Paid'}</p>
+                            <div className="rounded border bg-muted/30 px-2.5 py-1.5">
+                                <p className="text-[10px] text-muted-foreground">{isAr ? 'المدفوع' : 'Paid'}</p>
                                 <p className="font-semibold text-emerald-600">{computedTotals.paid.toLocaleString()} EGP</p>
                             </div>
-                            <div className="rounded border bg-muted/30 p-3">
-                                <p className="text-xs text-muted-foreground">{isAr ? 'المتبقي' : 'Balance'}</p>
+                            <div className="rounded border bg-muted/30 px-2.5 py-1.5">
+                                <p className="text-[10px] text-muted-foreground">{isAr ? 'المتبقي' : 'Balance'}</p>
                                 <p className="font-semibold text-amber-600">{computedTotals.remaining.toLocaleString()} EGP</p>
                             </div>
                         </div>
                     </div>
+                    </div>
 
-                    <DialogFooter>
+                    <DialogFooter className="mt-2 shrink-0 border-t pt-2">
                         <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                             {isAr ? 'إلغاء' : 'Cancel'}
                         </Button>

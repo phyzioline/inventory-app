@@ -755,19 +755,7 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
 
           {/* Items */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm font-bold text-emerald-700">{isAr ? '🧾 بنود الطلب' : '🧾 Order Items'}</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                onClick={() => append({ product_id: '', quantity: 1, unit_price: 0 })}
-              >
-                <Plus className="w-3 h-3 mr-1" />
-                {isAr ? 'إضافة بند' : 'Add Item'}
-              </Button>
-            </div>
+            <Label className="text-sm font-bold text-emerald-700">{isAr ? '🧾 بنود الطلب' : '🧾 Order Items'}</Label>
 
             {fields.map((field, index) => {
               const selectedId = watch(`items.${index}.product_id`) || '';
@@ -889,6 +877,19 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
                 </div>
               );
             })}
+
+            <div className="flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                onClick={() => append({ product_id: '', quantity: 1, unit_price: 0 })}
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                {isAr ? 'إضافة بند' : 'Add Item'}
+              </Button>
+            </div>
           </div>
 
           {/* Total */}
