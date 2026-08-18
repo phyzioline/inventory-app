@@ -9,6 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { getProductImageSrc } from '@/lib/utils';
+import { invalidateInventoryLiveQueries } from '@/lib/inventoryLiveQueries';
 
 interface Props {
     open: boolean;
@@ -55,7 +56,7 @@ export default function LinkSKUDialog({ open, onOpenChange, sku }: Props) {
                 title: 'تم الربط بنجاح',
                 description: 'تم ربط المنتج بالمنتج الرئيسي وتفعيل المزامنة.',
             });
-            queryClient.invalidateQueries({ queryKey: ['channel-skus'] });
+            invalidateInventoryLiveQueries(queryClient, { immediate: true });
             onOpenChange(false);
         },
     });

@@ -76,6 +76,7 @@ export function mergeChannelSkusIntoInventoryRows(
                 name: sk.name ?? sk.product_name ?? '',
                 offer: sk.offer,
                 channel: sk.channel,
+                channel_id: sk.channel_id ?? sk.channel?.id ?? null,
                 product: sk.product,
                 image_url: sk.image_url,
             },

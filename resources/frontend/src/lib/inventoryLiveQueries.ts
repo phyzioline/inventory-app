@@ -22,6 +22,8 @@ export const INVENTORY_LIVE_QUERY_PREFIXES = [
   'purchases-summary-by-location',
   'stock-movements',
   'transfers',
+  'transfer-source-inventory-fba',
+  'transfer-dest-inventory-fba',
   'transactions',
 ] as const;
 

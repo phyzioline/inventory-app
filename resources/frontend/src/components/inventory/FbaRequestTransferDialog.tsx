@@ -13,8 +13,9 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Badge } from '@/components/ui/badge';
 import { cn, getProductImageSrc } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useQuery } from '@tanstack/react-query';
-import { fetchAllWarehouseInventoryPages, resolveInventoryRowQty } from '@/lib/warehouseInventoryFetch';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchMergedLocationInventory, resolveInventoryRowQty } from '@/lib/warehouseInventoryFetch';
+import { subscribeInventoryCatalogUpdated } from '@/lib/inventoryCatalogBroadcast';
 import {
   buildFbaTransferSummary,
   FbaTransferSummary,
@@ -305,6 +306,7 @@ function looksLikeFba(loc: any): boolean {
 }
 
 export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess }: FbaRequestTransferDialogProps) {
+  const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [locations, setLocations] = useState<any[]>([]);
@@ -379,27 +381,12 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     }
   };
 
-  const { data: sourceInventory = [], isLoading: loadingSource } = useQuery({
-    queryKey: ['transfer-source-inventory-fba', sourceLocationId],
-    queryFn: () => fetchAllWarehouseInventoryPages(sourceLocationId),
-    enabled: open && !!sourceLocationId,
-  });
-
-  const { data: destInventory = [], isLoading: loadingDest } = useQuery({
-    queryKey: ['transfer-dest-inventory-fba', destinationLocationId],
-    queryFn: () => fetchAllWarehouseInventoryPages(destinationLocationId),
-    enabled: open && !!destinationLocationId,
-  });
-
   const { data: channels = [] } = useQuery({
     queryKey: ['channels'],
     queryFn: () => api.getArray('/channels'),
     enabled: open,
     staleTime: 60_000,
   });
-
-  const allSourceSkus = useMemo(() => mapInventoryToSkuOptions(sourceInventory), [sourceInventory]);
-  const allDestSkus = useMemo(() => mapInventoryToSkuOptions(destInventory), [destInventory]);
 
   const destChannelId = useMemo(() => {
     const loc = locations.find((l: any) => String(l.id) === destinationLocationId);
@@ -422,6 +409,25 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
     });
     return matched?.id != null ? String(matched.id) : '';
   }, [locations, sourceLocationId, channels]);
+
+  // Merge in channel-linked SKUs that have no stock movement yet at this warehouse
+  // (e.g. a shop/FBA SKU just linked to the catalog) — plain warehouse inventory only
+  // lists SKUs that already have an inventory row, so a freshly linked SKU with zero
+  // stock would otherwise never appear here and keep failing "not found" validation.
+  const { data: sourceInventory = [], isLoading: loadingSource } = useQuery({
+    queryKey: ['transfer-source-inventory-fba', sourceLocationId, sourceChannelId],
+    queryFn: () => fetchMergedLocationInventory(sourceLocationId, sourceChannelId || null),
+    enabled: open && !!sourceLocationId,
+  });
+
+  const { data: destInventory = [], isLoading: loadingDest } = useQuery({
+    queryKey: ['transfer-dest-inventory-fba', destinationLocationId, destChannelId],
+    queryFn: () => fetchMergedLocationInventory(destinationLocationId, destChannelId || null),
+    enabled: open && !!destinationLocationId,
+  });
+
+  const allSourceSkus = useMemo(() => mapInventoryToSkuOptions(sourceInventory), [sourceInventory]);
+  const allDestSkus = useMemo(() => mapInventoryToSkuOptions(destInventory), [destInventory]);
 
   /** Source picker: only shop-channel SKUs (never FBA/merchant/noon sitting in the same warehouse). */
   const sourceSkus = useMemo(() => {
@@ -448,10 +454,25 @@ export default function FbaRequestTransferDialog({ open, onOpenChange, onSuccess
   useEffect(() => {
     if (open) {
       loadLocations();
+      // Force a fresh read on every open — a SKU may have just been linked/fixed
+      // elsewhere while this dialog sat closed with a cached (up to 3min stale) list.
+      queryClient.invalidateQueries({ queryKey: ['transfer-source-inventory-fba'] });
+      queryClient.invalidateQueries({ queryKey: ['transfer-dest-inventory-fba'] });
       return;
     }
     resetState();
-  }, [open]);
+  }, [open, queryClient]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Same-tab SKU links go through invalidateInventoryLiveQueries; other-tab links
+    // arrive via this BroadcastChannel. Either way, re-pull the inventory lists live
+    // instead of leaving the picker stuck on a "not found" SKU until a hard refresh.
+    return subscribeInventoryCatalogUpdated(() => {
+      queryClient.invalidateQueries({ queryKey: ['transfer-source-inventory-fba'] });
+      queryClient.invalidateQueries({ queryKey: ['transfer-dest-inventory-fba'] });
+    });
+  }, [open, queryClient]);
 
   useEffect(() => {
     if (!sourceAvailMap.size || matchedItems.length === 0) return;
