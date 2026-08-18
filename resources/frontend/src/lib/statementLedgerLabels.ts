@@ -47,12 +47,24 @@ export function formatSupplierLedgerRowDescription(
   supplierName: string,
   rtl: boolean
 ): string {
-  if (String(row.source ?? '') === 'payment') {
-    const ref = extractLedgerReference(String(row.description ?? ''));
-    return formatSupplierPaymentDescription(supplierName, ref, rtl);
+  const src = String(row.source ?? '');
+  const raw = String(row.description ?? '');
+  const ref = extractLedgerReference(raw) || raw.replace(/^Purchase Invoice #\s*/i, '').replace(/^Purchase Return #\s*/i, '').trim();
+
+  if (src === 'payment') {
+    return formatSupplierPaymentDescription(supplierName, extractLedgerReference(raw), rtl);
+  }
+  if (src === 'invoice') {
+    return rtl ? `من فاتورة شراء رقم ${ref || raw}` : `Purchase Invoice #${ref || raw}`;
+  }
+  if (src === 'invoice_cash') {
+    return rtl ? `سداد نقدي من فاتورة شراء #${ref}` : `Cash settlement — purchase #${ref}`;
+  }
+  if (src === 'purchase_return') {
+    return rtl ? `مرتجع مشتريات #${ref}` : `Purchase Return #${ref}`;
   }
 
-  return String(row.description ?? '');
+  return raw;
 }
 
 export function formatCustomerLedgerRowDescription(

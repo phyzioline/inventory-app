@@ -15,9 +15,27 @@ class Supplier extends Model
         'name', 'email', 'phone', 'address', 'balance',
     ];
 
+    /**
+     * PostgreSQL `suppliers.balance` is NOT NULL without a DB default
+     * (pgloader / dump restore dropped DEFAULT 0). Creating with name only
+     * must still persist a zero opening balance.
+     */
+    protected $attributes = [
+        'balance' => 0,
+    ];
+
     protected $casts = [
         'balance' => 'decimal:2',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $supplier): void {
+            if ($supplier->balance === null || $supplier->balance === '') {
+                $supplier->balance = 0;
+            }
+        });
+    }
 
     public static function normalizePhoneDigits(?string $phone): string
     {

@@ -319,7 +319,18 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
             toast.success(isAr ? 'تم إضافة المورد' : 'Supplier added');
         },
         onError: (error: any) => {
-            toast.error(error?.message || (isAr ? 'فشل إضافة المورد' : 'Failed to add supplier'));
+            const apiMessage = error?.response?.data?.message;
+            const validationErrors = error?.response?.data?.errors;
+            if (validationErrors && typeof validationErrors === 'object') {
+                const firstError = Object.values(validationErrors).flat()[0];
+                toast.error(String(firstError));
+                return;
+            }
+            toast.error(
+                (typeof apiMessage === 'string' && apiMessage && !apiMessage.includes('<!DOCTYPE'))
+                    ? apiMessage
+                    : (isAr ? 'فشل إضافة المورد' : 'Failed to add supplier')
+            );
         },
     });
 

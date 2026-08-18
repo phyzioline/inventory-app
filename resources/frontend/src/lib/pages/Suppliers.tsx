@@ -375,7 +375,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       description: string;
       debit: number;
       credit: number;
-      source: 'invoice' | 'payment';
+      source: 'invoice' | 'payment' | 'purchase_return';
       source_id: string;
       items?: any[];
       invoiceTotal?: number;
@@ -389,8 +389,8 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
         key: `inv-${inv.id}`,
         date: inv.date ?? '',
         description: 'Purchase Invoice #' + (inv.invoice_number ?? inv.id),
-        debit: Number(inv.total ?? 0),
-        credit: 0,
+        debit: 0,
+        credit: Number(inv.total ?? 0),
         source: 'invoice',
         source_id: String(inv.id),
         items: Array.isArray(inv.items) ? inv.items : [],
@@ -400,6 +400,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     }
 
     for (const pay of payments) {
+      if (String(pay.status || '').toLowerCase() === 'cancelled') continue;
       entries.push({
         key: `pay-${pay.id}`,
         date: pay.date ?? '',
@@ -408,10 +409,23 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
           pay.reference,
           isAr
         ),
-        debit: 0,
-        credit: Number(pay.amount ?? 0),
+        debit: Number(pay.amount ?? 0),
+        credit: 0,
         source: 'payment',
         source_id: String(pay.id),
+      });
+    }
+
+    const returns = Array.isArray((account as any).returns) ? (account as any).returns : [];
+    for (const ret of returns) {
+      entries.push({
+        key: `ret-${ret.id}`,
+        date: ret.return_date || ret.date || '',
+        description: 'Purchase Return #' + (ret.return_number ?? ret.id),
+        debit: Number(ret.grand_total ?? ret.total ?? 0),
+        credit: 0,
+        source: 'purchase_return',
+        source_id: String(ret.id),
       });
     }
 
@@ -423,7 +437,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
 
     let running = 0;
     return entries.map((e, i) => {
-      running += e.debit - e.credit;
+      running += e.credit - e.debit;
       return { ...e, balance: Math.round(running * 100) / 100, seq: i + 1 };
     });
   };
@@ -440,6 +454,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
         dateTo: endDate || undefined,
         ledger: selectedAccount.ledger || [],
         invoices: selectedAccount.invoices || [],
+        payments: selectedAccount.payments || [],
         includeLineItems: statementIncludeLineItems,
       });
       if (!ok) {
@@ -687,8 +702,8 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                       <TableRow>
                         <TableHead className="w-8 text-center">{isAr ? 'م' : '#'}</TableHead>
                         <TableHead>{isAr ? 'البيان' : 'Description'}</TableHead>
-                        <TableHead className="text-end">{isAr ? 'مدين' : 'Debit'}</TableHead>
-                        <TableHead className="text-end">{isAr ? 'دائن' : 'Credit'}</TableHead>
+                        <TableHead className="text-end">{isAr ? 'مدين (المدفوع)' : 'Debit (paid)'}</TableHead>
+                        <TableHead className="text-end">{isAr ? 'دائن (علينا)' : 'Credit (we owe)'}</TableHead>
                         <TableHead className="text-end">{isAr ? 'الرصيد' : 'Balance'}</TableHead>
                         <TableHead className="w-24">{isAr ? 'التاريخ' : 'Date'}</TableHead>
                       </TableRow>

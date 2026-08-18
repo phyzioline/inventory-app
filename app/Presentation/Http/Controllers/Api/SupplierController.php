@@ -114,6 +114,38 @@ class SupplierController extends Controller
         return $bid > 0 && isset($batchIdSet[$bid]);
     }
 
+    private function autoPurchaseBatchId(mixed $payment): int
+    {
+        $bid = (int) ($payment->reference_id ?? 0);
+        if ($bid <= 0 && preg_match('/AUTO_PURCHASE_BATCH:(\d+)/', (string) ($payment->notes ?? ''), $m)) {
+            $bid = (int) $m[1];
+        }
+
+        return $bid;
+    }
+
+    /**
+     * Statement/ledger must not treat a credit-invoice AUTO cash-mirror as a real payment.
+     * Cash invoices keep the AUTO row — it is the settlement line (KPI already counts cash via [PAYMENT] meta).
+     */
+    private function shouldOmitAutoMirrorFromStatement(mixed $payment, array $batchIdSet, array $cashBatchIds): bool
+    {
+        if (! str_contains((string) ($payment->notes ?? ''), 'AUTO_PURCHASE_BATCH:')) {
+            return false;
+        }
+
+        $bid = $this->autoPurchaseBatchId($payment);
+        if ($bid <= 0 || ! isset($batchIdSet[$bid])) {
+            return false;
+        }
+
+        if (isset($cashBatchIds[$bid])) {
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * Split completed supplier payments into amounts linked to purchase batches in scope vs orphan (on-account).
      *
@@ -222,6 +254,15 @@ class SupplierController extends Controller
      */
     public function store(Request $request)
     {
+        $request->merge([
+            'email' => $this->nullIfBlank($request->input('email')),
+            'phone' => $this->nullIfBlank($request->input('phone')),
+            'address' => $this->nullIfBlank($request->input('address')),
+            'balance' => $request->input('balance') === '' || $request->input('balance') === null
+                ? 0
+                : $request->input('balance'),
+        ]);
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'nullable|email|max:255',
@@ -234,9 +275,32 @@ class SupplierController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $supplier = Supplier::create($validator->validated());
+        $data = $validator->validated();
+        $data['balance'] = isset($data['balance']) ? (float) $data['balance'] : 0.0;
+
+        try {
+            $supplier = Supplier::create($data);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'Could not create supplier',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
 
         return response()->json($supplier, 201);
+    }
+
+    private function nullIfBlank(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim((string) $value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     /**
@@ -652,6 +716,21 @@ class SupplierController extends Controller
 
         $payments = $paymentQuery->orderByDesc('payment_date')->get();
 
+        $batchIdSet = [];
+        $cashBatchIds = [];
+        foreach ($invoices as $batch) {
+            $bid = (int) $batch->id;
+            $batchIdSet[$bid] = true;
+            $meta = $this->parsePaymentMeta($batch->notes);
+            if (($meta['type'] ?? '') === 'cash') {
+                $cashBatchIds[$bid] = true;
+            }
+        }
+
+        $paymentsForStatement = $payments
+            ->filter(fn ($payment) => ! $this->shouldOmitAutoMirrorFromStatement($payment, $batchIdSet, $cashBatchIds))
+            ->values();
+
         $invoiceRows = $invoices->map(function ($batch) {
             $invoiceTotal = (float) ($batch->grand_total ?? $batch->subtotal ?? 0);
             $meta = $this->parsePaymentMeta($batch->notes);
@@ -691,7 +770,7 @@ class SupplierController extends Controller
             ];
         })->values();
 
-        $paymentRows = $payments->map(function ($payment) {
+        $paymentRows = $paymentsForStatement->map(function ($payment) {
             return [
                 'id' => $payment->id,
                 'date' => optional($payment->payment_date)->toDateString(),

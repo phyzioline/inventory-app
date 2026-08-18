@@ -1102,11 +1102,37 @@ export function printCustomerStatement(params: {
     return openPrintHtml(html);
 }
 
+export type SupplierStatementPayment = {
+    id?: number | string;
+    date?: string;
+    amount?: number;
+    reference?: string | number | null;
+    status?: string;
+    notes?: string | null;
+};
+
+function formatSupplierClosingPhrase(closing: number, rtl: boolean): { label: string; amount: string } {
+    const abs = Math.abs(closing);
+    const amount = formatMoney(abs, rtl);
+    if (closing > 0.005) {
+        return { label: rtl ? 'الرصيد النهائي — علينا' : 'Closing — we owe', amount };
+    }
+    if (closing < -0.005) {
+        return { label: rtl ? 'الرصيد النهائي — له' : 'Closing — supplier owes us', amount };
+    }
+    return { label: rtl ? 'الرصيد النهائي — مسدد' : 'Closing — settled', amount: formatMoney(0, rtl) };
+}
+
 export function printSupplierStatement(params: {
-     dateFrom?: string;
+    rtl: boolean;
+    branding?: Partial<CompanyBranding>;
+    supplierName: string;
+    supplierCode?: string;
+    dateFrom?: string;
     dateTo?: string;
     ledger: SupplierStatementRow[];
     invoices: SupplierStatementInvoice[];
+    payments?: SupplierStatementPayment[];
     includeLineItems: boolean;
 }): boolean {
     const { rtl, supplierName, supplierCode, dateFrom, dateTo, invoices } = params;
@@ -1132,8 +1158,8 @@ export function printSupplierStatement(params: {
         all: rtl ? 'كل الفترات' : 'All dates',
         colSeq: rtl ? 'م' : '#',
         colDesc: rtl ? 'البيان' : 'Description',
-        colDebit: rtl ? 'مدين' : 'Debit',
-        colCredit: rtl ? 'دائن' : 'Credit',
+        colDebit: rtl ? 'مدين (المدفوع)' : 'Debit (paid)',
+        colCredit: rtl ? 'دائن (علينا)' : 'Credit (we owe)',
         colBalance: rtl ? 'الرصيد' : 'Balance',
         colDate: rtl ? 'التاريخ' : 'Date',
         colTime: rtl ? 'الوقت' : 'Time',
@@ -1146,8 +1172,8 @@ export function printSupplierStatement(params: {
         itemTotal: rtl ? 'الإجمالي' : 'Total',
         subtotalLabel: rtl ? 'الإجمالي' : 'Total',
         remainingLabel: rtl ? 'المتبقي' : 'Remaining',
-        totalDebit: rtl ? 'إجمالي المدين' : 'Total debit',
-        totalCredit: rtl ? 'إجمالي الدائن' : 'Total credit',
+        totalDebit: rtl ? 'إجمالي المدين (المدفوع)' : 'Total debit (paid)',
+        totalCredit: rtl ? 'إجمالي الدائن (المشتريات / علينا)' : 'Total credit (purchases / we owe)',
         finalBal: rtl ? 'الرصيد النهائي' : 'Closing balance',
     };
 
@@ -1167,54 +1193,92 @@ export function printSupplierStatement(params: {
     };
 
     const entries: Omit<LedgerEntry, 'seq' | 'balance'>[] = [];
+    const includeItems = params.includeLineItems !== false;
 
     for (const inv of invoices) {
         entries.push({
             date: String(inv.date ?? ''),
-            description: (rtl ? 'من فاتورة شراء رقم ' : 'Purchase Invoice #') + String(inv.invoice_number ?? inv.id),
-            debit: Number(inv.total ?? 0),
-            credit: 0,
+            description: formatSupplierLedgerRowDescription(
+                { source: 'invoice', description: 'Purchase Invoice #' + String(inv.invoice_number ?? inv.id) },
+                supplierName ?? '',
+                rtl
+            ),
+            debit: 0,
+            credit: Number(inv.total ?? 0),
             source: 'invoice',
             source_id: String(inv.id),
-            items: Array.isArray(inv.items) ? inv.items : [],
+            items: includeItems && Array.isArray(inv.items) ? inv.items : [],
             invoiceTotal: Number(inv.total ?? 0),
             invoiceRemaining: Number((inv as any).remaining ?? 0),
         });
     }
 
-    for (const row of params.ledger) {
-        if (String(row.source || '') === 'payment' || (Number(row.credit ?? 0) > 0 && Number(row.debit ?? 0) === 0)) {
+    const payments = Array.isArray(params.payments) ? params.payments : [];
+    if (payments.length > 0) {
+        for (const pay of payments) {
+            if (String(pay.status || '').toLowerCase() === 'cancelled') continue;
+            entries.push({
+                date: String(pay.date ?? ''),
+                description: formatSupplierPaymentDescription(
+                    supplierName ?? '',
+                    pay.reference,
+                    rtl
+                ),
+                debit: Number(pay.amount ?? 0),
+                credit: 0,
+                source: 'payment',
+                source_id: String(pay.id ?? ''),
+            });
+        }
+    } else {
+        for (const row of params.ledger) {
             const src = String(row.source || '');
+            if (src === 'invoice') continue;
+            const amount = Number(row.credit ?? 0) > 0 ? Number(row.credit ?? 0) : Number(row.debit ?? 0);
+            if (amount <= 0) continue;
             entries.push({
                 date: String(row.date ?? ''),
-                description:
-                    src === 'payment'
-                        ? formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl)
-                        : String(row.description ?? ''),
-                debit: 0,
-                credit: Number(row.credit ?? 0),
-                source: 'payment',
+                description: formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl),
+                debit: amount,
+                credit: 0,
+                source: src === 'purchase_return' ? 'purchase_return' : 'payment',
                 source_id: String(row.source_id ?? ''),
             });
         }
     }
 
+    for (const row of params.ledger) {
+        if (String(row.source || '') !== 'purchase_return' || payments.length === 0) continue;
+        const amount = Number(row.credit ?? 0) > 0 ? Number(row.credit ?? 0) : Number(row.debit ?? 0);
+        if (amount <= 0) continue;
+        entries.push({
+            date: String(row.date ?? ''),
+            description: formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl),
+            debit: amount,
+            credit: 0,
+            source: 'purchase_return',
+            source_id: String(row.source_id ?? ''),
+        });
+    }
+
     entries.sort((a, b) => {
         if (a.date < b.date) return -1;
         if (a.date > b.date) return 1;
-        return (a.source === 'invoice' ? 0 : 1) - (b.source === 'invoice' ? 0 : 1);
+        const order: Record<string, number> = { invoice: 0, purchase_return: 1, payment: 2 };
+        return (order[a.source] ?? 3) - (order[b.source] ?? 3);
     });
 
     let running = 0;
     let totalDebit = 0;
     let totalCredit = 0;
     const ledgerRows: LedgerEntry[] = entries.map((e, i) => {
-        running += e.debit - e.credit;
+        running += e.credit - e.debit;
         totalDebit += e.debit;
         totalCredit += e.credit;
         return { ...e, seq: i + 1, balance: Math.round(running * 100) / 100 };
     });
     const closing = running;
+    const closingPhrase = formatSupplierClosingPhrase(closing, rtl);
 
     const rowsHtml: string[] = [];
 
@@ -1314,9 +1378,9 @@ export function printSupplierStatement(params: {
     const totalsHtml = `
         <div class="totals-box" style="direction:${direction};">
             <table>
-                <tr><td>${escapeHtml(L.totalDebit)}</td><td class="num" style="text-align:${align};">${formatMoney(totalDebit, rtl)}</td></tr>
                 <tr><td>${escapeHtml(L.totalCredit)}</td><td class="num" style="text-align:${align};">${formatMoney(totalCredit, rtl)}</td></tr>
-                <tr><td class="grand">${escapeHtml(L.finalBal)}</td><td class="num grand" style="text-align:${align};">${formatMoney(closing, rtl)}</td></tr>
+                <tr><td>${escapeHtml(L.totalDebit)}</td><td class="num" style="text-align:${align};">${formatMoney(totalDebit, rtl)}</td></tr>
+                <tr><td class="grand">${escapeHtml(closingPhrase.label)}</td><td class="num grand" style="text-align:${align};">${escapeHtml(closingPhrase.amount)}</td></tr>
             </table>
         </div>
     `;
