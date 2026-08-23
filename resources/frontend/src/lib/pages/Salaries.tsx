@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 import axios from 'axios';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
@@ -27,6 +27,7 @@ import {
   Pencil,
   UserPlus,
   Download,
+  X,
 } from 'lucide-react';
 
 const toNumber = (value: number | string | null | undefined) => {
@@ -59,6 +60,10 @@ export default function Salaries() {
     payment_method: 'cash',
     description: '',
   });
+
+  const [personFilter, setPersonFilter] = useState<string>('all');
+  const [dateFrom, setDateFrom] = useState<string>(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [dateTo, setDateTo] = useState<string>(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
 
   const { data: employees = [], isLoading: employeesLoading } = useQuery({
     queryKey: ['employees'],
@@ -109,6 +114,40 @@ export default function Salaries() {
     () => salaryPayments.reduce((sum, e) => sum + toNumber(e.amount), 0),
     [salaryPayments]
   );
+
+  const personOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const payment of salaryPayments) {
+      const name = String(payment.vendor_name || '').trim();
+      if (name) names.add(name);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, isAr ? 'ar' : 'en'));
+  }, [salaryPayments, isAr]);
+
+  const filteredSalaryPayments = useMemo(() => {
+    return salaryPayments.filter((payment) => {
+      if (personFilter !== 'all' && String(payment.vendor_name || '').trim() !== personFilter) {
+        return false;
+      }
+      const paymentDate = new Date(payment.expense_date || payment.created_at || 0);
+      if (dateFrom && paymentDate < new Date(dateFrom)) return false;
+      if (dateTo && paymentDate > new Date(dateTo + 'T23:59:59')) return false;
+      return true;
+    });
+  }, [salaryPayments, personFilter, dateFrom, dateTo]);
+
+  const filteredTotal = useMemo(
+    () => filteredSalaryPayments.reduce((sum, e) => sum + toNumber(e.amount), 0),
+    [filteredSalaryPayments]
+  );
+
+  const hasActiveFilters = personFilter !== 'all' || !!dateFrom || !!dateTo;
+
+  const clearFilters = () => {
+    setPersonFilter('all');
+    setDateFrom('');
+    setDateTo('');
+  };
 
   const resetEmployeeForm = () => {
     setEmployeeForm({
@@ -418,11 +457,69 @@ export default function Salaries() {
 
       <Card className="glass-card">
         <CardContent className="pt-6 space-y-4">
-          <h2 className="text-lg font-semibold">{t('salaries.payments')}</h2>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">{t('salaries.payments')}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={personFilter} onValueChange={setPersonFilter}>
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue placeholder={t('salaries.employeeName')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{isAr ? 'كل الأشخاص' : 'All People'}</SelectItem>
+                  {personOptions.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-[140px]"
+              />
+              <span className="text-muted-foreground text-sm">{t('common.to')}</span>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-[140px]"
+              />
+              {hasActiveFilters && (
+                <Button variant="ghost" size="icon" onClick={clearFilters} title={t('common.clearFilters')}>
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Badge variant="secondary">
+              {isAr ? 'عدد الدفعات' : 'Payments'}: {filteredSalaryPayments.length}
+            </Badge>
+            <Badge className="bg-destructive/10 text-destructive">
+              {personFilter !== 'all'
+                ? isAr
+                  ? `إجمالي ما سحبه ${personFilter}`
+                  : `Total withdrawn by ${personFilter}`
+                : isAr
+                  ? 'إجمالي الرواتب في الفترة المحددة'
+                  : 'Total salaries in selected period'}
+              : {filteredTotal.toLocaleString()} EGP
+            </Badge>
+          </div>
+
           {expensesLoading ? (
             <p className="text-muted-foreground text-sm">{t('common.loading')}</p>
-          ) : salaryPayments.length === 0 ? (
-            <p className="text-muted-foreground text-sm py-8 text-center">{t('salaries.noPayments')}</p>
+          ) : filteredSalaryPayments.length === 0 ? (
+            <p className="text-muted-foreground text-sm py-8 text-center">
+              {salaryPayments.length === 0
+                ? t('salaries.noPayments')
+                : isAr
+                  ? 'لا توجد دفعات مطابقة لهذا الفلتر'
+                  : 'No payments match this filter'}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -437,7 +534,7 @@ export default function Salaries() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {salaryPayments.map((payment) => (
+                  {filteredSalaryPayments.map((payment) => (
                     <TableRow key={payment.id}>
                       <TableCell>{payment.expense_number || '—'}</TableCell>
                       <TableCell>
