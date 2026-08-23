@@ -7,7 +7,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\Receipt;
-use App\Domain\Models\Wms\Settlement;
 use App\Domain\Models\Wms\TreasurySulfa;
 use App\Infrastructure\Support\InventoryMorphTypes;
 
@@ -118,9 +117,7 @@ class TreasuryPanelController extends Controller
      */
     private function settlementMorphTypes(): array
     {
-        return array_values(array_unique([
-            Settlement::class,
-        ]));
+        return InventoryMorphTypes::settlementReferenceTypes();
     }
 
     /**

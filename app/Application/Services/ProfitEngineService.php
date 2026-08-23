@@ -18,6 +18,7 @@ use App\Domain\Models\Wms\Receipt;
 use App\Domain\Models\Wms\Settlement;
 use App\Domain\Models\Wms\SettlementItem;
 use App\Domain\Models\Wms\Sku;
+use App\Infrastructure\Support\InventoryMorphTypes;
 
 class ProfitEngineService
 {
@@ -722,9 +723,6 @@ class ProfitEngineService
         foreach ($lineSales as $line) {
             $invOrder = $inventoryOrders[$line->order_id] ?? null;
             $orderNet = $invOrder ? $this->lookupOrderSettlementNet($invOrder->platform_order_id, $platformNetMap) : null;
-            if ($orderNet !== null && $orderNet <= 0) {
-                continue;
-            }
 
             $orderRevenue = (float) ($orderRevenueMap[$line->order_id] ?? 0);
             // Negative settlement lines (fees): only allocate when we are NOT using full order settlement net as revenue.
@@ -744,7 +742,7 @@ class ProfitEngineService
                     && $this->normalizeSkuKey($oi->sku_code) === $this->normalizeSkuKey($line->sku_code)
             ) ?? $orderItems->first(fn ($oi) => (int) $oi->sku_id === (int) $line->sku_id);
 
-            if ($orderNet !== null && $orderNet > 0 && $orderSkuMap !== [] && $representativeItem) {
+            if ($orderNet !== null && $orderSkuMap !== [] && $representativeItem) {
                 $skuEconomics = $this->settlementAwareLineEconomics(
                     $representativeItem,
                     $lineQty,
@@ -756,7 +754,7 @@ class ProfitEngineService
                 $lineRevenueEffective = $skuEconomics['revenue'];
                 $lineCogs = $skuEconomics['cogs'];
                 $allocatedCosts = 0.0;
-            } elseif ($orderNet !== null && $orderNet > 0) {
+            } elseif ($orderNet !== null) {
                 $lineRevenueEffective = $orderRevenue > 0
                     ? ($lineRevenueList / $orderRevenue) * $orderNet
                     : 0.0;
@@ -1079,6 +1077,9 @@ class ProfitEngineService
 
         $totalReceipts = round((float) $receipts->sum('amount'), 2);
 
+        $orderReferenceTypes = InventoryMorphTypes::inventoryOrderReferenceTypes();
+        $settlementReferenceTypes = InventoryMorphTypes::settlementReferenceTypes();
+
         $directOrderIds = [];
         $settlementIds = [];
         /** @var array<int, float> */
@@ -1093,10 +1094,10 @@ class ProfitEngineService
             if ($refId <= 0) {
                 continue;
             }
-            if ($refType === InventoryOrder::class) {
+            if (in_array($refType, $orderReferenceTypes, true)) {
                 $directOrderIds[$refId] = true;
                 $receiptAmountByOrderId[$refId] = ($receiptAmountByOrderId[$refId] ?? 0.0) + $amount;
-            } elseif ($refType === Settlement::class) {
+            } elseif (in_array($refType, $settlementReferenceTypes, true)) {
                 $settlementIds[$refId] = true;
                 $receiptAmountBySettlementId[$refId] = ($receiptAmountBySettlementId[$refId] ?? 0.0) + $amount;
             }
@@ -1186,10 +1187,10 @@ class ProfitEngineService
             'linked_order_count' => $linkedOrderCount,
             'linked_unit_qty' => round($linkedUnitQty, 2),
             'cogs_to_receipts_pct' => $cogsToReceiptsPct,
-            'unlinked_receipt_count' => $receipts->filter(function ($r) {
+            'unlinked_receipt_count' => $receipts->filter(function ($r) use ($orderReferenceTypes, $settlementReferenceTypes) {
                 $type = (string) ($r->reference_type ?? '');
 
-                return $type !== InventoryOrder::class && $type !== Settlement::class;
+                return ! in_array($type, $orderReferenceTypes, true) && ! in_array($type, $settlementReferenceTypes, true);
             })->count(),
         ];
     }
