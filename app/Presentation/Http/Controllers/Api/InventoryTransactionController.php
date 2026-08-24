@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryOrder;
+use App\Domain\Models\Wms\InventoryReturn;
 use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\PurchaseBatchItem;
@@ -412,6 +413,7 @@ class InventoryTransactionController extends Controller
 
         $orderIds = [];
         $purchaseBatchIds = [];
+        $returnIds = [];
         foreach ($transactions as $tx) {
             $rt = (string) ($tx->reference_type ?? '');
             $rid = (string) ($tx->reference_id ?? '');
@@ -421,8 +423,25 @@ class InventoryTransactionController extends Controller
             if (in_array($rt, ['Order', 'ImportedOrder', 'OrderEdit'], true)) {
                 $orderIds[] = (int) $rid;
             }
+            if ($rt === 'Return') {
+                $returnIds[] = (int) $rid;
+            }
             if ($this->skuTrackerReferencesPurchaseBatch($rt)) {
                 $purchaseBatchIds[] = (int) $rid;
+            }
+        }
+        $returnIds = array_values(array_unique(array_filter($returnIds)));
+
+        // Return-restock transactions reference the InventoryReturn row, not the order directly —
+        // resolve through it so the tracker can still show the marketplace order-id for "مرتجع" rows.
+        $returnsById = $returnIds === [] ? collect() : InventoryReturn::query()
+            ->whereIn('id', $returnIds)
+            ->get(['id', 'inventory_order_id', 'platform_return_id'])
+            ->keyBy('id');
+
+        foreach ($returnsById as $ret) {
+            if ($ret->inventory_order_id) {
+                $orderIds[] = (int) $ret->inventory_order_id;
             }
         }
         $orderIds = array_values(array_unique(array_filter($orderIds)));
@@ -441,7 +460,7 @@ class InventoryTransactionController extends Controller
 
         $movements = [];
         foreach ($transactions as $tx) {
-            $movements[] = $this->formatSkuTrackerRow($tx, $locationMap, $ordersById, $batchesById);
+            $movements[] = $this->formatSkuTrackerRow($tx, $locationMap, $ordersById, $batchesById, $returnsById);
         }
 
         $balanceSkuIds = array_values(array_unique(array_merge(
@@ -522,7 +541,7 @@ class InventoryTransactionController extends Controller
         return str_contains($t, 'PurchaseBatch') || str_contains($t, 'Purchase');
     }
 
-    private function formatSkuTrackerRow(InventoryTransaction $tx, $locationMap, $ordersById, $batchesById): array
+    private function formatSkuTrackerRow(InventoryTransaction $tx, $locationMap, $ordersById, $batchesById, $returnsById = null): array
     {
         $loc = $tx->relationLoaded('location') ? $tx->location : $tx->location()->with('channel')->first();
         $atLocation = $this->skuTrackerLocationPayload($loc);
@@ -548,6 +567,11 @@ class InventoryTransactionController extends Controller
         $orderNumber = null;
         if ($refId !== '' && in_array($refType, ['Order', 'ImportedOrder', 'OrderEdit'], true)) {
             $order = $ordersById->get((int) $refId);
+            $orderNumber = $order?->platform_order_id;
+        } elseif ($refId !== '' && $refType === 'Return' && $returnsById) {
+            $return = $returnsById->get((int) $refId);
+            $orderId = (int) ($return?->inventory_order_id ?? 0);
+            $order = $orderId > 0 ? $ordersById->get($orderId) : null;
             $orderNumber = $order?->platform_order_id;
         }
 

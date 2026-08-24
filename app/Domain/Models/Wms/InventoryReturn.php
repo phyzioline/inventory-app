@@ -69,6 +69,15 @@ class InventoryReturn extends Model
         return $this->belongsTo(\App\Domain\Models\Wms\InventoryOrder::class);
     }
 
+    /**
+     * Date the physical stock movement should be recorded under — the actual return date
+     * from the marketplace sheet, not the moment the sheet happened to be processed.
+     */
+    private function resolveMovementDate(): \Illuminate\Support\Carbon
+    {
+        return $this->return_date ?: ($this->last_update_date ?: now());
+    }
+
     public function processReturn(): bool
     {
         DB::beginTransaction();
@@ -117,13 +126,14 @@ class InventoryReturn extends Model
                         );
                     }
                 }
+                $movementDate = $this->resolveMovementDate();
                 if ($this->disposition === 'sellable' && $listingSku && $restockSkuId > 0 && $restockLocationId > 0) {
                     $skuInventory = \App\Domain\Models\Wms\SkuInventory::firstOrCreate(
                         ['sku_id' => $restockSkuId, 'location_id' => $restockLocationId],
                         ['quantity' => 0, 'reserved' => 0]
                     );
                     $skuInventory->increment('quantity', $qtyToProcess);
-                    \App\Domain\Models\Wms\InventoryTransaction::create([
+                    \App\Domain\Models\Wms\InventoryTransaction::forceCreate([
                         'sku_id' => $restockSkuId,
                         'location_id' => $restockLocationId,
                         'type' => 'IN',
@@ -133,6 +143,8 @@ class InventoryReturn extends Model
                         'notes' => $isMerchantOrder
                             ? "Merchant return restocked to main store for order {$order->platform_order_id}"
                             : "Sellable return processed for order {$order->platform_order_id}",
+                        'created_at' => $movementDate,
+                        'updated_at' => $movementDate,
                     ]);
                 } elseif (in_array($this->disposition, ['damaged', 'unsellable']) && $listingSku && $restockSkuId > 0 && $restockLocationId > 0) {
                     $adjustmentService = new \App\Application\Services\InventoryAdjustmentService;
@@ -142,6 +154,7 @@ class InventoryReturn extends Model
                         'quantity' => $qtyToProcess,
                         'type' => strtoupper($this->disposition),
                         'notes' => "Return for order {$order->platform_order_id} - Disposition: {$this->disposition}",
+                        'movement_date' => $movementDate,
                     ]);
                 }
                 $remainingQty -= $qtyToProcess;
