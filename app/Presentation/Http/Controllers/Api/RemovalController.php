@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use App\Application\Services\ChannelStockResolver;
+use App\Application\Services\RemovalFbaBalanceService;
 use App\Application\Services\SkuImageResolver;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryRemovalItem;
@@ -18,6 +19,10 @@ use App\Domain\Models\Wms\SkuInventory;
 
 class RemovalController extends Controller
 {
+    public function __construct(private RemovalFbaBalanceService $fbaBalance)
+    {
+    }
+
     private function normalizeDateTime(?string $value): ?string
     {
         $raw = trim((string) ($value ?? ''));
@@ -140,29 +145,6 @@ class RemovalController extends Controller
         }
 
         return $this->resolveShopLocationId();
-    }
-
-    /**
-     * FBA warehouse location holding this listing SKU's balance (channel-tagged, prefer the one with stock).
-     */
-    private function resolveFbaLocationIdForSku(Sku $listingSku, int $channelId): ?int
-    {
-        if ((int) $listingSku->id <= 0 || $channelId <= 0) {
-            return null;
-        }
-
-        $locationIds = ChannelStockResolver::resolveChannelStockLocationIdsForSku($listingSku, $channelId);
-        if ($locationIds === []) {
-            return null;
-        }
-
-        $best = (int) (SkuInventory::query()
-            ->where('sku_id', $listingSku->id)
-            ->whereIn('location_id', $locationIds)
-            ->orderByDesc('quantity')
-            ->value('location_id') ?? 0);
-
-        return $best > 0 ? $best : (int) $locationIds[0];
     }
 
     /**
@@ -535,14 +517,8 @@ class RemovalController extends Controller
 
         // The removed units physically left the FBA warehouse — deduct the same qty from the
         // listing SKU's FBA balance so it doesn't stay inflated after the shop is restocked.
-        $fbaChannelId = (int) ($listingSku->channel_id ?? 0);
-        $fbaLocationId = null;
-        if ($fbaChannelId > 0
-            && (int) $restockSku->id !== (int) $listingSku->id
-            && ChannelStockResolver::isFbaChannel($fbaChannelId)
-        ) {
-            $fbaLocationId = $this->resolveFbaLocationIdForSku($listingSku, $fbaChannelId);
-        }
+        $shouldDeductFba = (int) $restockSku->id !== (int) $listingSku->id
+            && ChannelStockResolver::isFbaChannel((int) ($listingSku->channel_id ?? 0));
 
         DB::beginTransaction();
         try {
@@ -582,29 +558,11 @@ class RemovalController extends Controller
             ]);
 
             $fbaDeducted = 0;
-            if ($fbaLocationId) {
-                $fbaInv = SkuInventory::query()
-                    ->where('sku_id', $listingSku->id)
-                    ->where('location_id', $fbaLocationId)
-                    ->lockForUpdate()
-                    ->first();
-
-                // Clamp to available balance — never block the shop restock over stale/drifted
-                // FBA counts, and never let the FBA balance go negative.
-                $fbaDeducted = $fbaInv ? min($qty, (int) $fbaInv->quantity) : 0;
-                if ($fbaDeducted > 0) {
-                    $fbaInv->decrement('quantity', $fbaDeducted);
-
-                    InventoryTransaction::create([
-                        'sku_id' => $listingSku->id,
-                        'location_id' => $fbaLocationId,
-                        'type' => 'OUT',
-                        'quantity' => $fbaDeducted,
-                        'reference_type' => 'Removal',
-                        'reference_id' => (string) $item->id,
-                        'notes' => 'Amazon removal received: FBA balance reduced ('.($item->removalOrder?->removal_order_id ?? '-').')',
-                    ]);
-                }
+            $fbaLocationId = null;
+            if ($shouldDeductFba) {
+                $fbaResult = $this->fbaBalance->deductForReceivedItem($item, $listingSku, $qty);
+                $fbaDeducted = (int) $fbaResult['deducted'];
+                $fbaLocationId = $fbaResult['location_id'];
             }
 
             $item->update([
