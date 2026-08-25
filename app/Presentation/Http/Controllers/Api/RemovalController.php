@@ -143,6 +143,29 @@ class RemovalController extends Controller
     }
 
     /**
+     * FBA warehouse location holding this listing SKU's balance (channel-tagged, prefer the one with stock).
+     */
+    private function resolveFbaLocationIdForSku(Sku $listingSku, int $channelId): ?int
+    {
+        if ((int) $listingSku->id <= 0 || $channelId <= 0) {
+            return null;
+        }
+
+        $locationIds = ChannelStockResolver::resolveChannelStockLocationIdsForSku($listingSku, $channelId);
+        if ($locationIds === []) {
+            return null;
+        }
+
+        $best = (int) (SkuInventory::query()
+            ->where('sku_id', $listingSku->id)
+            ->whereIn('location_id', $locationIds)
+            ->orderByDesc('quantity')
+            ->value('location_id') ?? 0);
+
+        return $best > 0 ? $best : (int) $locationIds[0];
+    }
+
+    /**
      * Removals return physical units to the shop listing — not the FBA/merchant listing SKU.
      */
     private function resolveRestockSku(Sku $listingSku): Sku
@@ -510,6 +533,17 @@ class RemovalController extends Controller
             (int) ($validated['location_id'] ?? 0) ?: null
         );
 
+        // The removed units physically left the FBA warehouse — deduct the same qty from the
+        // listing SKU's FBA balance so it doesn't stay inflated after the shop is restocked.
+        $fbaChannelId = (int) ($listingSku->channel_id ?? 0);
+        $fbaLocationId = null;
+        if ($fbaChannelId > 0
+            && (int) $restockSku->id !== (int) $listingSku->id
+            && ChannelStockResolver::isFbaChannel($fbaChannelId)
+        ) {
+            $fbaLocationId = $this->resolveFbaLocationIdForSku($listingSku, $fbaChannelId);
+        }
+
         DB::beginTransaction();
         try {
             // Lock inventory row and increment (race-safe).
@@ -547,6 +581,32 @@ class RemovalController extends Controller
                 'notes' => $notes,
             ]);
 
+            $fbaDeducted = 0;
+            if ($fbaLocationId) {
+                $fbaInv = SkuInventory::query()
+                    ->where('sku_id', $listingSku->id)
+                    ->where('location_id', $fbaLocationId)
+                    ->lockForUpdate()
+                    ->first();
+
+                // Clamp to available balance — never block the shop restock over stale/drifted
+                // FBA counts, and never let the FBA balance go negative.
+                $fbaDeducted = $fbaInv ? min($qty, (int) $fbaInv->quantity) : 0;
+                if ($fbaDeducted > 0) {
+                    $fbaInv->decrement('quantity', $fbaDeducted);
+
+                    InventoryTransaction::create([
+                        'sku_id' => $listingSku->id,
+                        'location_id' => $fbaLocationId,
+                        'type' => 'OUT',
+                        'quantity' => $fbaDeducted,
+                        'reference_type' => 'Removal',
+                        'reference_id' => (string) $item->id,
+                        'notes' => 'Amazon removal received: FBA balance reduced ('.($item->removalOrder?->removal_order_id ?? '-').')',
+                    ]);
+                }
+            }
+
             $item->update([
                 'receive_status' => 'received',
                 'received_at' => now(),
@@ -570,6 +630,8 @@ class RemovalController extends Controller
             'restocked_sku' => $restockSku->sku,
             'listing_sku' => $listingSku->sku,
             'location_id' => $locationId,
+            'fba_balance_deducted' => $fbaDeducted,
+            'fba_location_id' => $fbaLocationId,
         ]);
     }
 }
