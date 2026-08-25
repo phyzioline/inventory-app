@@ -29,6 +29,10 @@ export type ReturnRowLike = {
   sku_code?: string | null;
   product_image_url?: string | null;
   product_name?: string | null;
+  return_quantity?: number | null;
+  /** Real return date from the marketplace sheet (falls back to last_update_date if unset). */
+  transaction_return_date?: string | null;
+  return_date?: string | null;
 };
 
 export function returnHasFbaSheetEvidence(r: ReturnRowLike): boolean {
@@ -431,4 +435,9 @@ export function isFbaNotPhysicallyReturned(r: ReturnRowLike): boolean {
 
 export function orderNumberForCopy(r: ReturnRowLike): string {
   return String(r.order?.order_number ?? r.amazon_order_number ?? '').trim();
+}
+
+/** Real return date first (from the marketplace sheet), falls back to last activity date. */
+export function bestReturnDate(r: ReturnRowLike): string | null {
+  return r.transaction_return_date || r.return_date || null;
 }

@@ -4,8 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, getProductImageSrc } from '@/lib/utils';
+import { cn, formatDate, getProductImageSrc } from '@/lib/utils';
 import {
+  bestReturnDate,
   formatReturnReasonLabel,
   isCustomerDidNotReceive,
   isFbaNotPhysicallyReturned,
@@ -93,13 +94,15 @@ export function AmazonClaimsHub({ returns, isAr, t }: Props) {
 
   const renderTable = (rows: ReturnRowLike[], showCopy = false) => (
     <div className="overflow-x-auto -mx-1">
-      <table className="w-full min-w-[720px] text-sm">
+      <table className="w-full min-w-[880px] text-sm">
         <thead>
           <tr className="text-left text-muted-foreground border-b border-border text-[11px] uppercase tracking-wide">
             <th className="py-2 pr-3 w-12">{t('returns.table.image') || (isAr ? 'صورة' : 'Image')}</th>
             <th className="py-2 pr-3">{t('returns.claimsHub.orderNumber') || (isAr ? 'رقم الطلب' : 'Order #')}</th>
             <th className="py-2 pr-3">{t('returns.table.sku') || 'SKU'}</th>
             <th className="py-2 pr-3">{t('returns.table.reason') || (isAr ? 'سبب الإرجاع' : 'Reason')}</th>
+            <th className="py-2 pr-3">{t('returns.table.date') || (isAr ? 'التاريخ' : 'Date')}</th>
+            <th className="py-2 pr-3">{t('returns.table.quantity') || (isAr ? 'الكمية' : 'Qty')}</th>
             <th className="py-2 pr-3">{t('returns.table.reimbursement') || 'Reimbursement'}</th>
             {showCopy ? (
               <th className="py-2 pr-3 text-right">{t('returns.claimsHub.copy') || (isAr ? 'نسخ' : 'Copy')}</th>
@@ -109,7 +112,7 @@ export function AmazonClaimsHub({ returns, isAr, t }: Props) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={showCopy ? 6 : 5} className="py-6 text-center text-muted-foreground text-sm">
+              <td colSpan={showCopy ? 8 : 7} className="py-6 text-center text-muted-foreground text-sm">
                 {t('returns.claimsHub.empty') || (isAr ? 'لا توجد حالات في هذا التبويب' : 'No rows in this tab')}
               </td>
             </tr>
@@ -126,6 +129,8 @@ export function AmazonClaimsHub({ returns, isAr, t }: Props) {
                   <td className="py-2 pr-3 text-xs max-w-[200px] truncate" title={r.reason || undefined}>
                     {formatReturnReasonLabel(r.reason, isAr)}
                   </td>
+                  <td className="py-2 pr-3 text-xs whitespace-nowrap">{formatDate(bestReturnDate(r) || undefined)}</td>
+                  <td className="py-2 pr-3 text-xs text-center">{r.return_quantity ?? 1}</td>
                   <td className="py-2 pr-3">
                     <ReimbursementBadge rows={[r as Record<string, unknown>]} isAr={isAr} t={t} mode="row" />
                   </td>

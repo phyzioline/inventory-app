@@ -32,6 +32,7 @@ class InventoryAdjustmentService
             $quantity = $data['quantity']; // Absolute number
             $type = $data['type']; // DAMAGE, LOST, THEFT, EXPIRED, CORRECTION, OPENING_BALANCE
             $notes = $data['notes'] ?? null;
+            $movementDate = $data['movement_date'] ?? null;
             $userId = TenantContext::id() ?? Auth::id() ?? 1;
 
             // Determine if this is an addition or removal
@@ -54,14 +55,16 @@ class InventoryAdjustmentService
             }
 
             // 2. Create Transaction record
-            InventoryTransaction::create([
+            InventoryTransaction::forceCreate(array_filter([
                 'sku_id' => $skuId,
                 'location_id' => $locationId,
                 'type' => $isAddition ? 'IN' : 'OUT',
                 'quantity' => $quantity,
                 'reference_type' => 'Adjustment',
                 'notes' => "{$type}: {$notes}",
-            ]);
+                'created_at' => $movementDate,
+                'updated_at' => $movementDate,
+            ], fn ($v) => $v !== null));
 
             $totalImpactAmount = 0;
             $adjustments = [];
