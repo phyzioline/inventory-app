@@ -21,6 +21,10 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class MarketplaceImportService
 {
+    public function __construct(private AmazonRemovalIntakeService $removalIntake)
+    {
+    }
+
     /** Persists the last sheet import batch per user (survives cache flush; enables rollback without re-importing). */
     private const LAST_IMPORT_BATCH_TABLE = 'marketplace_order_import_last_batches';
 
@@ -66,6 +70,9 @@ class MarketplaceImportService
      * @var list<array<string, mixed>>
      */
     private array $importStockShortages = [];
+
+    /** Pending Amazon removal rows created from S02- All Orders lines in the current import. */
+    private int $importBatchRemovalsCreated = 0;
 
     /**
      * Large Amazon/Noon order sheets can exceed the default 60s PHP limit on shared hosting.
@@ -131,6 +138,7 @@ class MarketplaceImportService
         $this->importBatchNewOrderItemIds = [];
         $this->importBatchStockOutTransactionIds = [];
         $this->importStockShortages = [];
+        $this->importBatchRemovalsCreated = 0;
         $channelId = $this->resolveImportChannelId($channelId, $lockChannel);
         ['platform' => $platform, 'channels' => $channels, 'defaultChannel' => $defaultChannel] = $this->buildImportContext($channelId);
 
@@ -200,6 +208,7 @@ class MarketplaceImportService
                 'rollback_available' => $txCount > 0 || $newOrderCount > 0,
                 'stock_shortages' => $this->importStockShortages,
                 'stock_shortage_count' => count($this->importStockShortages),
+                'removals_imported' => $this->importBatchRemovalsCreated,
             ]);
         } catch (Exception $e) {
             $this->closeImportSession($sessionId, 'failed', 0, 0, 0);
@@ -914,6 +923,8 @@ class MarketplaceImportService
             'update_orders' => 0,
             'duplicates' => 0,
             'errors' => 0,
+            'removals' => 0,
+            'removal_duplicates' => 0,
             'will_import' => 0,
             'ignored' => 0,
         ];
@@ -930,6 +941,13 @@ class MarketplaceImportService
             } elseif ($status === 'update') {
                 $summary['update_orders']++;
                 $summary['will_import']++;
+            } elseif ($status === 'removal') {
+                $summary['removals']++;
+                $summary['will_import']++;
+            } elseif ($status === 'removal_duplicate') {
+                $summary['removal_duplicates']++;
+                $summary['duplicates']++;
+                $summary['ignored']++;
             } elseif ($status === 'duplicate') {
                 $summary['duplicates']++;
                 $summary['ignored']++;
@@ -1040,7 +1058,11 @@ class MarketplaceImportService
      */
     private function previewRowHasBlockingIssue(array $analysis): bool
     {
-        if (($analysis['status'] ?? '') === 'error') {
+        $status = (string) ($analysis['status'] ?? '');
+        if (in_array($status, ['removal', 'removal_duplicate', 'duplicate'], true)) {
+            return false;
+        }
+        if ($status === 'error') {
             return true;
         }
 
@@ -1049,7 +1071,7 @@ class MarketplaceImportService
             return false;
         }
 
-        return ($analysis['status'] ?? '') !== 'duplicate';
+        return true;
     }
 
     /**
@@ -1123,6 +1145,10 @@ class MarketplaceImportService
 
         if (! $orderData || empty($orderData['platform_order_id'])) {
             return false;
+        }
+
+        if ($this->removalIntake->isAllOrdersRemovalShipmentId((string) $orderData['platform_order_id'])) {
+            return $this->processAmazonRemovalSheetRow($orderData);
         }
 
         DB::beginTransaction();
@@ -1350,6 +1376,111 @@ class MarketplaceImportService
     }
 
     /**
+     * Route S02- All Orders rows into pending Amazon removals. Never creates a sales order or stock OUT.
+     *
+     * @param  array<string, mixed>  $orderData
+     */
+    private function processAmazonRemovalSheetRow(array $orderData): bool
+    {
+        if (! empty($orderData['is_cancelled'])) {
+            return false;
+        }
+
+        $skuCode = trim((string) ($orderData['items'][0]['sku_code'] ?? ''));
+        $qty = (int) ($orderData['items'][0]['quantity'] ?? 0);
+        if ($skuCode === '' || strtoupper($skuCode) === 'UNKNOWN' || $qty <= 0) {
+            return false;
+        }
+
+        $uid = (int) (Auth::id() ?? 0);
+        $result = $this->removalIntake->upsertPendingFromAllOrdersRow(
+            $uid,
+            (string) $orderData['platform_order_id'],
+            $skuCode,
+            $qty,
+            isset($orderData['order_date']) ? (string) $orderData['order_date'] : null,
+            (string) ($orderData['currency'] ?? 'EGP')
+        );
+
+        if ($result['created']) {
+            $this->importBatchRemovalsCreated++;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $orderData
+     * @return array<string, mixed>
+     */
+    private function analyzeAmazonRemovalSheetRow(
+        array $orderData,
+        string $uploadedOrderId,
+        string $uploadedSku,
+        int $uploadedQty,
+        float $uploadedUnitPrice
+    ): array {
+        $isCancelled = ! empty($orderData['is_cancelled']);
+        $uid = (int) (Auth::id() ?? 0);
+        $existing = $this->removalIntake->previewMatch(
+            $uid,
+            $uploadedOrderId,
+            $uploadedSku,
+            $uploadedQty,
+            isset($orderData['order_date']) ? (string) $orderData['order_date'] : null
+        );
+
+        if ($isCancelled || $uploadedQty <= 0) {
+            $status = 'removal_duplicate';
+            $reasonAr = 'طلب إزالة أمازون (S02) ملغى أو بدون كمية — لن يُستورد ولن يُخصم مخزون.';
+            $reasonEn = 'Amazon removal (S02) cancelled or zero qty — skipped, no stock deduction.';
+        } elseif ($existing) {
+            $status = 'removal_duplicate';
+            $reasonAr = 'طلب إزالة أمازون (S02) — موجود مسبقاً في تبويب الإزالات. لن يُخصم كبيع.';
+            $reasonEn = 'Amazon removal (S02) — already in Removals. Will not be imported as a sale.';
+        } else {
+            $status = 'removal';
+            $reasonAr = 'طلب إزالة أمازون (S02) — سيُضاف لتبويب الإزالات بدون خصم. المخزون يُضاف للمحل عند تأكيد الاستلام.';
+            $reasonEn = 'Amazon removal (S02) — routed to Removals with no stock deduction. Shop stock is added when receipt is confirmed.';
+        }
+
+        return [
+            'status' => $status,
+            'reason' => $reasonAr,
+            'catalog_issue' => null,
+            'removal_notice' => [
+                'ar' => $reasonAr,
+                'en' => $reasonEn,
+            ],
+            'stock_preview' => null,
+            'fulfillment_detected' => 'fba',
+            'fulfillment_hint' => $orderData['fulfillment_hint'] ?? null,
+            'fulfillment_mismatch' => false,
+            'uploaded_data' => [
+                'order_number' => $uploadedOrderId,
+                'matched_order_number' => $existing?->removal_order_id,
+                'sku' => $uploadedSku ?: null,
+                'quantity' => $uploadedQty,
+                'unit_price' => $uploadedUnitPrice,
+                'channel' => null,
+                'order_date' => $orderData['order_date'] ?? null,
+                'total_amount' => (float) ($orderData['total_amount'] ?? 0),
+            ],
+            'existing_data' => $existing ? [
+                'order_number' => $existing->removal_order_id,
+                'status' => $existing->order_status,
+                'channel' => 'Amazon Removal',
+                'order_date' => $existing->request_date,
+                'imported_at' => $existing->created_at,
+                'total_amount' => 0,
+                'skus' => $existing->items()->pluck('sku_code')->filter()->values()->all(),
+            ] : null,
+        ];
+    }
+
+    /**
      * Manual import requires an explicit channel. Auto-from-sheet may omit channel_id and uses a marketplace anchor.
      */
     private function resolveImportChannelId(int $requestedChannelId, bool $lockChannel): int
@@ -1468,6 +1599,10 @@ class MarketplaceImportService
                 ],
                 'existing_data' => null,
             ];
+        }
+
+        if ($this->removalIntake->isAllOrdersRemovalShipmentId($uploadedOrderId)) {
+            return $this->analyzeAmazonRemovalSheetRow($orderData, $uploadedOrderId, $uploadedSku, $uploadedQty, $uploadedUnitPrice);
         }
 
         $resolvedChannelId = $lockChannel

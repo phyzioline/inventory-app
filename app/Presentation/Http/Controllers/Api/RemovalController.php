@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use App\Application\Services\AmazonRemovalIntakeService;
 use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\RemovalFbaBalanceService;
 use App\Application\Services\SkuImageResolver;
@@ -19,8 +20,10 @@ use App\Domain\Models\Wms\SkuInventory;
 
 class RemovalController extends Controller
 {
-    public function __construct(private RemovalFbaBalanceService $fbaBalance)
-    {
+    public function __construct(
+        private RemovalFbaBalanceService $fbaBalance,
+        private AmazonRemovalIntakeService $removalIntake,
+    ) {
     }
 
     private function normalizeDateTime(?string $value): ?string
@@ -373,6 +376,21 @@ class RemovalController extends Controller
                     ->where('source', $source)
                     ->where('removal_order_id', $oid)
                     ->first();
+
+                if (! $existingOrder) {
+                    $requestDate = $this->normalizeDateTime($this->csvCell($row, $map, 'request-date'));
+                    $requestedQty = (int) $this->csvCell($row, $map, 'requested-quantity');
+                    $adopted = $this->removalIntake->adoptS02Sibling(
+                        (int) $userId,
+                        $oid,
+                        $skuCode,
+                        $requestedQty,
+                        $requestDate
+                    );
+                    if ($adopted) {
+                        $existingOrder = $adopted;
+                    }
+                }
 
                 if ($existingOrder) {
                     $existingOrder->update($orderPayload);

@@ -29,6 +29,9 @@ interface Props {
 
 /** Blocking issue only (matches summary counts — excludes backfill warnings on duplicates). */
 function previewRowHasBlockingIssue(row: any): boolean {
+    if (row.status === 'removal' || row.status === 'removal_duplicate') {
+        return false;
+    }
     if (row.catalog_issue && typeof row.catalog_issue === 'object') {
         return true;
     }
@@ -86,6 +89,13 @@ function previewRowIssueText(row: any, isAr: boolean): { text: string; hasIssue:
         const r = String(row.reason || '').trim();
         if (r && r !== '—') {
             return { text: r, hasIssue: true };
+        }
+    }
+    const notice = row.removal_notice;
+    if (notice && typeof notice === 'object') {
+        const text = isAr ? String(notice.ar ?? notice.en ?? '') : String(notice.en ?? notice.ar ?? '');
+        if (text) {
+            return { text, hasIssue: false };
         }
     }
     return { text: '—', hasIssue: false };
@@ -262,10 +272,12 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
         void queryClient.invalidateQueries({ queryKey: ['marketplace-import-last-batch'] });
         void queryClient.invalidateQueries({ queryKey: ['orders'] });
         void queryClient.invalidateQueries({ queryKey: ['orders-for-profit'] });
+        void queryClient.invalidateQueries({ queryKey: ['removals'] });
         invalidateInventoryLiveQueries(queryClient, { scope: 'marketplace-import', immediate: true });
         const shortageN = Number(details?.stock_shortage_count ?? details?.stock_shortages?.length ?? 0);
         const importedN = Number(details?.imported ?? 0);
         const skippedN = Number(details?.skipped ?? 0);
+        const removalsN = Number(details?.removals_imported ?? 0);
         if (shortageN > 0) {
             toast.warning(
                 isAr
@@ -283,8 +295,8 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
         } else {
             toast.success(
                 isAr
-                    ? `تم الاستيراد: ${importedN} صفاً${skippedN > 0 ? ` (وتم تجاهل ${skippedN})` : ''}`
-                    : `Imported ${importedN} row(s)${skippedN > 0 ? ` (${skippedN} skipped)` : ''}`
+                    ? `تم الاستيراد: ${importedN} صفاً${removalsN > 0 ? ` منها ${removalsN} طلب إزالة` : ''}${skippedN > 0 ? ` (وتم تجاهل ${skippedN})` : ''}`
+                    : `Imported ${importedN} row(s)${removalsN > 0 ? ` including ${removalsN} removal(s)` : ''}${skippedN > 0 ? ` (${skippedN} skipped)` : ''}`
             );
         }
         if (onSuccess) onSuccess();
@@ -550,10 +562,12 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
     };
 
     const getStatusMeta = (status: string) => {
-        if (status === 'new') return { label: 'New Order', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
-        if (status === 'update') return { label: 'Update Order', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' };
-        if (status === 'duplicate') return { label: 'Already Exists', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' };
-        return { label: 'Catalog / SKU error', className: 'bg-rose-500/10 text-rose-400 border-rose-500/30' };
+        if (status === 'new') return { label: isAr ? 'طلب جديد' : 'New Order', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
+        if (status === 'update') return { label: isAr ? 'تحديث طلب' : 'Update Order', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' };
+        if (status === 'duplicate') return { label: isAr ? 'موجود مسبقاً' : 'Already Exists', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' };
+        if (status === 'removal') return { label: isAr ? 'طلب إزالة' : 'Amazon Removal', className: 'bg-violet-500/10 text-violet-400 border-violet-500/30' };
+        if (status === 'removal_duplicate') return { label: isAr ? 'إزالة موجودة' : 'Removal exists', className: 'bg-violet-500/10 text-violet-300 border-violet-500/30' };
+        return { label: isAr ? 'خطأ كتالوج / SKU' : 'Catalog / SKU error', className: 'bg-rose-500/10 text-rose-400 border-rose-500/30' };
     };
 
     const previewAllRows = preview?.rows || [];
@@ -912,6 +926,7 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                     <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                                         <div>{isAr ? 'إجمالي الصفوف:' : 'Total Rows:'} <strong>{preview.summary?.total_rows ?? 0}</strong></div>
                                         <div className="text-emerald-400">{isAr ? 'طلبات جديدة:' : 'New Orders:'} <strong>{preview.summary?.new_orders ?? 0}</strong></div>
+                                        <div className="text-violet-400">{isAr ? 'طلبات إزالة (S02):' : 'Removals (S02):'} <strong>{preview.summary?.removals ?? 0}</strong></div>
                                         <div className="text-blue-400">{isAr ? 'طلبات تحديث:' : 'Update Orders:'} <strong>{preview.summary?.update_orders ?? 0}</strong></div>
                                         <div className="text-amber-400">{isAr ? 'مكررة:' : 'Duplicates:'} <strong>{preview.summary?.duplicates ?? 0}</strong></div>
                                         <div className="text-rose-400">{isAr ? 'أخطاء كتالوج:' : 'Catalog errors:'} <strong>{preview.summary?.errors ?? 0}</strong></div>
@@ -935,8 +950,8 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                 <AlertTitle>{isAr ? 'المخزون' : 'Inventory'}</AlertTitle>
                                 <AlertDescription className="text-xs leading-relaxed">
                                     {isAr
-                                        ? 'الخصم للطلبات الجديدة أو سطر SKU جديد على طلب موجود. الصف المكرر (نفس الطلب + SKU + الكمية) يُتجاهل. إن كان الطلب موجوداً لكن بدون حركة OUT سابقة يظهر «خصم متأخر» كتحذير فقط ولا يمنع التأكيد. الطلبات الجديدة الحقيقية بنقص مخزون تمنع التأكيد حتى يتوفر الرصيد.'
-                                        : 'Stock deducts for new orders or new SKU lines on existing orders. Exact duplicate rows (same order + SKU + qty) are skipped. Missing OUT on an existing line shows as backfill warning only — not a blocker. Truly new rows with insufficient stock still block confirm.'}
+                                        ? 'الخصم للطلبات الجديدة أو سطر SKU جديد على طلب موجود. صفوف أمازون التي يبدأ رقمها بـ S02- طلبات إزالة وليست بيوعاً: تُحوَّل لتبويب الإزالات بدون خصم، والمخزون يُضاف للمحل عند تأكيد الاستلام. الصف المكرر يُتجاهل. الطلبات الجديدة الحقيقية بنقص مخزون تمنع التأكيد حتى يتوفر الرصيد.'
+                                        : 'Stock deducts for new orders or new SKU lines on existing orders. Amazon rows whose id starts with S02- are removal shipments, not sales: they go to Removals with no deduction, and shop stock is added when receipt is confirmed. Exact duplicates are skipped. Truly new sale rows with insufficient stock still block confirm.'}
                                 </AlertDescription>
                             </Alert>
 
@@ -1124,6 +1139,9 @@ export function OrderImportDialog({ open, onOpenChange, onSuccess, defaultAnchor
                                     <div className="mt-2 space-y-1 text-sm">
                                         <div>{isAr ? 'إجمالي الصفوف:' : 'Total Rows:'} <strong>{results.total}</strong></div>
                                         <div>{isAr ? 'تم استيرادها:' : 'Imported:'} <strong className="text-emerald-400">{results.imported}</strong></div>
+                                        {Number(results.removals_imported ?? 0) > 0 ? (
+                                            <div className="text-violet-400">{isAr ? 'منها طلبات إزالة:' : 'Of which removals:'} <strong>{results.removals_imported}</strong></div>
+                                        ) : null}
                                         <div>{isAr ? 'تم تجاهلها (مكرر/بدون تغيير):' : 'Skipped (duplicate/no change):'} <strong>{results.skipped}</strong></div>
                                         {results.failed > 0 && (
                                             <div className="text-rose-400">{isAr ? 'فشلت:' : 'Failed:'} <strong>{results.failed}</strong></div>
