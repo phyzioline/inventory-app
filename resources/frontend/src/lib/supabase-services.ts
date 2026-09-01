@@ -912,7 +912,7 @@ export const returnService = {
             order_date: r.inventory_order?.order_date ?? null,
         };
     },
-    async getPage(options: { page?: number; perPage?: number; search?: string; pendingPhysical?: boolean; claimsHub?: boolean } = {}) {
+    async getPage(options: { page?: number; perPage?: number; search?: string; startDate?: string; endDate?: string; pendingPhysical?: boolean; claimsHub?: boolean } = {}) {
         const page = options.page ?? 1;
         const perPage = options.perPage ?? 100;
         const response = await api.get('returns', {
@@ -920,6 +920,8 @@ export const returnService = {
                 page,
                 per_page: perPage,
                 search: options.search?.trim() || undefined,
+                start_date: options.startDate?.trim() || undefined,
+                end_date: options.endDate?.trim() || undefined,
                 pending_physical: options.pendingPhysical ? 1 : undefined,
                 claims_hub: options.claimsHub ? 1 : undefined,
             },

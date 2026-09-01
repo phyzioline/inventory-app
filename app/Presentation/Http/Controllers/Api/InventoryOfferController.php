@@ -36,7 +36,7 @@ class InventoryOfferController extends Controller
     public function show(string $id)
     {
         return response()->json(
-            InventoryOffer::with(['masterProduct', 'skus.channel', 'skus.inventory.location'])->findOrFail($id)
+            InventoryOffer::with(['masterProduct', 'skus.channel.locations', 'skus.inventory.location'])->findOrFail($id)
         );
     }
 

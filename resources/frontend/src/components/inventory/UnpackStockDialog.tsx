@@ -13,7 +13,7 @@ import { offerService } from '@/lib/supabase-services';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import {
-    buildCompositionSkuLocationOptions,
+    buildMergedCompositionSkuLocationOptions,
     pickCompositionDestOption,
     pickCompositionSourceOption,
 } from '@/lib/compositionStockOptions';
@@ -104,8 +104,14 @@ export default function UnpackStockDialog({ open, onOpenChange, offer }: Props) 
         enabled: open && !!activeLink?.componentOfferId,
     });
 
-    const parentOptions = useMemo(() => buildCompositionSkuLocationOptions(parentOfferDetail), [parentOfferDetail]);
-    const componentOptions = useMemo(() => buildCompositionSkuLocationOptions(componentOfferDetail), [componentOfferDetail]);
+    const parentOptions = useMemo(
+        () => buildMergedCompositionSkuLocationOptions(parentOfferDetail, componentOfferDetail),
+        [parentOfferDetail, componentOfferDetail],
+    );
+    const componentOptions = useMemo(
+        () => buildMergedCompositionSkuLocationOptions(componentOfferDetail, parentOfferDetail),
+        [parentOfferDetail, componentOfferDetail],
+    );
 
     useEffect(() => {
         destTouchedRef.current = false;

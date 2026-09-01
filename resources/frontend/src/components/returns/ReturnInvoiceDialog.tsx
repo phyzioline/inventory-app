@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { format, subDays } from 'date-fns';
 import { Loader2, RotateCcw, Package, AlertTriangle, DollarSign, ChevronsUpDown, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -19,9 +20,27 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Card, CardContent } from '@/components/ui/card';
-import { useSalesOrders } from '@/hooks/useSales';
+import api from '@/lib/api';
 import { returnService } from '@/lib/supabase-services';
 import { useLanguage } from '@/contexts/LanguageContext';
+
+const ORDER_PICKER_RANGE_DAYS = 14;
+
+function defaultOrderPickerDateRange(): { from: string; to: string } {
+  const to = format(new Date(), 'yyyy-MM-dd');
+  const from = format(subDays(new Date(), ORDER_PICKER_RANGE_DAYS), 'yyyy-MM-dd');
+  return { from, to };
+}
+
+function resolveServerOrderIdSearch(raw: string): string {
+  const s = raw.trim();
+  if (s.length >= 6 && !s.includes(' ')) {
+    if (/^\d{2,3}-\d/.test(s)) return s;
+    if (/^shop-/i.test(s)) return s;
+    if (/^#\d+$/.test(s)) return s;
+  }
+  return '';
+}
 
 interface ReturnInvoiceDialogProps {
   open: boolean;
@@ -98,16 +117,46 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
   const queryClient = useQueryClient();
   const { language } = useLanguage();
   const isAr = language === 'ar';
-  const { data: orders } = useSalesOrders();
 
   const [selectedOrderId, setSelectedOrderId] = useState<string>('');
   const [orderPickerOpen, setOrderPickerOpen] = useState(false);
   const [orderSearch, setOrderSearch] = useState('');
+  const [debouncedOrderSearch, setDebouncedOrderSearch] = useState('');
   const [returnType, setReturnType] = useState<'stock' | 'damaged'>('stock');
   const [reason, setReason] = useState('');
   const [amazonOrderNumber, setAmazonOrderNumber] = useState('');
   const [refundAmount, setRefundAmount] = useState<number>(0);
   const [refundMethod, setRefundMethod] = useState<'credit_note' | 'cash' | 'bank_transfer'>('credit_note');
+
+  const defaultRange = useMemo(() => defaultOrderPickerDateRange(), []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedOrderSearch(orderSearch), 300);
+    return () => window.clearTimeout(timer);
+  }, [orderSearch]);
+
+  const serverOrderIdParam = useMemo(
+    () => resolveServerOrderIdSearch(debouncedOrderSearch),
+    [debouncedOrderSearch],
+  );
+
+  const { data: orders = [], isLoading: loadingOrders, isFetching: fetchingOrders } = useQuery({
+    queryKey: ['sales-orders-picker', serverOrderIdParam, defaultRange.from, defaultRange.to],
+    queryFn: async () => {
+      const params: Record<string, string> = {};
+      if (serverOrderIdParam) {
+        params.order_id = serverOrderIdParam;
+      } else {
+        params.start_date = defaultRange.from;
+        params.end_date = defaultRange.to;
+      }
+      const data = await api.get('/orders', { params, timeout: 60_000 });
+      return Array.isArray(data) ? data : Array.isArray((data as any)?.data) ? (data as any).data : [];
+    },
+    enabled: open,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
 
   const selectedOrder = orders?.find((o) => String(o.id) === String(selectedOrderId));
 
@@ -120,7 +169,7 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
   }, [selectedOrderId]);
 
   // Filter orders that can be returned (not already returned)
-  const returnableOrders = orders?.filter(
+  const returnableOrders = orders.filter(
     (o) => o.status !== 'returned' && o.status !== 'return_in_progress'
   );
 
@@ -133,12 +182,12 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
   }, [returnableOrders]);
 
   const filteredReturnableOrders = useMemo(() => {
-    if (!returnableOrders?.length) return [];
+    if (!returnableOrders.length) return [];
     return returnableOrders.filter((o) => {
       const idx = orderIndexes.get(String(o.id)) || buildOrderSearchIndex(o);
-      return orderMatchesSearch(o, idx, orderSearch);
+      return orderMatchesSearch(o, idx, debouncedOrderSearch);
     });
-  }, [returnableOrders, orderIndexes, orderSearch]);
+  }, [returnableOrders, orderIndexes, debouncedOrderSearch]);
 
   useEffect(() => {
     if (!orderPickerOpen) {
@@ -251,8 +300,16 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
                   />
                   <CommandList className="max-h-[min(280px,40vh)]">
                     <CommandEmpty>
-                      {isAr ? 'لا توجد نتائج' : 'No matching orders'}
+                      {loadingOrders || fetchingOrders
+                        ? (isAr ? 'جاري البحث…' : 'Searching…')
+                        : (isAr ? 'لا توجد نتائج' : 'No matching orders')}
                     </CommandEmpty>
+                    {(loadingOrders || fetchingOrders) && filteredReturnableOrders.length === 0 ? (
+                      <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {isAr ? 'جاري تحميل الطلبات…' : 'Loading orders…'}
+                      </div>
+                    ) : null}
                     <CommandGroup>
                       {filteredReturnableOrders.map((order) => {
                         const idx = orderIndexes.get(String(order.id)) || buildOrderSearchIndex(order);
@@ -292,6 +349,11 @@ export function ReturnInvoiceDialog({ open, onOpenChange }: ReturnInvoiceDialogP
                 </Command>
               </PopoverContent>
             </Popover>
+            <p className="text-[11px] text-muted-foreground">
+              {isAr
+                ? `يعرض آخر ${ORDER_PICKER_RANGE_DAYS} يومًا. اكتب رقم طلب كامل (402-… أو SHOP-…) للبحث في كل التواريخ.`
+                : `Shows the last ${ORDER_PICKER_RANGE_DAYS} days. Type a full order id (402-… or SHOP-…) to search any date.`}
+            </p>
           </div>
 
           <div className="grid lg:grid-cols-2 gap-4 min-w-0">

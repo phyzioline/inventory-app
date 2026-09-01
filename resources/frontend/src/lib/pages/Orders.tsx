@@ -392,7 +392,11 @@ export default function Orders() {
     queryFn: () => api.get<LastImportBatchSnapshot>('marketplace/import/last-batch'),
   });
 
-  const { data: returnsPayload } = useReturns();
+  const { data: returnsPayload } = useReturns({
+    perPage: 100,
+    startDate: fromDate,
+    endDate: toDate,
+  });
   const returns = returnsPayload?.data ?? [];
 
   const handleRollbackLastImport = async () => {

@@ -2,6 +2,7 @@
 
 namespace App\Application\Services;
 
+use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -30,13 +31,32 @@ class InventoryReturnListingService
             $this->scopePhysicalReturnsOnly($query);
         }
 
+        $dateExpr = Schema::hasColumn('inventory_returns', 'last_update_date')
+            ? 'COALESCE(inventory_returns.last_update_date, inventory_returns.return_date, inventory_returns.created_at)'
+            : 'COALESCE(inventory_returns.return_date, inventory_returns.created_at)';
+
+        $search = trim((string) $request->query('search', ''));
+        $startDate = trim((string) $request->query('start_date', ''));
+        $endDate = trim((string) $request->query('end_date', ''));
+
+        if ($startDate !== '' || $endDate !== '') {
+            if ($startDate !== '') {
+                $query->whereRaw("{$dateExpr} >= ?", [Carbon::parse($startDate)->startOfDay()]);
+            }
+            if ($endDate !== '') {
+                $query->whereRaw("{$dateExpr} <= ?", [Carbon::parse($endDate)->endOfDay()]);
+            }
+        } elseif ($search === '' && ! $request->boolean('claims_hub')) {
+            // Match Orders UX: bounded default window keeps the list fast.
+            $defaultDays = max(1, min((int) $request->input('default_days', 14), 90));
+            $query->whereRaw("{$dateExpr} >= ?", [now()->subDays($defaultDays)->startOfDay()]);
+        }
+
         if (Schema::hasColumn('inventory_returns', 'last_update_date')) {
-            $query->orderByRaw('COALESCE(inventory_returns.last_update_date, inventory_returns.return_date, inventory_returns.created_at) desc');
+            $query->orderByRaw("{$dateExpr} desc");
         } else {
             $query->orderByDesc('inventory_returns.created_at');
         }
-
-        $search = trim((string) $request->query('search', ''));
 
         if ($search !== '') {
             $escaped = '%'.addcslashes($search, '%_\\').'%';

@@ -6,6 +6,8 @@ export type ReturnsPageOptions = {
   page?: number;
   perPage?: number;
   search?: string;
+  startDate?: string;
+  endDate?: string;
   pendingPhysical?: boolean;
   claimsHub?: boolean;
   enabled?: boolean;
@@ -15,13 +17,17 @@ export function useReturns(options: ReturnsPageOptions = {}) {
   const page = options.page ?? 1;
   const perPage = options.perPage ?? 100;
   const search = options.search ?? '';
+  const startDate = options.startDate ?? '';
+  const endDate = options.endDate ?? '';
 
   return useQuery({
-    queryKey: ['returns', page, perPage, search, options.pendingPhysical ?? false, options.claimsHub ?? false],
+    queryKey: ['returns', page, perPage, search, startDate, endDate, options.pendingPhysical ?? false, options.claimsHub ?? false],
     queryFn: () => returnService.getPage({
       page,
       perPage,
       search,
+      startDate,
+      endDate,
       pendingPhysical: options.pendingPhysical,
       claimsHub: options.claimsHub,
     }),

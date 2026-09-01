@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildCompositionSkuLocationOptions,
+    buildMergedCompositionSkuLocationOptions,
+    mergeCompositionPeerLocations,
     pickCompositionDestOption,
     pickCompositionSourceOption,
 } from '@/lib/compositionStockOptions';
@@ -75,5 +77,82 @@ describe('compositionStockOptions', () => {
             '16',
         );
         expect(dest?.value).toBe('a:1');
+    });
+
+    it('synthesizes المحل on the pack offer when only the single offer has shop stock', () => {
+        const shopChannel = { id: 5, name: 'المحل', type: 'pos', slug: 'المحل', locations: [{ id: 16, name: 'المحل', type: 'physical' }] };
+        const fbaChannel = { id: 8, name: 'fba ارت', type: 'amazon_fba', slug: 'fba-art', locations: [{ id: 22, name: 'fba ارت', type: 'amazon_fba' }] };
+        const shopLoc = { id: 16, name: 'المحل', type: 'physical', channel_id: 5 };
+        const fbaLoc = { id: 22, name: 'fba ارت', type: 'amazon_fba', channel_id: 8 };
+
+        const singleOffer = {
+            skus: [{
+                id: 100,
+                sku: 'PHY-8654368998',
+                channel_id: 5,
+                channel: shopChannel,
+                inventory: [{ location_id: 16, quantity: 1000, location: shopLoc }],
+            }],
+        };
+        const packOffer = {
+            skus: [
+                {
+                    id: 200,
+                    sku: 'PHY-PACK-5',
+                    channel_id: 5,
+                    channel: shopChannel,
+                    inventory: [],
+                },
+                {
+                    id: 201,
+                    sku: '25-D2H8-5ZQ8',
+                    channel_id: 8,
+                    channel: fbaChannel,
+                    inventory: [{ location_id: 22, quantity: 0, location: fbaLoc }],
+                },
+            ],
+        };
+
+        const packOptions = buildMergedCompositionSkuLocationOptions(packOffer, singleOffer);
+        const shopRow = packOptions.find((o) => o.locationId === '16');
+        expect(shopRow).toBeDefined();
+        expect(shopRow?.skuId).toBe('200');
+        expect(shopRow?.locationName).toBe('المحل');
+        expect(shopRow?.qty).toBe(0);
+
+        const source = pickCompositionSourceOption(buildMergedCompositionSkuLocationOptions(singleOffer, packOffer));
+        expect(source?.locationId).toBe('16');
+        const dest = pickCompositionDestOption(packOptions, source?.locationId);
+        expect(dest?.locationId).toBe('16');
+        expect(dest?.locationName).toBe('المحل');
+    });
+
+    it('does not map FBA SKU onto المحل when pack offer has no shop SKU', () => {
+        const fbaChannel = { id: 8, name: 'fba ارت', type: 'amazon_fba', slug: 'fba-art', locations: [{ id: 22, name: 'fba ارت', type: 'amazon_fba' }] };
+        const shopLoc = { id: 16, name: 'المحل', type: 'physical', channel_id: 5 };
+        const singleOffer = {
+            skus: [{
+                id: 100,
+                sku: 'PHY-SINGLE',
+                channel: { id: 5, name: 'المحل', type: 'pos', locations: [{ id: 16, name: 'المحل' }] },
+                inventory: [{ location_id: 16, quantity: 10, location: shopLoc }],
+            }],
+        };
+        const packOffer = {
+            skus: [{
+                id: 201,
+                sku: '25-D2H8-5ZQ8',
+                channel_id: 8,
+                channel: fbaChannel,
+                inventory: [{ location_id: 22, quantity: 0, location: { id: 22, name: 'fba ارت', type: 'amazon_fba' } }],
+            }],
+        };
+
+        const merged = mergeCompositionPeerLocations(
+            buildCompositionSkuLocationOptions(packOffer),
+            buildCompositionSkuLocationOptions(singleOffer),
+            packOffer,
+        );
+        expect(merged.some((o) => o.locationId === '16')).toBe(false);
     });
 });

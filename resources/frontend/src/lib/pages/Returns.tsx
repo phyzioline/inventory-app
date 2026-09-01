@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { format, subDays } from 'date-fns';
 import { motion } from 'framer-motion';
 import {
   Plus,
@@ -55,7 +56,6 @@ import {
   getPhysicalStatus,
   isVisiblePhysicalReturnRow,
   matchesPhysicalStatusFilter,
-  returnMatchesSearch,
 } from '@/components/returns/returnDisplayUtils';
 import {
   formatReimbursementExportLabel,
@@ -68,6 +68,25 @@ import { ReturnGroupActionsMenu } from '@/components/returns/ReturnGroupActionsM
 
 const STICKY_ACTIONS_CELL =
   'sticky end-0 z-20 bg-card/95 backdrop-blur-sm border-s border-border shadow-[-4px_0_8px_rgba(0,0,0,0.06)]';
+
+/** Default list window — unbounded returns (~1.3k+ rows) blocks the UI. */
+const RETURNS_DEFAULT_RANGE_DAYS = 14;
+
+function defaultReturnsDateRange(): { from: string; to: string } {
+  const to = format(new Date(), 'yyyy-MM-dd');
+  const from = format(subDays(new Date(), RETURNS_DEFAULT_RANGE_DAYS), 'yyyy-MM-dd');
+  return { from, to };
+}
+
+function resolveServerReturnLookupSearch(raw: string): boolean {
+  const s = raw.trim();
+  if (s.length >= 6 && !s.includes(' ')) {
+    if (/^\d{2,3}-\d/.test(s)) return true;
+    if (/^shop-/i.test(s)) return true;
+    if (/^#\d+$/.test(s)) return true;
+  }
+  return false;
+}
 
 function aggregateReturnLocations(rows: any[]): string {
   const parts = rows.map((row) => formatPhysicalReturnLocation(row)).filter((x) => x && String(x).trim() !== '');
@@ -181,6 +200,7 @@ export default function Returns() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [reimbursementFilter, setReimbursementFilter] = useState<'all' | 'ready' | 'pending' | 'paid'>('all');
@@ -197,22 +217,31 @@ export default function Returns() {
   const [pendingPanelOpen, setPendingPanelOpen] = useState(false);
   /** Expanded Amazon order groups (one platform order → multiple settlement lines). */
   const [expandedOrderKeys, setExpandedOrderKeys] = useState<Set<string>>(() => new Set());
-  const [exportDateFrom, setExportDateFrom] = useState(() => {
-    const d = new Date();
-    d.setDate(1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [exportDateTo, setExportDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exportDateFrom, setExportDateFrom] = useState(() => defaultReturnsDateRange().from);
+  const [exportDateTo, setExportDateTo] = useState(() => defaultReturnsDateRange().to);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  const bypassDateForLookup = useMemo(
+    () => resolveServerReturnLookupSearch(debouncedSearch),
+    [debouncedSearch],
+  );
 
   const { data: returnsPage, isLoading, isFetching } = useReturns({
     page: currentPage,
-    perPage: Math.max(pageSize, 100),
-    search: searchTerm,
+    perPage: pageSize,
+    search: debouncedSearch,
+    startDate: bypassDateForLookup ? '' : exportDateFrom,
+    endDate: bypassDateForLookup ? '' : exportDateTo,
   });
   const { data: pendingPage } = useReturns({
     perPage: 50,
     pendingPhysical: true,
+    enabled: pendingPanelOpen,
   });
   const { data: claimsPage } = useReturns({
     perPage: 500,
@@ -321,11 +350,10 @@ export default function Returns() {
     if (! isVisiblePhysicalReturnRow(r)) {
       return false;
     }
-    const matchesSearch = returnMatchesSearch(r, searchTerm);
     const matchesType = typeFilter === 'all' || r.return_type === typeFilter;
     const matchesStatus = matchesPhysicalStatusFilter(r, statusFilter);
 
-    return matchesSearch && matchesType && matchesStatus;
+    return matchesType && matchesStatus;
   });
 
   const orderGroups = useMemo(() => {
@@ -388,7 +416,7 @@ export default function Returns() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, typeFilter, statusFilter, reimbursementFilter, pageSize]);
+  }, [debouncedSearch, typeFilter, statusFilter, reimbursementFilter, pageSize, exportDateFrom, exportDateTo]);
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
@@ -449,10 +477,9 @@ export default function Returns() {
     try {
       const allRows = await returnService.exportAll();
       const exportFiltered = allRows.filter((r) => {
-        const matchesSearch = returnMatchesSearch(r, searchTerm);
         const matchesType = typeFilter === 'all' || r.return_type === typeFilter;
         const matchesStatus = matchesPhysicalStatusFilter(r, statusFilter);
-        return matchesSearch && matchesType && matchesStatus;
+        return matchesType && matchesStatus;
       });
       const m = new Map<string, any[]>();
       for (const r of exportFiltered) {
@@ -535,17 +562,14 @@ export default function Returns() {
 
   const returnsBootstrapping = isLoading && returnsArray.length === 0;
 
-  if (returnsBootstrapping) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <RefreshCw className="w-10 h-10 text-emerald-500 animate-spin" />
-        <p className="text-muted-foreground">{t('common.loading') || 'Loading...'}</p>
-      </div>
-    );
-  }
-
   return (
     <div className="-mx-2 space-y-4 p-3 sm:-mx-4 sm:p-4 lg:-mx-6 lg:p-5 w-full max-w-none min-w-0">
+      {returnsBootstrapping ? (
+        <div className="flex items-center gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
+          {isAr ? 'جاري تحميل المرتجعات…' : 'Loading returns…'}
+        </div>
+      ) : null}
       {isFetching && returnsArray.length > 0 ? (
         <div className="flex items-center gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
@@ -711,10 +735,9 @@ export default function Returns() {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
           <p className="mt-1.5 text-[11px] text-muted-foreground px-1">
-            {t('returns.search.hint') ||
-              (isAr
-                ? 'ابحث برقم الطلب → سجّل تم الاستلام أو هالك من القائمة أو المسح'
-                : 'Search by order # → mark received or lost from the list or scanner')}
+            {isAr
+              ? `الافتراضي: آخر ${RETURNS_DEFAULT_RANGE_DAYS} يومًا. غيّر التاريخ للفترة الأقدم. رقم طلب كامل (402-… أو SHOP-…) يتجاهل التاريخ.`
+              : `Default: last ${RETURNS_DEFAULT_RANGE_DAYS} days. Widen dates for older returns. A full order id (402-… / SHOP-…) ignores the date filter.`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto items-center">
