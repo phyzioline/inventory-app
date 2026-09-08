@@ -140,19 +140,20 @@ export function SkuMovementTrackerDialog({
     masterProductId,
     title,
 }: SkuMovementTrackerDialogProps) {
-    // Single SKU → that SKU only. Master product → all its listing SKUs.
+    // Single SKU → that listing only (never send master_product_id). Master → full rollup.
     const qs = new URLSearchParams();
     if (skuId) {
         qs.set('sku_id', String(skuId));
         qs.set('include_related', '0');
+    } else if (masterProductId) {
+        qs.set('master_product_id', String(masterProductId));
     }
-    if (masterProductId) qs.set('master_product_id', String(masterProductId));
-    qs.set('limit', masterProductId ? '2000' : '1000');
+    qs.set('limit', masterProductId && !skuId ? '2000' : '1000');
 
     const scope: 'sku' | 'master' | null = skuId ? 'sku' : masterProductId ? 'master' : null;
 
     const { data, isLoading, isError, error } = useQuery({
-        queryKey: ['sku-tracker', scope, skuId ?? 0, masterProductId ?? 0],
+        queryKey: ['sku-tracker', scope, skuId ?? 0, skuId ? 0 : (masterProductId ?? 0)],
         queryFn: async () => api.get<TrackerResponse>(`/transactions/sku-tracker?${qs.toString()}`),
         enabled: open && (!!skuId || !!masterProductId),
     });
@@ -170,7 +171,7 @@ export function SkuMovementTrackerDialog({
 
     const description =
         scope === 'sku'
-            ? 'حركات هذا الـ SKU فقط — تشمل الشراء والتحويل والبيع والمرتجع'
+            ? 'حركات هذا الـ SKU فقط على مواقع قناته — بدون تجميع منتج أساسي أو مخازن أخرى'
             : scope === 'master'
               ? 'كل حركات المنتج الأساسي عبر كل الـ SKUs وفواتير الشراء المرتبطة'
               : 'اختر صنفاً لعرض حركاته';

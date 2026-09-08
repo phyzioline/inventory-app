@@ -22,8 +22,16 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -101,6 +109,23 @@ function aggregateSkuList(rows: any[]): string {
   if (skus.length === 0) return '';
   if (skus.length === 1) return skus[0];
   return `${skus.slice(0, 3).join(' · ')}${skus.length > 3 ? ' +' : ''}`;
+}
+
+/** Expected removal units: shipped when set, otherwise requested. */
+function expectedRemovalQty(item: any): number {
+  const shipped = Number(item?.shipped_quantity ?? 0);
+  if (Number.isFinite(shipped) && shipped > 0) return Math.floor(shipped);
+  const requested = Number(item?.requested_quantity ?? 0);
+  return Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 0;
+}
+
+function alreadyReceivedRemovalQty(item: any): number {
+  const n = Number(item?.received_quantity ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function remainingRemovalQty(item: any): number {
+  return Math.max(0, expectedRemovalQty(item) - alreadyReceivedRemovalQty(item));
 }
 
 function resolveReturnImage(r: any): string {
@@ -214,6 +239,8 @@ export default function Returns() {
   const [isRemovalImportOpen, setIsRemovalImportOpen] = useState(false);
   const [isFbaSheetOpen, setIsFbaSheetOpen] = useState(false);
   const [isLedgerSheetOpen, setIsLedgerSheetOpen] = useState(false);
+  const [receiveTarget, setReceiveTarget] = useState<any | null>(null);
+  const [receiveQtyInput, setReceiveQtyInput] = useState('');
   const [pendingPanelOpen, setPendingPanelOpen] = useState(false);
   /** Expanded Amazon order groups (one platform order → multiple settlement lines). */
   const [expandedOrderKeys, setExpandedOrderKeys] = useState<Set<string>>(() => new Set());
@@ -248,6 +275,14 @@ export default function Returns() {
     claimsHub: true,
     enabled: activeTab === 'claims',
   });
+  const { data: removalShortfallPayload, isLoading: loadingRemovalShortfalls } = useQuery({
+    queryKey: ['removals', 'shortfall'],
+    queryFn: () => api.get('/removals', { params: { shortfall: 1, per_page: 200 } }),
+    enabled: activeTab === 'claims',
+  });
+  const removalShortfalls = Array.isArray((removalShortfallPayload as any)?.data)
+    ? (removalShortfallPayload as any).data
+    : [];
   const updateStatus = useUpdateReturnStatus();
   const importMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -285,19 +320,30 @@ export default function Returns() {
   const removalItems = Array.isArray((removalItemsPayload as any)?.data) ? (removalItemsPayload as any).data : [];
 
   const receiveRemovalMutation = useMutation({
-    mutationFn: async (id: string) => api.post(`/removals/items/${id}/receive`, {}),
+    mutationFn: async ({ id, quantity }: { id: string; quantity: number }) =>
+      api.post(`/removals/items/${id}/receive`, { quantity }),
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['removals'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-by-location'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['master-products'] });
+      setReceiveTarget(null);
+      setReceiveQtyInput('');
       const shopSku = res?.restocked_sku;
       const listingSku = res?.listing_sku;
-      if (shopSku && listingSku && shopSku !== listingSku) {
+      const shortfall = Number(res?.shortfall_quantity ?? 0);
+      const batch = Number(res?.this_batch_quantity ?? 0);
+      if (shortfall > 0) {
         toast.success(
           isAr
-            ? `تم الاستلام — أُضيف المخزون لـ SKU المحل ${shopSku} (من ${listingSku})`
-            : `Received — restocked shop SKU ${shopSku} (from ${listingSku})`,
+            ? `استلام دفعة +${batch} — باقي للمطالبة ${shortfall} (يظهر في «يلا نجيب فلوس من أمازون»؛ تقدر تستلم دفعة تانية لما المندوب ييجي)`
+            : `Batch +${batch} — ${shortfall} still missing (listed under Amazon claims; you can receive another batch later)`,
+        );
+      } else if (shopSku && listingSku && shopSku !== listingSku) {
+        toast.success(
+          isAr
+            ? `تم الاستلام بالكامل — أُضيف المخزون لـ SKU المحل ${shopSku} (من ${listingSku})`
+            : `Fully received — restocked shop SKU ${shopSku} (from ${listingSku})`,
         );
       } else {
         toast.success(t('returns.removals.received') || 'Received and restocked');
@@ -308,6 +354,13 @@ export default function Returns() {
       toast.error(data?.message || data?.error || 'Failed');
     },
   });
+
+  const openReceiveDialog = (item: any) => {
+    const remaining = remainingRemovalQty(item);
+    setReceiveTarget(item);
+    // Default = this delivery: remaining open qty (courier may bring less).
+    setReceiveQtyInput(String(remaining));
+  };
 
   const toNumber = (value: unknown) => {
     const parsed = Number(value ?? 0);
@@ -1313,7 +1366,13 @@ export default function Returns() {
         </TabsContent>
 
         <TabsContent value="claims" className="mt-4 focus-visible:outline-none">
-          <AmazonClaimsHub returns={claimsArray} isAr={isAr} t={t} />
+          <AmazonClaimsHub
+            returns={claimsArray}
+            removalShortfalls={removalShortfalls}
+            shortfallsLoading={loadingRemovalShortfalls}
+            isAr={isAr}
+            t={t}
+          />
         </TabsContent>
 
         <TabsContent value="removals" className="space-y-4 mt-4 focus-visible:outline-none">
@@ -1396,7 +1455,12 @@ export default function Returns() {
                         const order = it?.removal_order || it?.removalOrder || {};
                         const orderId = order?.removal_order_id || it?.removal_order_id;
                         const qty = Number(it?.shipped_quantity || 0) || Number(it?.requested_quantity || 0) || 0;
-                        const received = String(it?.receive_status || '') === 'received';
+                        const expected = expectedRemovalQty(it);
+                        const already = alreadyReceivedRemovalQty(it);
+                        const shortfall = Math.max(0, expected - already);
+                        const isReceived = String(it?.receive_status || '') === 'received';
+                        const isPartial = isReceived && shortfall > 0;
+                        const isFullyReceived = isReceived && shortfall === 0;
                         const fee = it?.removal_fee;
                         const feeLabel =
                           fee == null || fee === ''
@@ -1456,15 +1520,25 @@ export default function Returns() {
                               )}
                             </td>
                             <td className="px-3 py-2 text-end font-mono text-xs whitespace-nowrap">{feeLabel}</td>
-                            <td className="px-3 py-2 text-end font-mono text-xs">{qty}</td>
+                            <td className="px-3 py-2 text-end font-mono text-xs">
+                              {isPartial ? `${already}/${expected}` : qty}
+                            </td>
                             <td className="px-3 py-2">
                               <Badge
-                                variant={received ? 'default' : 'secondary'}
-                                className={received ? 'bg-violet-600' : ''}
+                                variant={isFullyReceived ? 'default' : isPartial ? 'outline' : 'secondary'}
+                                className={
+                                  isFullyReceived
+                                    ? 'bg-violet-600'
+                                    : isPartial
+                                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200'
+                                      : ''
+                                }
                               >
-                                {received
+                                {isFullyReceived
                                   ? t('returns.removals.status.received') || 'Received'
-                                  : t('returns.removals.status.pending') || 'Pending'}
+                                  : isPartial
+                                    ? t('returns.removals.status.partial') || (isAr ? 'جزئي' : 'Partial')
+                                    : t('returns.removals.status.pending') || 'Pending'}
                               </Badge>
                             </td>
                             <td className="px-3 py-2 text-end">
@@ -1472,10 +1546,13 @@ export default function Returns() {
                                 type="button"
                                 size="sm"
                                 className="bg-violet-600 hover:bg-violet-500 text-white"
-                                disabled={received || receiveRemovalMutation.isPending}
-                                onClick={() => void receiveRemovalMutation.mutate(String(it.id))}
+                                disabled={isFullyReceived || receiveRemovalMutation.isPending}
+                                onClick={() => openReceiveDialog(it)}
                               >
-                                {t('returns.removals.actions.receive') || 'Confirm receipt'}
+                                {isPartial
+                                  ? t('returns.removals.actions.receiveMore') ||
+                                    (isAr ? 'استلام دفعة' : 'Receive batch')
+                                  : t('returns.removals.actions.receive') || 'Confirm receipt'}
                               </Button>
                             </td>
                           </tr>
@@ -1489,6 +1566,146 @@ export default function Returns() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={!!receiveTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReceiveTarget(null);
+            setReceiveQtyInput('');
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {t('returns.removals.receiveDialog.title') ||
+                (isAr ? 'استلمت فعلي كام؟' : 'How many did you actually receive?')}
+            </DialogTitle>
+          </DialogHeader>
+          {receiveTarget ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-mono font-semibold text-foreground">{receiveTarget.sku_code}</span>
+                {' · '}
+                {receiveTarget.removal_order?.removal_order_id ||
+                  receiveTarget.removalOrder?.removal_order_id ||
+                  '—'}
+              </p>
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 flex justify-between">
+                <span>{t('returns.removals.receiveDialog.expected') || (isAr ? 'المتوقع من الشيت' : 'Expected from sheet')}</span>
+                <span className="font-mono font-semibold">{expectedRemovalQty(receiveTarget)}</span>
+              </div>
+              {alreadyReceivedRemovalQty(receiveTarget) > 0 ? (
+                <>
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 flex justify-between">
+                    <span>
+                      {t('returns.removals.receiveDialog.already') ||
+                        (isAr ? 'استُلم قبل كده' : 'Already received')}
+                    </span>
+                    <span className="font-mono font-semibold">{alreadyReceivedRemovalQty(receiveTarget)}</span>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 flex justify-between">
+                    <span>
+                      {t('returns.removals.receiveDialog.remaining') ||
+                        (isAr ? 'المتبقي' : 'Remaining')}
+                    </span>
+                    <span className="font-mono font-semibold">{remainingRemovalQty(receiveTarget)}</span>
+                  </div>
+                </>
+              ) : null}
+              <div className="space-y-1">
+                <Label htmlFor="removal-receive-qty">
+                  {t('returns.removals.receiveDialog.thisBatch') ||
+                    (isAr ? 'كمية الدفعة دي (اللي المندوب سلّمها الآن)' : 'This delivery qty (what the courier brought now)')}
+                </Label>
+                <Input
+                  id="removal-receive-qty"
+                  type="number"
+                  min={alreadyReceivedRemovalQty(receiveTarget) > 0 ? 1 : 0}
+                  max={remainingRemovalQty(receiveTarget)}
+                  step={1}
+                  value={receiveQtyInput}
+                  onChange={(e) => setReceiveQtyInput(e.target.value)}
+                />
+              </div>
+              {(() => {
+                const expected = expectedRemovalQty(receiveTarget);
+                const already = alreadyReceivedRemovalQty(receiveTarget);
+                const remaining = remainingRemovalQty(receiveTarget);
+                const batch = Math.max(0, Math.floor(Number(receiveQtyInput)));
+                const shortfall = Number.isFinite(batch)
+                  ? Math.max(0, expected - (already + Math.min(batch, remaining)))
+                  : remaining;
+                return (
+                  <div
+                    className={cn(
+                      'rounded-md border px-3 py-2 flex justify-between',
+                      shortfall > 0
+                        ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+                        : 'border-emerald-500/30 bg-emerald-500/10',
+                    )}
+                  >
+                    <span>
+                      {t('returns.removals.receiveDialog.shortfall') ||
+                        (isAr ? 'الفرق للمطالبة بعد الدفعة' : 'Shortfall after this batch')}
+                    </span>
+                    <span className="font-mono font-semibold">{shortfall}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setReceiveTarget(null);
+                setReceiveQtyInput('');
+              }}
+            >
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </Button>
+            <Button
+              type="button"
+              className="bg-violet-600 hover:bg-violet-500 text-white"
+              disabled={receiveRemovalMutation.isPending || !receiveTarget}
+              onClick={() => {
+                if (!receiveTarget) return;
+                const remaining = remainingRemovalQty(receiveTarget);
+                const already = alreadyReceivedRemovalQty(receiveTarget);
+                const batch = Math.floor(Number(receiveQtyInput));
+                if (!Number.isFinite(batch) || batch < 0) {
+                  toast.error(isAr ? 'أدخل كمية صحيحة' : 'Enter a valid quantity');
+                  return;
+                }
+                if (already > 0 && batch <= 0) {
+                  toast.error(
+                    isAr ? 'أدخل كمية أكبر من صفر لهذه الدفعة' : 'Enter a positive qty for this delivery',
+                  );
+                  return;
+                }
+                if (batch > remaining) {
+                  toast.error(
+                    isAr
+                      ? `الكمية لا تتجاوز المتبقي (${remaining})`
+                      : `Quantity cannot exceed remaining (${remaining})`,
+                  );
+                  return;
+                }
+                receiveRemovalMutation.mutate({ id: String(receiveTarget.id), quantity: batch });
+              }}
+            >
+              {receiveRemovalMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                t('returns.removals.actions.confirmReceive') || (isAr ? 'تأكيد الاستلام' : 'Confirm receive')
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

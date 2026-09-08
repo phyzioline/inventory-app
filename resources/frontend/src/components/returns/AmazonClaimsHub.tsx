@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Printer, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -17,8 +17,27 @@ import {
 import { rowReimbursementCategory } from '@/components/returns/returnReimbursementUtils';
 import { ReimbursementBadge } from '@/components/returns/ReimbursementBadge';
 
+export type RemovalShortfallRow = {
+  id?: number | string;
+  sku_code?: string | null;
+  fnsku?: string | null;
+  disposition?: string | null;
+  product_image_url?: string | null;
+  product_name?: string | null;
+  expected_quantity?: number | null;
+  received_quantity?: number | null;
+  shortfall_quantity?: number | null;
+  shipped_quantity?: number | null;
+  requested_quantity?: number | null;
+  received_at?: string | null;
+  removal_order?: { removal_order_id?: string | null } | null;
+  removalOrder?: { removal_order_id?: string | null } | null;
+};
+
 type Props = {
   returns: ReturnRowLike[];
+  removalShortfalls?: RemovalShortfallRow[];
+  shortfallsLoading?: boolean;
   isAr: boolean;
   t: (key: string) => string;
 };
@@ -75,7 +94,52 @@ function CopyOrderButton({ orderNumber, isAr }: { orderNumber: string; isAr: boo
   );
 }
 
-export function AmazonClaimsHub({ returns, isAr, t }: Props) {
+function removalOrderId(row: RemovalShortfallRow): string {
+  return String(row.removal_order?.removal_order_id || row.removalOrder?.removal_order_id || '').trim();
+}
+
+function printRemovalShortfallClaimSheet(rows: RemovalShortfallRow[], isAr: boolean) {
+  const title = isAr ? 'مطالبة نقص استلام إزالة أمازون' : 'Amazon removal shortfall claim';
+  const headers = isAr
+    ? ['رقم الإزالة', 'SKU', 'FNSKU', 'متوقع', 'مستلم', 'ناقص', 'Disposition']
+    : ['Removal #', 'SKU', 'FNSKU', 'Expected', 'Received', 'Shortfall', 'Disposition'];
+
+  const bodyRows = rows
+    .map((r) => {
+      const cells = [
+        removalOrderId(r) || '—',
+        r.sku_code || '—',
+        r.fnsku || '—',
+        String(r.expected_quantity ?? '—'),
+        String(r.received_quantity ?? '—'),
+        String(r.shortfall_quantity ?? '—'),
+        r.disposition || '—',
+      ];
+      return `<tr>${cells.map((c) => `<td style="border:1px solid #ccc;padding:6px;font-size:12px;">${String(c).replace(/</g, '&lt;')}</td>`).join('')}</tr>`;
+    })
+    .join('');
+
+  const html = `<!DOCTYPE html><html lang="${isAr ? 'ar' : 'en'}" dir="${isAr ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"/><title>${title}</title>
+    <style>body{font-family:system-ui,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:8px}p{color:#555;font-size:12px}table{border-collapse:collapse;width:100%;margin-top:16px}th{border:1px solid #ccc;padding:6px;background:#f5f5f5;font-size:11px}</style>
+    </head><body><h1>${title}</h1><p>${isAr ? 'للاستخدام في رفع مطالبة تعويض PDF' : 'For Amazon reimbursement / claim PDF upload'}</p>
+    <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${bodyRows}</tbody></table>
+    </body></html>`;
+
+  const win = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
+export function AmazonClaimsHub({
+  returns,
+  removalShortfalls = [],
+  shortfallsLoading = false,
+  isAr,
+  t,
+}: Props) {
   const [fbaReadyOnly, setFbaReadyOnly] = useState(true);
 
   const buckets = useMemo(() => {
@@ -91,6 +155,12 @@ export function AmazonClaimsHub({ returns, isAr, t }: Props) {
     }
     return buckets.fba.filter((r) => rowReimbursementCategory(r as Record<string, unknown>) === 'ready');
   }, [buckets.fba, fbaReadyOnly]);
+
+  const shortfallRows = useMemo(
+    () =>
+      (removalShortfalls || []).filter((r) => Number(r.shortfall_quantity ?? 0) > 0),
+    [removalShortfalls],
+  );
 
   const renderTable = (rows: ReturnRowLike[], showCopy = false) => (
     <div className="overflow-x-auto -mx-1">
@@ -157,13 +227,19 @@ export function AmazonClaimsHub({ returns, isAr, t }: Props) {
         <CardDescription>
           {t('returns.claimsHub.subtitle') ||
             (isAr
-              ? 'مرتجعات FBA والتاجر وعدم الاستلام — انسخ رقم الطلب لمطالبة SAFE-T أو التعويض'
-              : 'FBA, merchant, and non-receipt returns — copy order numbers for SAFE-T or reimbursement claims')}
+              ? 'أو التعويض SAFE-T والتاجر وعدم الاستلام — ونقص استلام الإزالة للمطالبة'
+              : 'FBA, merchant, non-receipt, and removal shortfalls — copy / print for claims')}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="fba">
+        <Tabs defaultValue="shortfall">
           <TabsList className="w-full justify-start flex-wrap h-auto gap-1">
+            <TabsTrigger value="shortfall" className="text-xs sm:text-sm">
+              {t('returns.claimsHub.tabShortfall') || (isAr ? 'نقص استلام الإزالة' : 'Removal shortfall')}
+              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+                ({shortfallRows.length})
+              </Badge>
+            </TabsTrigger>
             <TabsTrigger value="fba" className="text-xs sm:text-sm">
               {t('returns.claimsHub.tabFba') || (isAr ? 'FBA لم تُرجع' : 'FBA not returned')}
               <Badge variant="secondary" className="ml-1.5 text-[10px]">
@@ -183,6 +259,84 @@ export function AmazonClaimsHub({ returns, isAr, t }: Props) {
               </Badge>
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="shortfall" className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground max-w-xl">
+                {t('returns.claimsHub.shortfallHint') ||
+                  (isAr
+                    ? 'الفرق بين المتوقع في شيت الإزالة والكمية اللي استلمتها فعلياً — اطبعه لرفع مطالبة تعويض'
+                    : 'Difference between sheet expected qty and what you actually received — print for reimbursement')}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={shortfallRows.length === 0}
+                onClick={() => printRemovalShortfallClaimSheet(shortfallRows, isAr)}
+              >
+                <Printer className="w-3.5 h-3.5" />
+                {t('returns.claimsHub.printShortfall') || (isAr ? 'طباعة للمطالبة' : 'Print for claim')}
+              </Button>
+            </div>
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full min-w-[960px] text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b border-border text-[11px] uppercase tracking-wide">
+                    <th className="py-2 pr-3 w-12">{t('returns.table.image') || (isAr ? 'صورة' : 'Image')}</th>
+                    <th className="py-2 pr-3">{t('returns.claimsHub.removalOrder') || (isAr ? 'رقم الإزالة' : 'Removal #')}</th>
+                    <th className="py-2 pr-3">SKU</th>
+                    <th className="py-2 pr-3">{t('returns.claimsHub.expected') || (isAr ? 'متوقع' : 'Expected')}</th>
+                    <th className="py-2 pr-3">{t('returns.claimsHub.received') || (isAr ? 'مستلم' : 'Received')}</th>
+                    <th className="py-2 pr-3">{t('returns.claimsHub.shortfall') || (isAr ? 'ناقص' : 'Shortfall')}</th>
+                    <th className="py-2 pr-3">{t('returns.table.date') || (isAr ? 'التاريخ' : 'Date')}</th>
+                    <th className="py-2 pr-3 text-right">{t('returns.claimsHub.copy') || (isAr ? 'نسخ' : 'Copy')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shortfallsLoading ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                        <Loader2 className="w-5 h-5 animate-spin inline-block" />
+                      </td>
+                    </tr>
+                  ) : shortfallRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-6 text-center text-muted-foreground text-sm">
+                        {t('returns.claimsHub.emptyShortfall') ||
+                          (isAr ? 'لا يوجد نقص استلام إزالة بعد' : 'No removal shortfalls yet')}
+                      </td>
+                    </tr>
+                  ) : (
+                    shortfallRows.slice(0, 200).map((r) => {
+                      const oid = removalOrderId(r);
+                      return (
+                        <tr key={String(r.id ?? oid)} className="border-b border-border/60 hover:bg-muted/20">
+                          <td className="py-2 pr-3">
+                            <ProductThumb src={r.product_image_url} alt={r.product_name || r.sku_code || ''} />
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-xs">{oid || '—'}</td>
+                          <td className="py-2 pr-3 font-mono text-xs">{r.sku_code || '—'}</td>
+                          <td className="py-2 pr-3 text-xs text-center font-mono">{r.expected_quantity ?? '—'}</td>
+                          <td className="py-2 pr-3 text-xs text-center font-mono">{r.received_quantity ?? '—'}</td>
+                          <td className="py-2 pr-3 text-xs text-center font-mono font-semibold text-amber-700 dark:text-amber-300">
+                            {r.shortfall_quantity ?? '—'}
+                          </td>
+                          <td className="py-2 pr-3 text-xs whitespace-nowrap">
+                            {formatDate(r.received_at || undefined)}
+                          </td>
+                          <td className="py-2 pr-3 text-right">
+                            <CopyOrderButton orderNumber={oid} isAr={isAr} />
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </TabsContent>
 
           <TabsContent value="fba" className="mt-4 space-y-3">
             <button

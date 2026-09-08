@@ -189,4 +189,144 @@ describe('Amazon removal receive deducts the FBA balance', function () {
         // Shop restock still happens in full even though FBA balance couldn't fully cover it.
         expect((int) $storeStock)->toBe(5);
     });
+
+    it('partial receive restocks only actual qty and deducts expected from FBA', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $fixture = seedRemovalFbaDeductionFixture($user);
+
+        $response = $this->postJson('/api/inventory/removals/items/'.$fixture['item']->id.'/receive', [
+            'quantity' => 1,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('expected_quantity', 3)
+            ->assertJsonPath('received_quantity', 1)
+            ->assertJsonPath('shortfall_quantity', 2)
+            ->assertJsonPath('fba_balance_deducted', 3);
+
+        $storeStock = SkuInventory::query()
+            ->where('sku_id', $fixture['storeSku']->id)
+            ->where('location_id', $fixture['shopFloor']->id)
+            ->value('quantity');
+
+        $fbaStock = SkuInventory::query()
+            ->where('sku_id', $fixture['fbaSku']->id)
+            ->where('location_id', $fixture['fbaWarehouse']->id)
+            ->value('quantity');
+
+        expect((int) $storeStock)->toBe(3)
+            ->and((int) $fbaStock)->toBe(7);
+
+        $list = $this->getJson('/api/inventory/removals?shortfall=1&per_page=50')->assertOk()->json('data');
+        $ids = collect($list)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        expect($ids)->toContain((int) $fixture['item']->id);
+    });
+
+    it('zero receive marks shortfall for the full expected qty without shop IN', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $fixture = seedRemovalFbaDeductionFixture($user);
+
+        $response = $this->postJson('/api/inventory/removals/items/'.$fixture['item']->id.'/receive', [
+            'quantity' => 0,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('received_quantity', 0)
+            ->assertJsonPath('shortfall_quantity', 3)
+            ->assertJsonPath('fba_balance_deducted', 3);
+
+        $storeStock = SkuInventory::query()
+            ->where('sku_id', $fixture['storeSku']->id)
+            ->where('location_id', $fixture['shopFloor']->id)
+            ->value('quantity');
+
+        expect((int) $storeStock)->toBe(2);
+    });
+
+    it('rejects received quantity above expected with 422', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $fixture = seedRemovalFbaDeductionFixture($user);
+
+        $this->postJson('/api/inventory/removals/items/'.$fixture['item']->id.'/receive', [
+            'quantity' => 4,
+        ])->assertStatus(422)
+            ->assertJsonPath('expected_quantity', 3)
+            ->assertJsonPath('remaining_quantity', 3);
+
+        expect((string) $fixture['item']->fresh()->receive_status)->toBe('pending');
+    });
+
+    it('full receive is not listed in shortfall filter', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $fixture = seedRemovalFbaDeductionFixture($user);
+
+        $this->postJson('/api/inventory/removals/items/'.$fixture['item']->id.'/receive', [
+            'quantity' => 3,
+        ])->assertOk()
+            ->assertJsonPath('shortfall_quantity', 0);
+
+        $list = $this->getJson('/api/inventory/removals?shortfall=1&per_page=50')->assertOk()->json('data');
+        $ids = collect($list)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        expect($ids)->not->toContain((int) $fixture['item']->id);
+    });
+
+    it('allows a second courier batch without double-deducting FBA', function () {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $fixture = seedRemovalFbaDeductionFixture($user);
+
+        $this->postJson('/api/inventory/removals/items/'.$fixture['item']->id.'/receive', [
+            'quantity' => 1,
+        ])->assertOk()
+            ->assertJsonPath('this_batch_quantity', 1)
+            ->assertJsonPath('received_quantity', 1)
+            ->assertJsonPath('shortfall_quantity', 2)
+            ->assertJsonPath('fba_balance_deducted', 3);
+
+        $second = $this->postJson('/api/inventory/removals/items/'.$fixture['item']->id.'/receive', [
+            'quantity' => 2,
+        ]);
+
+        $second->assertOk()
+            ->assertJsonPath('this_batch_quantity', 2)
+            ->assertJsonPath('received_quantity', 3)
+            ->assertJsonPath('shortfall_quantity', 0)
+            ->assertJsonPath('fba_balance_deducted', 0);
+
+        $storeStock = SkuInventory::query()
+            ->where('sku_id', $fixture['storeSku']->id)
+            ->where('location_id', $fixture['shopFloor']->id)
+            ->value('quantity');
+
+        $fbaStock = SkuInventory::query()
+            ->where('sku_id', $fixture['fbaSku']->id)
+            ->where('location_id', $fixture['fbaWarehouse']->id)
+            ->value('quantity');
+
+        // Shop: 2 start +1 +2 = 5. FBA: 10 - 3 once = 7.
+        expect((int) $storeStock)->toBe(5)
+            ->and((int) $fbaStock)->toBe(7);
+
+        $fbaOutCount = InventoryTransaction::query()
+            ->where('sku_id', $fixture['fbaSku']->id)
+            ->where('type', 'OUT')
+            ->where('reference_type', 'Removal')
+            ->where('reference_id', (string) $fixture['item']->id)
+            ->count();
+
+        expect($fbaOutCount)->toBe(1);
+
+        $list = $this->getJson('/api/inventory/removals?shortfall=1&per_page=50')->assertOk()->json('data');
+        $ids = collect($list)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        expect($ids)->not->toContain((int) $fixture['item']->id);
+    });
 });

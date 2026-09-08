@@ -11,6 +11,7 @@ use App\Application\Services\AmazonRemovalIntakeService;
 use App\Application\Services\ChannelStockResolver;
 use App\Application\Services\RemovalFbaBalanceService;
 use App\Application\Services\SkuImageResolver;
+use App\Application\Support\TenantContext;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryRemovalItem;
 use App\Domain\Models\Wms\InventoryRemovalOrder;
@@ -180,6 +181,56 @@ class RemovalController extends Controller
         return $listingSku;
     }
 
+    /**
+     * Expected units for a removal line: shipped when present, otherwise requested.
+     */
+    private function expectedQuantityForItem(InventoryRemovalItem $item): int
+    {
+        $shipped = (int) ($item->shipped_quantity ?: 0);
+        if ($shipped > 0) {
+            return $shipped;
+        }
+
+        return max(0, (int) ($item->requested_quantity ?: 0));
+    }
+
+    /**
+     * Find an existing removal item for upsert: exact disposition match, else blank-disposition sibling.
+     */
+    private function findExistingRemovalItemForImport(int $orderId, string $skuCode, ?string $disposition): ?InventoryRemovalItem
+    {
+        $base = InventoryRemovalItem::query()
+            ->where('inventory_removal_order_id', $orderId)
+            ->where('sku_code', $skuCode);
+
+        $exact = (clone $base)
+            ->where(function ($q) use ($disposition) {
+                if ($disposition === null || $disposition === '') {
+                    $q->whereNull('disposition')->orWhere('disposition', '');
+                } else {
+                    $q->where('disposition', $disposition);
+                }
+            })
+            ->orderByDesc('id')
+            ->first();
+
+        if ($exact) {
+            return $exact;
+        }
+
+        // Detail CSV often upgrades an All-Orders row that had empty disposition — update that row.
+        if ($disposition !== null && $disposition !== '') {
+            return (clone $base)
+                ->where(function ($q) {
+                    $q->whereNull('disposition')->orWhere('disposition', '');
+                })
+                ->orderByDesc('id')
+                ->first();
+        }
+
+        return null;
+    }
+
     public function index(Request $request)
     {
         $perPage = (int) $request->query('per_page', 50);
@@ -193,6 +244,13 @@ class RemovalController extends Controller
         $status = trim((string) $request->query('status', ''));
         if ($status !== '') {
             $query->where('receive_status', $status);
+        }
+
+        if ($request->boolean('shortfall')) {
+            $query->where('receive_status', 'received')
+                ->whereRaw(
+                    '(CASE WHEN COALESCE(shipped_quantity, 0) > 0 THEN shipped_quantity ELSE COALESCE(requested_quantity, 0) END) > COALESCE(received_quantity, 0)'
+                );
         }
 
         $search = trim((string) $request->query('search', ''));
@@ -212,6 +270,10 @@ class RemovalController extends Controller
             $sku = $skuMap->get(trim((string) ($item->sku_code ?? '')));
             $item->setAttribute('product_image_url', SkuImageResolver::urlFromSku($sku));
             $item->setAttribute('product_name', SkuImageResolver::nameFromSku($sku));
+            $expected = $this->expectedQuantityForItem($item);
+            $received = (int) ($item->received_quantity ?? 0);
+            $item->setAttribute('expected_quantity', $expected);
+            $item->setAttribute('shortfall_quantity', max(0, $expected - $received));
 
             return $item;
         });
@@ -336,7 +398,7 @@ class RemovalController extends Controller
             'errors' => [],
         ];
 
-        $userId = auth()->id();
+        $userId = (int) (TenantContext::id() ?? auth()->id() ?? 0);
 
         DB::beginTransaction();
         try {
@@ -360,7 +422,7 @@ class RemovalController extends Controller
                 $currency = $this->csvCell($row, $map, 'currency') ?: null;
 
                 $orderPayload = [
-                    'user_id' => $userId,
+                    'user_id' => $userId > 0 ? $userId : null,
                     'source' => $source,
                     'removal_order_id' => $oid,
                     'order_source' => $this->csvCell($row, $map, 'order-source') ?: null,
@@ -375,13 +437,14 @@ class RemovalController extends Controller
                 $existingOrder = InventoryRemovalOrder::query()
                     ->where('source', $source)
                     ->where('removal_order_id', $oid)
+                    ->when($userId > 0, fn ($q) => $q->where('user_id', $userId))
                     ->first();
 
                 if (! $existingOrder) {
                     $requestDate = $this->normalizeDateTime($this->csvCell($row, $map, 'request-date'));
                     $requestedQty = (int) $this->csvCell($row, $map, 'requested-quantity');
                     $adopted = $this->removalIntake->adoptS02Sibling(
-                        (int) $userId,
+                        $userId,
                         $oid,
                         $skuCode,
                         $requestedQty,
@@ -404,7 +467,7 @@ class RemovalController extends Controller
                 $disposition = $this->csvCell($row, $map, 'disposition') ?: null;
                 $removalFeeRaw = $this->csvCell($row, $map, 'removal-fee');
                 $itemPayload = [
-                    'user_id' => $userId,
+                    'user_id' => $userId > 0 ? $userId : null,
                     'inventory_removal_order_id' => $order->id,
                     'sku_code' => $skuCode,
                     'fnsku' => $this->csvCell($row, $map, 'fnsku') ?: null,
@@ -418,20 +481,10 @@ class RemovalController extends Controller
                     'currency' => $currency,
                 ];
 
-                $existingItem = InventoryRemovalItem::query()
-                    ->where('inventory_removal_order_id', $order->id)
-                    ->where('sku_code', $skuCode)
-                    ->where(function ($q) use ($disposition) {
-                        if ($disposition === null || $disposition === '') {
-                            $q->whereNull('disposition')->orWhere('disposition', '');
-                        } else {
-                            $q->where('disposition', $disposition);
-                        }
-                    })
-                    ->first();
+                $existingItem = $this->findExistingRemovalItemForImport((int) $order->id, $skuCode, $disposition);
 
                 if ($existingItem) {
-                    // Preserve receipt fields on re-upload.
+                    // Preserve receipt fields on re-upload — never reset stock receipt state.
                     $preserve = [
                         'receive_status' => $existingItem->receive_status,
                         'received_at' => $existingItem->received_at,
@@ -477,31 +530,64 @@ class RemovalController extends Controller
     }
 
     /**
-     * Confirm receipt and restock to the shop listing SKU (المحل), not the FBA/merchant MSKU.
+     * Confirm receipt (supports multi-drop courier deliveries).
+     * Shop stock IN = this batch only; cumulative received_quantity grows.
+     * FBA OUT = full expected once (idempotent on later batches).
      */
     public function receive(Request $request, string $id)
     {
         $validated = $request->validate([
             'location_id' => 'nullable|exists:inventory_locations,id',
-            'quantity' => 'nullable|integer|min:1',
+            'quantity' => 'nullable|integer|min:0',
         ]);
 
         $item = InventoryRemovalItem::with(['removalOrder'])->findOrFail($id);
-        if ($item->receive_status === 'received') {
-            return response()->json(['message' => 'Already received'], 200);
+
+        $expected = $this->expectedQuantityForItem($item);
+        if ($expected <= 0) {
+            return response()->json(['message' => 'No quantity available to receive.'], 422);
         }
 
-        $qty = (int) ($validated['quantity'] ?? 0);
-        if ($qty <= 0) {
-            // Choose a sensible default quantity to receive.
-            $qty = (int) ($item->shipped_quantity ?: 0);
-            if ($qty <= 0) {
-                $qty = (int) ($item->requested_quantity ?: 0);
-            }
-            if ($qty <= 0) {
-                return response()->json(['message' => 'No quantity available to receive.'], 422);
-            }
+        $alreadyReceived = max(0, (int) ($item->received_quantity ?? 0));
+        if ($item->receive_status === 'received' && $alreadyReceived >= $expected) {
+            return response()->json([
+                'message' => 'Already fully received',
+                'expected_quantity' => $expected,
+                'received_quantity' => $alreadyReceived,
+                'shortfall_quantity' => 0,
+            ], 200);
         }
+
+        $remaining = max(0, $expected - $alreadyReceived);
+
+        // quantity = units in THIS delivery (delta). Omit = take the rest (legacy full receive).
+        if ($request->exists('quantity')) {
+            $batchQty = (int) ($validated['quantity'] ?? 0);
+        } else {
+            $batchQty = $remaining;
+        }
+
+        if ($alreadyReceived > 0 && $batchQty <= 0) {
+            return response()->json([
+                'message' => 'Enter a positive quantity for this delivery.',
+                'expected_quantity' => $expected,
+                'received_quantity' => $alreadyReceived,
+                'remaining_quantity' => $remaining,
+            ], 422);
+        }
+
+        if ($batchQty > $remaining) {
+            return response()->json([
+                'message' => 'Received quantity cannot exceed remaining quantity.',
+                'expected_quantity' => $expected,
+                'received_quantity' => $alreadyReceived,
+                'remaining_quantity' => $remaining,
+                'this_batch_quantity' => $batchQty,
+            ], 422);
+        }
+
+        $newTotal = $alreadyReceived + $batchQty;
+        $shortfall = max(0, $expected - $newTotal);
 
         // Find listing SKU from the removal sheet, then restock the linked shop SKU when present.
         $listingSku = Sku::query()
@@ -533,61 +619,70 @@ class RemovalController extends Controller
             (int) ($validated['location_id'] ?? 0) ?: null
         );
 
-        // The removed units physically left the FBA warehouse — deduct the same qty from the
-        // listing SKU's FBA balance so it doesn't stay inflated after the shop is restocked.
+        // Units that left the FC = expected; shop only gains what physically arrived this batch.
         $shouldDeductFba = (int) $restockSku->id !== (int) $listingSku->id
             && ChannelStockResolver::isFbaChannel((int) ($listingSku->channel_id ?? 0));
 
+        $fbaDeducted = 0;
+        $fbaLocationId = null;
+
         DB::beginTransaction();
         try {
-            // Lock inventory row and increment (race-safe).
-            $inv = SkuInventory::query()
-                ->where('sku_id', $restockSku->id)
-                ->where('location_id', $locationId)
-                ->lockForUpdate()
-                ->first();
-            if (! $inv) {
-                SkuInventory::firstOrCreate(
-                    ['sku_id' => $restockSku->id, 'location_id' => $locationId],
-                    ['quantity' => 0, 'reserved' => 0]
-                );
+            if ($batchQty > 0) {
                 $inv = SkuInventory::query()
                     ->where('sku_id', $restockSku->id)
                     ->where('location_id', $locationId)
                     ->lockForUpdate()
-                    ->firstOrFail();
+                    ->first();
+                if (! $inv) {
+                    SkuInventory::firstOrCreate(
+                        ['sku_id' => $restockSku->id, 'location_id' => $locationId],
+                        ['quantity' => 0, 'reserved' => 0]
+                    );
+                    $inv = SkuInventory::query()
+                        ->where('sku_id', $restockSku->id)
+                        ->where('location_id', $locationId)
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                }
+
+                $inv->increment('quantity', $batchQty);
+
+                $notes = 'Amazon removal received: '.($item->removalOrder?->removal_order_id ?? '-').' ('.($item->disposition ?? '-').')';
+                if ((int) $restockSku->id !== (int) $listingSku->id) {
+                    $notes .= ' [listing '.$listingSku->sku.' → shop '.$restockSku->sku.']';
+                }
+                $notes .= " [batch +{$batchQty}, total {$newTotal}/{$expected}";
+                if ($shortfall > 0) {
+                    $notes .= ", shortfall {$shortfall}";
+                }
+                $notes .= ']';
+
+                InventoryTransaction::create([
+                    'sku_id' => $restockSku->id,
+                    'location_id' => $locationId,
+                    'type' => 'IN',
+                    'quantity' => $batchQty,
+                    'reference_type' => 'Removal',
+                    'reference_id' => (string) $item->id,
+                    'notes' => $notes,
+                ]);
             }
 
-            $inv->increment('quantity', $qty);
-
-            $notes = 'Amazon removal received: '.($item->removalOrder?->removal_order_id ?? '-').' ('.($item->disposition ?? '-').')';
-            if ((int) $restockSku->id !== (int) $listingSku->id) {
-                $notes .= ' [listing '.$listingSku->sku.' → shop '.$restockSku->sku.']';
-            }
-
-            InventoryTransaction::create([
-                'sku_id' => $restockSku->id,
-                'location_id' => $locationId,
-                'type' => 'IN',
-                'quantity' => $qty,
-                'reference_type' => 'Removal',
-                'reference_id' => (string) $item->id,
-                'notes' => $notes,
-            ]);
-
-            $fbaDeducted = 0;
-            $fbaLocationId = null;
             if ($shouldDeductFba) {
-                $fbaResult = $this->fbaBalance->deductForReceivedItem($item, $listingSku, $qty);
+                // Idempotent: only the first receive batch deducts FBA for the full expected qty.
+                $fbaResult = $this->fbaBalance->deductForReceivedItem($item, $listingSku, $expected);
                 $fbaDeducted = (int) $fbaResult['deducted'];
                 $fbaLocationId = $fbaResult['location_id'];
             }
 
             $item->update([
                 'receive_status' => 'received',
-                'received_at' => now(),
-                'received_location_id' => $locationId,
-                'received_quantity' => $qty,
+                'received_at' => $item->received_at ?? now(),
+                'received_location_id' => $batchQty > 0
+                    ? $locationId
+                    : ($item->received_location_id ?: null),
+                'received_quantity' => $newTotal,
             ]);
 
             DB::commit();
@@ -601,11 +696,17 @@ class RemovalController extends Controller
         }
 
         return response()->json([
-            'message' => 'Removal item received and restocked',
+            'message' => $alreadyReceived > 0
+                ? 'Removal delivery batch restocked'
+                : 'Removal item received and restocked',
             'item' => $item->fresh(['removalOrder', 'receivedLocation']),
             'restocked_sku' => $restockSku->sku,
             'listing_sku' => $listingSku->sku,
             'location_id' => $locationId,
+            'expected_quantity' => $expected,
+            'this_batch_quantity' => $batchQty,
+            'received_quantity' => $newTotal,
+            'shortfall_quantity' => $shortfall,
             'fba_balance_deducted' => $fbaDeducted,
             'fba_location_id' => $fbaLocationId,
         ]);

@@ -128,10 +128,9 @@ class SkuController extends Controller
         $dir = $sortDir === 'asc' ? 'asc' : 'desc';
 
         if ($sortBy === 'price') {
-            // Prefer listing selling_price when set; otherwise cost_price (matches UI fallback loosely).
-            $query->orderByRaw(
-                'CASE WHEN COALESCE(skus.selling_price, 0) > 0 THEN skus.selling_price ELSE COALESCE(skus.cost_price, 0) END '.$dir
-            )->orderBy('skus.sku');
+            // Sort by listing selling price only (UI no longer falls back to purchase cost).
+            $query->orderByRaw('COALESCE(skus.selling_price, 0) '.$dir)
+                ->orderBy('skus.sku');
 
             return;
         }

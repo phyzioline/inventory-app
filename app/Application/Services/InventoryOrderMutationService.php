@@ -882,6 +882,22 @@ class InventoryOrderMutationService
         $status = strtolower((string) ($order->status ?? ''));
         $financial = strtolower((string) ($order->financial_status ?? ''));
         if ($status === 'cancelled' && $financial === 'cancelled') {
+            // Idempotent stock repair: marketplace imports use ImportedOrder OUTs that older
+            // cancels may have skipped — re-running rollback is a no-op once balanced.
+            DB::beginTransaction();
+            try {
+                $this->rollbackInventoryForOrderCancellation($order);
+                DB::commit();
+            } catch (Exception $e) {
+                DB::rollBack();
+
+                return response()->json([
+                    'message' => 'Order is already cancelled, but stock rollback failed.',
+                    'error' => $e->getMessage(),
+                    'order' => $order->fresh(['channel', 'items.sku.offer.masterProduct', 'costs', 'settlementItems']),
+                ], 500);
+            }
+
             return response()->json([
                 'message' => 'Order is already cancelled.',
                 'order' => $order->fresh(['channel', 'items.sku.offer.masterProduct', 'costs', 'settlementItems']),
@@ -956,7 +972,7 @@ class InventoryOrderMutationService
             return;
         }
 
-        $types = ['Order', 'AutoTransferBeforeSale', 'OrderEdit'];
+        $types = ['Order', 'AutoTransferBeforeSale', 'OrderEdit', 'ImportedOrder', 'OrderCancelRollback'];
 
         $rows = InventoryTransaction::query()
             ->where('reference_id', (string) $orderId)

@@ -108,12 +108,9 @@ function positiveNumber(value: unknown): number {
   return Number.isFinite(x) && x > 0 ? x : 0;
 }
 
-function resolveDisplayUnitPrice(sku: any, canViewCost = true): number {
-  const selling = positiveNumber(sku?.selling_price);
-  if (selling > 0) return selling;
-  // Cashiers without cost.read must not see purchase-cost fallback as "price".
-  if (!canViewCost) return 0;
-  return resolvePurchaseUnitCost(sku);
+/** Channel listing selling price for display only — never falls back to purchase cost. */
+function resolveSellingUnitPrice(sku: any): number {
+  return positiveNumber(sku?.selling_price);
 }
 
 function ProductThumb({ imageUrl }: { imageUrl: string | null | undefined }) {
@@ -295,7 +292,11 @@ export default function ChannelDetail() {
         totalPieces: skus.reduce((sum: number, s: any) => sum + Math.max(0, getSkuQty(s)), 0),
         unlinked: skus.filter((s: any) => !s?.offer_id).length,
         totalValue: 0,
-        sellingValue: 0,
+        sellingValue: skus.reduce((sum: number, s: any) => {
+          const qty = Math.max(0, getSkuQty(s));
+          const sell = resolveSellingUnitPrice(s);
+          return sum + (qty > 0 && sell > 0 ? qty * sell : 0);
+        }, 0),
       };
     }
     return {
@@ -332,7 +333,8 @@ export default function ChannelDetail() {
     return cards;
   }, [stats, canViewCost]);
 
-  const tableColSpan = canViewCost ? 9 : 8;
+  // checkbox, image, name, sku, selling price, link, stock, actions (+ purchase + total cost when allowed)
+  const tableColSpan = canViewCost ? 10 : 8;
 
   const summaryPending = !includeGeneral && (loadingSummary || (fetchingSummary && !channelSummary));
 
@@ -343,8 +345,8 @@ export default function ChannelDetail() {
       return skus;
     }
     return [...skus].sort((a: any, b: any) => {
-      const priceA = resolveDisplayUnitPrice(a, canViewCost);
-      const priceB = resolveDisplayUnitPrice(b, canViewCost);
+      const priceA = resolveSellingUnitPrice(a);
+      const priceB = resolveSellingUnitPrice(b);
       const qtyA = getSkuQty(a);
       const qtyB = getSkuQty(b);
       const costA = canViewCost ? resolvePurchaseUnitCost(a) * qtyA : 0;
@@ -811,7 +813,7 @@ export default function ChannelDetail() {
                 <TableHead>SKU</TableHead>
                 <TableHead>
                   <div className="flex items-center gap-1">
-                    <span>السعر</span>
+                    <span>سعر البيع</span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="inline-flex items-center text-muted-foreground hover:text-foreground">
@@ -825,6 +827,13 @@ export default function ChannelDetail() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
+                {canViewCost && (
+                <TableHead>
+                  <div className="flex items-center gap-1">
+                    <span>تكلفة الشراء</span>
+                  </div>
+                </TableHead>
+                )}
                 <TableHead>
                   <div className="flex items-center gap-1">
                     <span>حالة الربط</span>
@@ -905,23 +914,15 @@ export default function ChannelDetail() {
                   const masterCost = masterProduct?.cost_price;
                   const masterStock = masterProduct?.total_stock;
 
-                  const skuSellingNum = Number(sku.selling_price ?? 0);
+                  const skuSellingNum = resolveSellingUnitPrice(sku);
                   const purchaseUnit = canViewCost ? resolvePurchaseUnitCost(sku) : 0;
-                  const displayUnit = resolveDisplayUnitPrice(sku, canViewCost);
-                  const showingPriceFromPurchase =
-                    canViewCost &&
-                    !(Number.isFinite(skuSellingNum) && skuSellingNum > 0) &&
-                    purchaseUnit > 0;
 
                   const priceMismatch =
-                    !showingPriceFromPurchase &&
                     masterPrice &&
-                    Number.isFinite(skuSellingNum) &&
                     skuSellingNum > 0 &&
                     Math.abs(Number(masterPrice) - skuSellingNum) > 1;
                   const costMismatch =
                     canViewCost &&
-                    !showingPriceFromPurchase &&
                     masterCost &&
                     sku.cost_price &&
                     Math.abs(Number(masterCost) - Number(sku.cost_price)) > 1;
@@ -995,27 +996,35 @@ export default function ChannelDetail() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1.5 font-bold">
-                            {displayUnit > 0 ? `${displayUnit.toLocaleString()} ج.م` : '—'}
-                            {(priceMismatch || costMismatch) && (
-                              <div className="group/alert relative">
-                                <AlertTriangle className="w-3.5 h-3.5 text-orange-500 cursor-help" />
-                                <div className="absolute bottom-full mb-2 hidden group-hover/alert:block w-56 p-2 bg-slate-800 text-white text-[10px] rounded shadow-lg z-50">
-                                  <p className="font-bold border-b border-white/20 pb-1 mb-1">اختلاف في البيانات:</p>
-                                  {priceMismatch && <p>• سعر البيع: {Number(masterPrice).toLocaleString()} ج.م في الرئيسي</p>}
-                                  {costMismatch && <p>• التكلفة: {Number(masterCost).toLocaleString()} ج.م في الرئيسي</p>}
-                                </div>
+                        <div className="flex items-center gap-1.5 font-bold">
+                          {skuSellingNum > 0 ? `${skuSellingNum.toLocaleString()} ج.م` : '—'}
+                          {priceMismatch && (
+                            <div className="group/alert relative">
+                              <AlertTriangle className="w-3.5 h-3.5 text-orange-500 cursor-help" />
+                              <div className="absolute bottom-full mb-2 hidden group-hover/alert:block w-56 p-2 bg-slate-800 text-white text-[10px] rounded shadow-lg z-50">
+                                <p className="font-bold border-b border-white/20 pb-1 mb-1">اختلاف في البيانات:</p>
+                                <p>• سعر البيع: {Number(masterPrice).toLocaleString()} ج.م في الرئيسي</p>
                               </div>
-                            )}
-                          </div>
-                          {showingPriceFromPurchase && (
-                            <span className="text-[10px] text-muted-foreground font-normal">
-                              من تكلفة الشراء (سعر البيع على القناة غير محدد)
-                            </span>
+                            </div>
                           )}
                         </div>
                       </TableCell>
+                      {canViewCost && (
+                      <TableCell>
+                        <div className="flex items-center gap-1.5 font-semibold tabular-nums">
+                          {purchaseUnit > 0 ? `${purchaseUnit.toLocaleString()} ج.م` : '—'}
+                          {costMismatch && (
+                            <div className="group/alert relative">
+                              <AlertTriangle className="w-3.5 h-3.5 text-orange-500 cursor-help" />
+                              <div className="absolute bottom-full mb-2 hidden group-hover/alert:block w-56 p-2 bg-slate-800 text-white text-[10px] rounded shadow-lg z-50">
+                                <p className="font-bold border-b border-white/20 pb-1 mb-1">اختلاف في البيانات:</p>
+                                <p>• التكلفة: {Number(masterCost).toLocaleString()} ج.م في الرئيسي</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      )}
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <Badge

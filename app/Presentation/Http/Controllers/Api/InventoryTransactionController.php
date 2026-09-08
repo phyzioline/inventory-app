@@ -8,6 +8,8 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use App\Application\Services\ChannelStockResolver;
+use App\Application\Support\TenantContext;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\InventoryReturn;
@@ -314,15 +316,30 @@ class InventoryTransactionController extends Controller
     /**
      * SKU movement tracker: warehouse transfers, sales, returns, imports — with from/to labels.
      *
-     * - sku_id alone → that listing only (include_related defaults to false).
+     * - sku_id alone → that listing only (channel-scoped stock + movements; include_related defaults false).
      * - sku_id + include_related=1 → sibling SKUs on the same offer (opt-in).
-     * - master_product_id → every SKU under that master product.
+     * - master_product_id (without sku-only) → every SKU under that master product (full rollup).
      */
     public function skuTracker(Request $request)
     {
+        $tenantUserId = (int) (TenantContext::id() ?? auth()->id() ?? 0);
         $validated = $request->validate([
-            'sku_id' => ['nullable', 'integer', Rule::exists('skus', 'id')->where('user_id', auth()->id())],
-            'master_product_id' => ['nullable', 'integer', Rule::exists('master_products', 'id')->where('user_id', auth()->id())],
+            'sku_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('skus', 'id')->when(
+                    $tenantUserId > 0,
+                    fn ($rule) => $rule->where('user_id', $tenantUserId)
+                ),
+            ],
+            'master_product_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('master_products', 'id')->when(
+                    $tenantUserId > 0,
+                    fn ($rule) => $rule->where('user_id', $tenantUserId)
+                ),
+            ],
             'include_related' => 'nullable|boolean',
             'limit' => 'nullable|integer|min:1|max:2000',
         ]);
@@ -331,15 +348,18 @@ class InventoryTransactionController extends Controller
             return response()->json(['message' => 'Provide sku_id or master_product_id'], 422);
         }
 
-        $masterProductId = ! empty($validated['master_product_id']) ? (int) $validated['master_product_id'] : null;
+        $skuId = ! empty($validated['sku_id']) ? (int) $validated['sku_id'] : null;
+        $includeRelated = $request->boolean('include_related', false);
+        // SKU-only mode must not expand via master_product_id even if a client sends both.
+        $masterProductId = ($skuId && ! $includeRelated)
+            ? null
+            : (! empty($validated['master_product_id']) ? (int) $validated['master_product_id'] : null);
+        $skuOnlyMode = $skuId !== null && ! $includeRelated && $masterProductId === null;
+
         $defaultLimit = $masterProductId ? 1000 : 500;
         $limit = (int) ($validated['limit'] ?? $defaultLimit);
 
-        $skuIds = $this->resolveSkuTrackerSkuIds(
-            ! empty($validated['sku_id']) ? (int) $validated['sku_id'] : null,
-            $masterProductId,
-            $request->boolean('include_related', false),
-        );
+        $skuIds = $this->resolveSkuTrackerSkuIds($skuId, $masterProductId, $includeRelated);
 
         $relatedBatchIds = $masterProductId
             ? PurchaseBatchItem::query()
@@ -358,16 +378,41 @@ class InventoryTransactionController extends Controller
                 'current_balances' => [],
                 'total_count' => 0,
                 'truncated' => false,
+                'scope' => $skuOnlyMode ? 'sku' : 'master',
             ]);
         }
 
+        $channelLocationIdsBySku = [];
+        if ($skuOnlyMode && $skuId) {
+            $skuModel = Sku::query()->with(['channel', 'inventory.location'])->find($skuId);
+            if ($skuModel) {
+                $channelId = (int) ($skuModel->channel_id ?? 0);
+                $locs = $channelId > 0
+                    ? ChannelStockResolver::resolveChannelStockLocationIdsForSku($skuModel, $channelId)
+                    : [];
+                if ($locs !== []) {
+                    $channelLocationIdsBySku[$skuId] = $locs;
+                }
+            }
+        }
+
         $baseQuery = InventoryTransaction::query()
-            ->where(function ($q) use ($skuIds, $relatedBatchIds) {
+            ->where(function ($q) use ($skuIds, $relatedBatchIds, $channelLocationIdsBySku, $skuOnlyMode) {
                 $hasSkuFilter = $skuIds !== [];
                 $hasBatchFilter = $relatedBatchIds !== [];
 
                 if ($hasSkuFilter) {
-                    $q->whereIn('sku_id', $skuIds);
+                    $q->where(function ($skuQ) use ($skuIds, $channelLocationIdsBySku, $skuOnlyMode) {
+                        foreach ($skuIds as $sid) {
+                            $sid = (int) $sid;
+                            $skuQ->orWhere(function ($one) use ($sid, $channelLocationIdsBySku, $skuOnlyMode) {
+                                $one->where('sku_id', $sid);
+                                if ($skuOnlyMode && isset($channelLocationIdsBySku[$sid])) {
+                                    $one->whereIn('location_id', $channelLocationIdsBySku[$sid]);
+                                }
+                            });
+                        }
+                    });
                 }
                 if ($hasBatchFilter) {
                     $batchClause = function ($q2) use ($relatedBatchIds) {
@@ -470,13 +515,18 @@ class InventoryTransactionController extends Controller
 
         $currentBalances = [];
         foreach ($balanceSkuIds as $sid) {
-            $totalQty = SkuInventory::query()->where('sku_id', $sid)->sum('quantity');
-            $sku = Sku::query()->select(['id', 'sku', 'channel_id'])->with('channel:id,name')->find($sid);
+            $sku = Sku::query()
+                ->select(['id', 'sku', 'channel_id'])
+                ->with(['channel:id,name', 'inventory.location'])
+                ->find($sid);
+            $totalQty = ($skuOnlyMode && $sku)
+                ? (int) round(ChannelStockResolver::availableQuantityForSkuListing($sku))
+                : (int) SkuInventory::query()->where('sku_id', $sid)->sum('quantity');
             $currentBalances[] = [
                 'sku_id' => $sid,
                 'sku_code' => (string) ($sku?->sku ?? ''),
                 'channel_name' => $sku?->channel?->name,
-                'current_quantity' => (int) $totalQty,
+                'current_quantity' => $totalQty,
             ];
         }
 
@@ -486,6 +536,7 @@ class InventoryTransactionController extends Controller
             'current_balances' => $currentBalances,
             'total_count' => $totalCount,
             'truncated' => $totalCount > $limit,
+            'scope' => $skuOnlyMode ? 'sku' : ($masterProductId ? 'master' : 'sku'),
         ]);
     }
 
