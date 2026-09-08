@@ -3,6 +3,7 @@
 namespace App\Presentation\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Application\Support\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use App\Domain\Models\Wms\Channel;
@@ -17,7 +18,7 @@ class TreasuryPanelController extends Controller
 {
     public function panels(): JsonResponse
     {
-        $uid = (int) Auth::id();
+        $uid = (int) (TenantContext::id() ?? Auth::id());
 
         $cashFlow = app(CashFlowSummaryController::class);
         $stats = $cashFlow->getCoreStats();

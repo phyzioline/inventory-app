@@ -6,6 +6,7 @@ import { AddProductModal } from '@/components/products/AddProductModal';
 import { ImportProductsDialog } from '@/components/products/ImportProductsDialog';
 import { ProductActionsMenu } from '@/components/products/ProductActionsMenu';
 import { exportProductsToExcel } from '@/lib/excelProductUtils';
+import { useCanViewCost } from '@/hooks/useCanViewCost';
 import {
   Plus,
   Search,
@@ -34,6 +35,7 @@ import {
 
 export default function Products() {
   const { t } = useLanguage();
+  const canViewCost = useCanViewCost();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -194,7 +196,9 @@ export default function Products() {
                   <th className="text-left p-4 font-medium whitespace-nowrap">{t('products.category')}</th>
                   <th className="text-right p-4 font-medium whitespace-nowrap">Lowest Price</th>
                   <th className="text-right p-4 font-medium whitespace-nowrap">Highest Price</th>
-                  <th className="text-right p-4 font-medium whitespace-nowrap">Avg Cost</th>
+                  {canViewCost ? (
+                    <th className="text-right p-4 font-medium whitespace-nowrap">Avg Cost</th>
+                  ) : null}
                   <th className="text-right p-4 font-medium whitespace-nowrap">Selling Price</th>
                   <th className="text-right p-4 font-medium whitespace-nowrap">{t('common.actions')}</th>
                 </tr>
@@ -239,9 +243,11 @@ export default function Products() {
                     <td className="p-4 text-right text-red-600 dark:text-red-400 font-medium">
                       {product.highest_price ? `${Number(product.highest_price).toLocaleString()} EGP` : '-'}
                     </td>
-                    <td className="p-4 text-right text-muted-foreground">
-                      {product.avg_purchase_price ? `${Number(product.avg_purchase_price).toLocaleString()} EGP` : '-'}
-                    </td>
+                    {canViewCost ? (
+                      <td className="p-4 text-right text-muted-foreground">
+                        {product.avg_purchase_price ? `${Number(product.avg_purchase_price).toLocaleString()} EGP` : '-'}
+                      </td>
+                    ) : null}
                     <td className="p-4 text-right font-medium">
                       {product.selling_price ? `${Number(product.selling_price).toLocaleString()} EGP` : '-'}
                     </td>

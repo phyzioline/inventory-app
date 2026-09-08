@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useCanViewCost } from "@/hooks/useCanViewCost";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -135,6 +136,7 @@ function resolveChannelPlatformKey(channel: any): string {
 export default function Channels() {
     const { language, t } = useLanguage();
     const isAr = language === 'ar';
+    const canViewCost = useCanViewCost();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -451,10 +453,12 @@ export default function Channels() {
                                                 {Number(card.metrics?.pieces || 0).toLocaleString()} {isAr ? "قطعة" : "pcs"}
                                             </span>
                                         </div>
+                                        {canViewCost ? (
                                         <div className="flex items-center justify-between">
                                             <span className="text-muted-foreground">{isAr ? "تكلفة الشراء" : "Purchase Cost"}</span>
                                             <span className="font-semibold">{Number(card.metrics?.purchaseCost || 0).toLocaleString()} EGP</span>
                                         </div>
+                                        ) : null}
                                     </div>
                                     <div className="grid grid-cols-3 gap-2 mt-4">
                                         <Button

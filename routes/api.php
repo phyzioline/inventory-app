@@ -164,28 +164,70 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('quotations/{quotation}/convert', [QuotationController::class, 'convertToOrder']);
         Route::apiResource('quotations', QuotationController::class);
 
-        // ── Financials ───────────────────────────────────────────────
-        Route::get('finance/cash-flow-overview', [CashFlowSummaryController::class, 'overview']);
-        Route::get('finance/cash-flow-stats', [CashFlowSummaryController::class, 'stats']);
-        Route::get('finance/treasury-panels', [TreasuryPanelController::class, 'panels']);
-        Route::get('finance/sulfas/summary', [TreasurySulfaController::class, 'summary']);
-        Route::get('finance/sulfas', [TreasurySulfaController::class, 'index']);
-        Route::post('finance/sulfas', [TreasurySulfaController::class, 'store']);
-        Route::post('finance/sulfas/{id}/repay', [TreasurySulfaController::class, 'repay']);
-        Route::get('finance/accounts', [FinanceAccountController::class, 'index']);
-        Route::post('finance/accounts', [FinanceAccountController::class, 'store']);
-        Route::patch('finance/accounts/{id}', [FinanceAccountController::class, 'update']);
-        Route::post('employees/import-from-expenses', [EmployeeController::class, 'importFromExpenses']);
-        Route::apiResource('employees', EmployeeController::class);
-        Route::apiResource('expenses', ExpenseController::class);
-        Route::apiResource('receipts', ReceiptController::class);
-        Route::apiResource('payments', PaymentController::class);
-        Route::apiResource('capital-sources', CapitalSourceController::class);
-        Route::post('profit-distributions/{id}/mark-paid', [ProfitDistributionController::class, 'markPaid']);
-        Route::apiResource('profit-distributions', ProfitDistributionController::class);
-        Route::post('withdrawals/{id}/approve', [WithdrawalController::class, 'approve']);
-        Route::post('withdrawals/{id}/complete', [WithdrawalController::class, 'complete']);
-        Route::apiResource('withdrawals', WithdrawalController::class);
+        // ── Financials (finance.read / finance.write) ────────────────
+        Route::middleware(['inventory.ability:finance.read'])->group(function (): void {
+            Route::get('finance/cash-flow-overview', [CashFlowSummaryController::class, 'overview']);
+            Route::get('finance/cash-flow-stats', [CashFlowSummaryController::class, 'stats']);
+            Route::get('finance/treasury-panels', [TreasuryPanelController::class, 'panels']);
+            Route::get('finance/sulfas/summary', [TreasurySulfaController::class, 'summary']);
+            Route::get('finance/sulfas', [TreasurySulfaController::class, 'index']);
+            Route::get('finance/accounts', [FinanceAccountController::class, 'index']);
+            Route::get('employees', [EmployeeController::class, 'index']);
+            Route::get('employees/{employee}', [EmployeeController::class, 'show']);
+            Route::get('expenses', [ExpenseController::class, 'index']);
+            Route::get('expenses/{expense}', [ExpenseController::class, 'show']);
+            Route::get('receipts', [ReceiptController::class, 'index']);
+            Route::get('receipts/{receipt}', [ReceiptController::class, 'show']);
+            Route::get('payments', [PaymentController::class, 'index']);
+            Route::get('payments/{payment}', [PaymentController::class, 'show']);
+            Route::get('capital-sources', [CapitalSourceController::class, 'index']);
+            Route::get('capital-sources/{capital_source}', [CapitalSourceController::class, 'show']);
+            Route::get('profit-distributions', [ProfitDistributionController::class, 'index']);
+            Route::get('profit-distributions/{profit_distribution}', [ProfitDistributionController::class, 'show']);
+            Route::get('withdrawals', [WithdrawalController::class, 'index']);
+            Route::get('withdrawals/{withdrawal}', [WithdrawalController::class, 'show']);
+        });
+
+        Route::middleware(['inventory.ability:finance.write'])->group(function (): void {
+            Route::post('finance/sulfas', [TreasurySulfaController::class, 'store']);
+            Route::post('finance/sulfas/{id}/repay', [TreasurySulfaController::class, 'repay']);
+            Route::post('finance/accounts', [FinanceAccountController::class, 'store']);
+            Route::patch('finance/accounts/{id}', [FinanceAccountController::class, 'update']);
+            Route::post('employees/import-from-expenses', [EmployeeController::class, 'importFromExpenses']);
+            Route::post('employees', [EmployeeController::class, 'store']);
+            Route::put('employees/{employee}', [EmployeeController::class, 'update']);
+            Route::patch('employees/{employee}', [EmployeeController::class, 'update']);
+            Route::delete('employees/{employee}', [EmployeeController::class, 'destroy']);
+            Route::post('expenses', [ExpenseController::class, 'store']);
+            Route::put('expenses/{expense}', [ExpenseController::class, 'update']);
+            Route::patch('expenses/{expense}', [ExpenseController::class, 'update']);
+            Route::delete('expenses/{expense}', [ExpenseController::class, 'destroy']);
+            Route::post('receipts', [ReceiptController::class, 'store']);
+            Route::put('receipts/{receipt}', [ReceiptController::class, 'update']);
+            Route::patch('receipts/{receipt}', [ReceiptController::class, 'update']);
+            Route::delete('receipts/{receipt}', [ReceiptController::class, 'destroy']);
+            Route::post('payments', [PaymentController::class, 'store']);
+            Route::put('payments/{payment}', [PaymentController::class, 'update']);
+            Route::patch('payments/{payment}', [PaymentController::class, 'update']);
+            Route::delete('payments/{payment}', [PaymentController::class, 'destroy']);
+            Route::post('capital-sources', [CapitalSourceController::class, 'store']);
+            Route::put('capital-sources/{capital_source}', [CapitalSourceController::class, 'update']);
+            Route::patch('capital-sources/{capital_source}', [CapitalSourceController::class, 'update']);
+            Route::delete('capital-sources/{capital_source}', [CapitalSourceController::class, 'destroy']);
+            Route::post('profit-distributions', [ProfitDistributionController::class, 'store']);
+            Route::put('profit-distributions/{profit_distribution}', [ProfitDistributionController::class, 'update']);
+            Route::patch('profit-distributions/{profit_distribution}', [ProfitDistributionController::class, 'update']);
+            Route::delete('profit-distributions/{profit_distribution}', [ProfitDistributionController::class, 'destroy']);
+            Route::post('profit-distributions/{id}/mark-paid', [ProfitDistributionController::class, 'markPaid']);
+            Route::post('withdrawals', [WithdrawalController::class, 'store']);
+            Route::put('withdrawals/{withdrawal}', [WithdrawalController::class, 'update']);
+            Route::patch('withdrawals/{withdrawal}', [WithdrawalController::class, 'update']);
+            Route::delete('withdrawals/{withdrawal}', [WithdrawalController::class, 'destroy']);
+            Route::post('withdrawals/{id}/complete', [WithdrawalController::class, 'complete']);
+        });
+
+        Route::post('withdrawals/{id}/approve', [WithdrawalController::class, 'approve'])
+            ->middleware('inventory.ability:withdrawal.approve');
 
         // ── Channel Tools ────────────────────────────────────────────
         Route::post('asins/bulk-upload', [ASINController::class, 'bulkUpload']);
@@ -193,13 +235,23 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('asins/{id}/price-history', [ASINController::class, 'priceHistory']);
         Route::apiResource('asins', ASINController::class);
 
-        Route::get('settlements/summary', [SettlementController::class, 'summary']);
-        Route::get('settlements/order-net-totals', [SettlementController::class, 'orderNetTotals']);
-        Route::get('settlements/order-sku-net-totals', [SettlementController::class, 'orderSkuNetTotals']);
-        Route::get('settlements/order-transactions', [SettlementController::class, 'orderTransactions']);
-        Route::post('settlements/import', [SettlementController::class, 'import']);
-        Route::post('settlements/{id}/reconcile', [SettlementController::class, 'reconcile']);
-        Route::apiResource('settlements', SettlementController::class);
+        Route::middleware(['inventory.ability:finance.read'])->group(function (): void {
+            Route::get('settlements/summary', [SettlementController::class, 'summary']);
+            Route::get('settlements/order-net-totals', [SettlementController::class, 'orderNetTotals']);
+            Route::get('settlements/order-sku-net-totals', [SettlementController::class, 'orderSkuNetTotals']);
+            Route::get('settlements/order-transactions', [SettlementController::class, 'orderTransactions']);
+            Route::get('settlements', [SettlementController::class, 'index']);
+            Route::get('settlements/{settlement}', [SettlementController::class, 'show']);
+        });
+
+        Route::middleware(['inventory.ability:settlements.write'])->group(function (): void {
+            Route::post('settlements/import', [SettlementController::class, 'import']);
+            Route::post('settlements/{id}/reconcile', [SettlementController::class, 'reconcile']);
+            Route::post('settlements', [SettlementController::class, 'store']);
+            Route::put('settlements/{settlement}', [SettlementController::class, 'update']);
+            Route::patch('settlements/{settlement}', [SettlementController::class, 'update']);
+            Route::delete('settlements/{settlement}', [SettlementController::class, 'destroy']);
+        });
         Route::post('returns/import', [ReturnController::class, 'import']);
         Route::post('returns/import-inventory-ledger', [ReturnController::class, 'importInventoryLedger']);
         Route::post('returns/{id}/process', [ReturnController::class, 'process']);
@@ -230,17 +282,19 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('dashboard', [InventoryController::class, 'dashboard']);
         Route::get('stock/{sku}', [InventoryController::class, 'checkStock']);
 
-        // ── Reports ──────────────────────────────────────────────────
+        // ── Reports (reports.read) — dashboard-metrics stays open for ops roles ──
         Route::get('reports/dashboard-metrics', [DashboardMetricsController::class, 'index']);
-        Route::get('reports/profit-summary', [ProfitReportController::class, 'summary']);
-        Route::get('reports/cash-profit-snapshot', [ProfitReportController::class, 'cashProfitSnapshot']);
-        Route::get('reports/profit-by-sku', [ProfitReportController::class, 'bySku']);
-        Route::get('reports/roi-metrics', [ProfitReportController::class, 'roiMetrics']);
-        Route::get('reports/profit-fee-dimensions', [ProfitReportController::class, 'feeDimensions']);
-        Route::post('reports/platform-fees/import', [ProfitReportController::class, 'importPlatformFees']);
-        Route::get('reports/dead-stock', [InventoryReportController::class, 'deadStock']);
-        Route::get('reports/margin-alerts', [InventoryReportController::class, 'marginAlerts']);
-        Route::get('reports/return-rates', [InventoryReportController::class, 'returnRates']);
+        Route::middleware(['inventory.ability:reports.read'])->group(function (): void {
+            Route::get('reports/profit-summary', [ProfitReportController::class, 'summary']);
+            Route::get('reports/cash-profit-snapshot', [ProfitReportController::class, 'cashProfitSnapshot']);
+            Route::get('reports/profit-by-sku', [ProfitReportController::class, 'bySku']);
+            Route::get('reports/roi-metrics', [ProfitReportController::class, 'roiMetrics']);
+            Route::get('reports/profit-fee-dimensions', [ProfitReportController::class, 'feeDimensions']);
+            Route::post('reports/platform-fees/import', [ProfitReportController::class, 'importPlatformFees']);
+            Route::get('reports/dead-stock', [InventoryReportController::class, 'deadStock']);
+            Route::get('reports/margin-alerts', [InventoryReportController::class, 'marginAlerts']);
+            Route::get('reports/return-rates', [InventoryReportController::class, 'returnRates']);
+        });
 
         // ── Imports ──────────────────────────────────────────────────
         Route::prefix('import/products')->group(function () {

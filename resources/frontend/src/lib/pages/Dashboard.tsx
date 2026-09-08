@@ -16,6 +16,8 @@ import { QuickShopSaleDialog } from '@/components/sales/QuickShopSaleDialog';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import FbaRequestTransferDialog from '@/components/inventory/FbaRequestTransferDialog';
+import { useAuth } from '@/contexts/AuthContext';
+import { canAbility } from '@/lib/abilities';
 import {
   DollarSign,
   TrendingUp,
@@ -40,6 +42,7 @@ import {
 
 export default function Dashboard() {
   const { t, language } = useLanguage();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showTopSelling, setShowTopSelling] = useState(false);
@@ -49,6 +52,13 @@ export default function Dashboard() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const isAr = language === 'ar';
+  const canFinance = canAbility(user, 'finance.read');
+  const canReports = canAbility(user, 'reports.read');
+  const canSalesWrite = canAbility(user, 'sales.write');
+  const canPurchases = canAbility(user, 'purchases.write');
+  const canTransfers = canAbility(user, 'transfers.write');
+  const canAdjustments = canAbility(user, 'adjustments.write');
+  const canReturns = canAbility(user, 'returns.write');
 
   const toDateKey = (date: Date) => {
     const y = date.getFullYear();
@@ -153,7 +163,7 @@ export default function Dashboard() {
     queryFn: () => api.get('/reports/profit-summary', {
       params: { start_date: startDate, end_date: endDate },
     }),
-    enabled: isRangeValid,
+    enabled: isRangeValid && canReports,
     staleTime: 2 * 60 * 1000,
     retry: 1,
   });
@@ -164,7 +174,7 @@ export default function Dashboard() {
     queryFn: () => api.getArray('/reports/profit-by-sku', {
       params: { start_date: startDate, end_date: endDate, limit: 500 },
     }),
-    enabled: isRangeValid,
+    enabled: isRangeValid && canReports,
     staleTime: 2 * 60 * 1000,
     retry: 1,
   });
@@ -256,7 +266,8 @@ export default function Dashboard() {
     return isAr ? 'فترة مخصصة' : 'Custom Period';
   })();
 
-  const quickActions = useMemo(() => ([
+  const quickActions = useMemo(() => {
+    const all = [
     {
       key: 'shop-sale',
       title: isAr ? 'بيع من المحل' : 'Shop Sale',
@@ -264,6 +275,7 @@ export default function Dashboard() {
       icon: ShoppingCart,
       tone: 'from-emerald-500/15 to-teal-500/10',
       onClick: () => setShowQuickShopSale(true),
+      show: canSalesWrite,
     },
     {
       key: 'sales-invoices',
@@ -272,6 +284,7 @@ export default function Dashboard() {
       icon: ArrowUpRight,
       tone: 'from-sky-500/15 to-indigo-500/10',
       onClick: () => navigate('/sales'),
+      show: canSalesWrite || canAbility(user, 'orders.read'),
     },
     {
       key: 'purchases',
@@ -280,6 +293,7 @@ export default function Dashboard() {
       icon: ClipboardList,
       tone: 'from-orange-500/15 to-amber-500/10',
       onClick: () => navigate('/purchases'),
+      show: canPurchases,
     },
     {
       key: 'cash-receipt',
@@ -288,6 +302,7 @@ export default function Dashboard() {
       icon: ArrowDownLeft,
       tone: 'from-violet-500/15 to-fuchsia-500/10',
       onClick: () => navigate('/finance/receipts'),
+      show: canFinance,
     },
     {
       key: 'cash-payment',
@@ -296,6 +311,7 @@ export default function Dashboard() {
       icon: HandCoins,
       tone: 'from-rose-500/15 to-red-500/10',
       onClick: () => navigate('/finance/payments'),
+      show: canFinance,
     },
     {
       key: 'expenses',
@@ -304,6 +320,7 @@ export default function Dashboard() {
       icon: Landmark,
       tone: 'from-slate-500/15 to-zinc-500/10',
       onClick: () => navigate('/expenses'),
+      show: canFinance,
     },
     {
       key: 'treasury',
@@ -312,6 +329,7 @@ export default function Dashboard() {
       icon: Wallet,
       tone: 'from-blue-600/15 to-indigo-500/10',
       onClick: () => navigate('/finance/capital'),
+      show: canFinance,
     },
     {
       key: 'customers',
@@ -320,6 +338,7 @@ export default function Dashboard() {
       icon: Users,
       tone: 'from-blue-500/15 to-cyan-500/10',
       onClick: () => navigate('/customers-suppliers'),
+      show: true,
     },
     {
       key: 'suppliers',
@@ -328,6 +347,7 @@ export default function Dashboard() {
       icon: Building2,
       tone: 'from-amber-500/15 to-yellow-500/10',
       onClick: () => navigate('/customers-suppliers'),
+      show: true,
     },
     {
       key: 'profit-period',
@@ -336,6 +356,7 @@ export default function Dashboard() {
       icon: TrendingUp,
       tone: 'from-green-500/15 to-emerald-500/10',
       onClick: () => navigate('/profit/by-period'),
+      show: canReports,
     },
     {
       key: 'profit-products',
@@ -344,6 +365,7 @@ export default function Dashboard() {
       icon: Package,
       tone: 'from-teal-500/15 to-sky-500/10',
       onClick: () => navigate('/profit/by-product'),
+      show: canReports,
     },
     {
       key: 'returns',
@@ -352,6 +374,7 @@ export default function Dashboard() {
       icon: RotateCcw,
       tone: 'from-amber-500/15 to-orange-500/10',
       onClick: () => navigate('/returns'),
+      show: canReturns || canAbility(user, 'stock.read'),
     },
     {
       key: 'losses',
@@ -360,6 +383,7 @@ export default function Dashboard() {
       icon: SlidersHorizontal,
       tone: 'from-purple-500/15 to-indigo-500/10',
       onClick: () => navigate('/inventory/adjustments'),
+      show: canAdjustments,
     },
     {
       key: 'transfers',
@@ -368,6 +392,7 @@ export default function Dashboard() {
       icon: ArrowLeftRight,
       tone: 'from-cyan-500/15 to-sky-500/10',
       onClick: () => navigate('/inventory/transfers'),
+      show: canTransfers,
     },
     {
       key: 'fba-request',
@@ -376,8 +401,11 @@ export default function Dashboard() {
       icon: Boxes,
       tone: 'from-orange-500/15 to-amber-500/10',
       onClick: () => setShowFbaRequest(true),
+      show: canTransfers,
     },
-  ]), [isAr, navigate]);
+  ];
+    return all.filter((a) => a.show);
+  }, [isAr, navigate, user, canFinance, canReports, canSalesWrite, canPurchases, canTransfers, canAdjustments, canReturns]);
 
   return (
     <div className="space-y-6">
@@ -448,9 +476,11 @@ export default function Dashboard() {
                 {isAr ? 'أهم العمليات في مكان واحد لتسهيل الاستخدام' : 'Common actions in one place'}
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => navigate('/reports')}>
-              {isAr ? 'التقارير' : 'Reports'}
-            </Button>
+            {canReports ? (
+              <Button variant="outline" size="sm" onClick={() => navigate('/reports')}>
+                {isAr ? 'التقارير' : 'Reports'}
+              </Button>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="pt-0">
@@ -499,30 +529,32 @@ export default function Dashboard() {
           icon={DollarSign}
           delay={0}
         />
-        <StatCard
-          title={isAr ? `صافي الربح (${periodLabel})` : `Net Profit (${periodLabel})`}
-          value={
-            !isRangeValid
-              ? `0 EGP`
-              : profitSummaryPending
-                ? (isAr ? 'جاري التحميل…' : 'Loading…')
-                : profitSummaryError
-                  ? (isAr ? 'غير متاح' : 'N/A')
-                  : `${netProfitInPeriod.toLocaleString()} EGP`
-          }
-          change={
-            profitSummaryLoaded
-              ? (isAr ? 'رسمي (محرك الأرباح)' : 'Official (Profit Engine)')
-              : profitSummaryPending
-                ? (isAr ? 'مزامنة مع الخادم' : 'Syncing with server')
-                : profitSummaryError
-                  ? (isAr ? 'تعذر تحميل /reports/profit-summary' : 'Could not load profit summary')
-                  : (isAr ? '—' : '—')
-          }
-          changeType={profitSummaryError ? 'neutral' : netProfitInPeriod >= 0 ? 'positive' : 'negative'}
-          icon={TrendingUp}
-          delay={0.1}
-        />
+        {canReports ? (
+          <StatCard
+            title={isAr ? `صافي الربح (${periodLabel})` : `Net Profit (${periodLabel})`}
+            value={
+              !isRangeValid
+                ? `0 EGP`
+                : profitSummaryPending
+                  ? (isAr ? 'جاري التحميل…' : 'Loading…')
+                  : profitSummaryError
+                    ? (isAr ? 'غير متاح' : 'N/A')
+                    : `${netProfitInPeriod.toLocaleString()} EGP`
+            }
+            change={
+              profitSummaryLoaded
+                ? (isAr ? 'رسمي (محرك الأرباح)' : 'Official (Profit Engine)')
+                : profitSummaryPending
+                  ? (isAr ? 'مزامنة مع الخادم' : 'Syncing with server')
+                  : profitSummaryError
+                    ? (isAr ? 'تعذر تحميل /reports/profit-summary' : 'Could not load profit summary')
+                    : (isAr ? '—' : '—')
+            }
+            changeType={profitSummaryError ? 'neutral' : netProfitInPeriod >= 0 ? 'positive' : 'negative'}
+            icon={TrendingUp}
+            delay={0.1}
+          />
+        ) : null}
         <StatCard
           title={isAr ? 'المنتجات قربت تخلص' : "Low Stock Alerts"}
           value={`${lowStockItems.length}`}
@@ -531,14 +563,16 @@ export default function Dashboard() {
           icon={Package}
           delay={0.2}
         />
-        <StatCard
-          title={isAr ? 'الفلوس المنتظرة' : "Pending Payouts"}
-          value={`${pendingPayouts.toLocaleString()} EGP`}
-          change={isAr ? 'بانتظار التحويل' : 'Awaiting transfer'}
-          changeType="neutral"
-          icon={Landmark}
-          delay={0.3}
-        />
+        {canFinance ? (
+          <StatCard
+            title={isAr ? 'الفلوس المنتظرة' : "Pending Payouts"}
+            value={`${pendingPayouts.toLocaleString()} EGP`}
+            change={isAr ? 'بانتظار التحويل' : 'Awaiting transfer'}
+            changeType="neutral"
+            icon={Landmark}
+            delay={0.3}
+          />
+        ) : null}
       </div>
 
       {/* Charts Row — directly under main KPIs */}
@@ -547,7 +581,11 @@ export default function Dashboard() {
           <SalesChart data={salesChartData} />
         </div>
         <div>
-          <SalesChannelsStatus channels={salesChannels as any[]} isError={dashboardMetricsError} />
+          <SalesChannelsStatus
+            channels={salesChannels as any[]}
+            isError={dashboardMetricsError}
+            showProfit={canReports}
+          />
         </div>
       </div>
 

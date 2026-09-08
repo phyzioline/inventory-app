@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use App\Application\Support\TenantContext;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\Sku;
@@ -57,7 +58,7 @@ class ChannelController extends Controller
 
     public function metrics()
     {
-        $userId = auth()->id();
+        $userId = TenantContext::id() ?? auth()->id();
 
         $rows = Sku::query()
             ->select(

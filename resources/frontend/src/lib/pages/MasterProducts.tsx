@@ -38,6 +38,7 @@ import { sumWarehouseSummary, type WarehouseSummaryRow } from "@/lib/warehouseSu
 import { api, apiClient } from "@/lib/api";
 import { broadcastInventoryCatalogUpdated } from "@/lib/inventoryCatalogBroadcast";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useCanViewCost } from "@/hooks/useCanViewCost";
 import {
     Select,
     SelectContent,
@@ -112,6 +113,7 @@ const aggregateStockByWarehouse = (
 
 const MasterProducts = () => {
     const { toast } = useToast();
+    const canViewCost = useCanViewCost();
     const queryClient = useQueryClient();
     const { data: warehouses = [] } = useWarehouses();
     const { data: salesChannels = [] } = useQuery({
@@ -835,6 +837,7 @@ const MasterProducts = () => {
                         </div>
                     </CardContent>
                 </Card>
+                {canViewCost ? (
                 <Card className="bg-white dark:bg-slate-900 border-l-2 border-l-green-500 shadow-sm transition-all hover:shadow-md">
                     <CardContent className="pt-1.5 pb-1.5 px-3">
                         <div className="flex justify-between items-start gap-2">
@@ -852,6 +855,7 @@ const MasterProducts = () => {
                         </div>
                     </CardContent>
                 </Card>
+                ) : null}
             </div>
 
             {/* Channels & Warehouses Summary Widget */}
@@ -1053,19 +1057,21 @@ const MasterProducts = () => {
                                                 />
                                             </div>
                                             <div className="grid grid-cols-2 gap-4">
-                                                <div>
-                                                    <Label htmlFor="cost_price">تكلفة (ج.م)</Label>
-                                                    <Input
-                                                        id="cost_price"
-                                                        type="number"
-                                                        value={formData.cost_price}
-                                                        onChange={(e) =>
-                                                            setFormData({ ...formData, cost_price: e.target.value })
-                                                        }
-                                                        placeholder="0.00"
-                                                    />
-                                                </div>
-                                                <div>
+                                                {canViewCost ? (
+                                                    <div>
+                                                        <Label htmlFor="cost_price">تكلفة (ج.م)</Label>
+                                                        <Input
+                                                            id="cost_price"
+                                                            type="number"
+                                                            value={formData.cost_price}
+                                                            onChange={(e) =>
+                                                                setFormData({ ...formData, cost_price: e.target.value })
+                                                            }
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+                                                ) : null}
+                                                <div className={canViewCost ? undefined : 'col-span-2'}>
                                                     <Label htmlFor="selling_price">سعر بيع (ج.م)</Label>
                                                     <Input
                                                         id="selling_price"
@@ -1194,12 +1200,14 @@ const MasterProducts = () => {
                                             {sortIcon("original_supplier")}
                                         </Button>
                                     </TableHead>
-                                    <TableHead>
-                                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort("last_purchase_price")}>
-                                            آخر سعر شراء
-                                            {sortIcon("last_purchase_price")}
-                                        </Button>
-                                    </TableHead>
+                                    {canViewCost ? (
+                                        <TableHead>
+                                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort("last_purchase_price")}>
+                                                آخر سعر شراء
+                                                {sortIcon("last_purchase_price")}
+                                            </Button>
+                                        </TableHead>
+                                    ) : null}
                                     <TableHead>
                                         <Button type="button" variant="ghost" size="sm" className="h-7 px-2 font-semibold" onClick={() => handleSort("selling_price")}>
                                             سعر البيع
@@ -1278,9 +1286,11 @@ const MasterProducts = () => {
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-sm">{product.original_supplier || "-"}</TableCell>
-                                            <TableCell className="text-sm font-semibold">
-                                                {resolveMasterPurchasePrice(product) > 0 ? `${resolveMasterPurchasePrice(product).toLocaleString()} ج.م` : "-"}
-                                            </TableCell>
+                                            {canViewCost ? (
+                                                <TableCell className="text-sm font-semibold">
+                                                    {resolveMasterPurchasePrice(product) > 0 ? `${resolveMasterPurchasePrice(product).toLocaleString()} ج.م` : "-"}
+                                                </TableCell>
+                                            ) : null}
                                             <TableCell className="text-sm font-bold text-emerald-600">
                                                 {product.selling_price ? `${Number(product.selling_price).toLocaleString()} ج.م` : "-"}
                                             </TableCell>
@@ -1427,7 +1437,9 @@ const MasterProducts = () => {
                                                                                         <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">كود SKU</TableHead>
                                                                                         <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">اسم المنتج بالمنصة</TableHead>
                                                                                         <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">المنصة</TableHead>
-                                                                                        <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">التكلفة</TableHead>
+                                                                                        {canViewCost ? (
+                                                                                            <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">التكلفة</TableHead>
+                                                                                        ) : null}
                                                                                         <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">سعر البيع</TableHead>
                                                                                         <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">حالة الربط</TableHead>
                                                                                         <TableHead className="h-7 text-[10px] py-0 text-muted-foreground uppercase tracking-wider">المخزون</TableHead>
@@ -1478,7 +1490,9 @@ const MasterProducts = () => {
                                                                                                         {sku.channel?.name || (isLinked ? 'قناة' : 'عام')}
                                                                                                     </Badge>
                                                                                                 </TableCell>
-                                                                                                <TableCell className="py-1 text-[11px] text-muted-foreground">{Number(sku.cost_price || resolveMasterPurchasePrice(product) || 0).toLocaleString()} ج.م</TableCell>
+                                                                                                {canViewCost ? (
+                                                                                                    <TableCell className="py-1 text-[11px] text-muted-foreground">{Number(sku.cost_price || resolveMasterPurchasePrice(product) || 0).toLocaleString()} ج.م</TableCell>
+                                                                                                ) : null}
                                                                                                 <TableCell className="py-1 text-xs font-bold text-blue-600">
                                                                                                     <div className="flex items-center gap-1">
                                                                                                         {Number(sku.selling_price || 0).toLocaleString()} ج.م

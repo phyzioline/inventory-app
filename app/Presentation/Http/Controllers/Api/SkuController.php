@@ -7,10 +7,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Application\Services\ChannelStockResolver;
+use App\Application\Services\InventoryAbilityService;
 use App\Application\Services\InventoryValuationService;
 use App\Application\Services\ProfitEngineService;
 use App\Application\Services\SkuUniquenessGuard;
 use App\Application\Services\StockRehomeTransferService;
+use App\Application\Support\TenantContext;
 use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryAdjustment;
 use App\Domain\Models\Wms\InventoryLocation;
@@ -70,7 +72,7 @@ class SkuController extends Controller
         }
 
         if ($request->boolean('duplicates_only')) {
-            $userId = (int) (auth()->id() ?? 0);
+            $userId = (int) (TenantContext::id() ?? auth()->id() ?? 0);
             SkuUniquenessGuard::scopeDuplicateCodesOnly($query, $userId);
         }
 
@@ -322,8 +324,11 @@ class SkuController extends Controller
         }
 
         $metrics = $this->valuation->channelCardMetrics($channelId);
-        $userId = (int) (auth()->id() ?? 0);
+        $userId = (int) (TenantContext::id() ?? auth()->id() ?? 0);
         $metrics['duplicate_sku_count'] = SkuUniquenessGuard::countDuplicateListingsOnChannel($userId, $channelId);
+        if (! app(InventoryAbilityService::class)->can('cost.read')) {
+            $metrics['purchaseCost'] = 0.0;
+        }
 
         return response()->json($metrics);
     }
@@ -355,7 +360,7 @@ class SkuController extends Controller
             ->all();
         $batchCosts = $this->profitEngine->averagePurchaseUnitCostByMasterProductIds($masterIds);
 
-        $userId = (int) (auth()->id() ?? 0);
+        $userId = (int) (TenantContext::id() ?? auth()->id() ?? 0);
         $duplicateMap = SkuUniquenessGuard::duplicateMapForCodes(
             $userId,
             $rows->map(fn (Sku $sku) => (string) ($sku->sku ?? ''))->all()

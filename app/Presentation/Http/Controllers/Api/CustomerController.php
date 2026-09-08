@@ -3,6 +3,7 @@
 namespace App\Presentation\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Application\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -28,9 +29,21 @@ class CustomerController extends Controller
         return "''";
     }
 
+    private function tenantUserId(): ?int
+    {
+        $id = TenantContext::id() ?? Auth::id();
+
+        return $id !== null ? (int) $id : null;
+    }
+
     private function ensureLegacyCustomersLinkedToUser(): void
     {
         if (! Auth::check()) {
+            return;
+        }
+
+        $tenantId = $this->tenantUserId();
+        if ($tenantId === null) {
             return;
         }
 
@@ -50,7 +63,7 @@ class CustomerController extends Controller
 
         Customer::withoutGlobalScopes()
             ->whereIn('id', $orphans->all())
-            ->update(['user_id' => Auth::id()]);
+            ->update(['user_id' => $tenantId]);
     }
 
     private function orderMatchesCustomer(InventoryOrder $order, Customer $customer): bool
@@ -103,7 +116,7 @@ class CustomerController extends Controller
         }
 
         $receipt = app(ReceiptApplicationService::class)->create([
-            'user_id' => Auth::id(),
+            'user_id' => $this->tenantUserId(),
             'category' => 'customer_collection',
             'amount' => (float) $validated['amount'],
             'description' => $validated['description'] ?? ('Customer collection — '.$customer->name),
@@ -162,7 +175,10 @@ class CustomerController extends Controller
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
         $excludeGuests = $request->query('exclude_guests', '1') !== '0';
-        $userId = Auth::id();
+        $userId = $this->tenantUserId();
+        if ($userId === null) {
+            abort(401);
+        }
 
         $orderDateClause = '';
         $receiptDateClause = '';
@@ -389,7 +405,7 @@ class CustomerController extends Controller
 
         try {
             $customer = Customer::create(array_merge($validated, [
-                'user_id' => $request->user()->id,
+                'user_id' => $this->tenantUserId() ?? $request->user()->id,
                 'current_balance' => 0,
                 'currency' => 'EGP',
                 'is_active' => true,

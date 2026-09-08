@@ -138,6 +138,7 @@ class AppServiceProvider extends ServiceProvider
                 \App\Presentation\Console\Commands\BackfillRemovalFbaDeductionsCommand::class,
                 \App\Presentation\Console\Commands\QaProposePatchesCommand::class,
                 \App\Presentation\Console\Commands\EnsureInventoryQueueHealthyCommand::class,
+                \App\Presentation\Console\Commands\EnsureStaffUsersCommand::class,
             ]);
         }
     }

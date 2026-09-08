@@ -48,32 +48,39 @@ class StaffMembershipService
      *
      * @return array{membership: TenantMembership, temporary_password: ?string}
      */
-    public function invite(string $email, string $name, string $role): array
+    public function invite(string $email, string $name, string $role, ?string $password = null): array
     {
         $this->abilities->assertCan('staff.manage');
         $tenantId = (int) TenantContext::id();
 
-        if (! in_array($role, ['manager', 'warehouse', 'accountant', 'viewer'], true)) {
+        if (! in_array($role, InventoryAbilityService::STAFF_ROLES, true)) {
             throw ValidationException::withMessages(['role' => ['Invalid role.']]);
         }
 
         // Only the tenant owner (or manager with staff.manage) may invite — never nest under staff's own id.
-        if (TenantContext::role() === 'viewer') {
+        if (TenantContext::role() === 'viewer' || TenantContext::role() === 'cashier') {
             abort(403);
         }
 
         $email = strtolower(trim($email));
         $temporaryPassword = null;
+        $providedPassword = $password !== null && trim($password) !== '' ? $password : null;
 
-        return DB::transaction(function () use ($email, $name, $role, $tenantId, &$temporaryPassword) {
+        return DB::transaction(function () use ($email, $name, $role, $tenantId, $providedPassword, &$temporaryPassword) {
             $member = User::query()->whereRaw('LOWER(email) = ?', [$email])->first();
             if (! $member) {
-                $temporaryPassword = Str::password(12);
+                $temporaryPassword = $providedPassword ?? Str::password(12);
                 $member = User::create([
                     'name' => $name !== '' ? $name : strtok($email, '@'),
                     'email' => $email,
                     'password' => Hash::make($temporaryPassword),
                 ]);
+                // Only echo back auto-generated passwords (provided ones are already known to the inviter).
+                if ($providedPassword !== null) {
+                    $temporaryPassword = null;
+                }
+            } elseif ($providedPassword !== null) {
+                $member->forceFill(['password' => Hash::make($providedPassword)])->save();
             }
 
             if ((int) $member->id === $tenantId) {
@@ -117,7 +124,7 @@ class StaffMembershipService
         $this->abilities->assertCan('staff.manage');
         $tenantId = (int) TenantContext::id();
 
-        if (! in_array($role, ['manager', 'warehouse', 'accountant', 'viewer'], true)) {
+        if (! in_array($role, InventoryAbilityService::STAFF_ROLES, true)) {
             throw ValidationException::withMessages(['role' => ['Invalid role.']]);
         }
 

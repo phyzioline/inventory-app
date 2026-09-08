@@ -3,6 +3,7 @@
 namespace App\Presentation\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Application\Support\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -18,7 +19,7 @@ class TreasurySulfaController extends Controller
 {
     public function summary(TreasuryLedgerService $ledger): JsonResponse
     {
-        $uid = (int) Auth::id();
+        $uid = (int) (TenantContext::id() ?? Auth::id());
         $account = $ledger->getOrCreateDefaultTreasuryAccount($uid);
         $aid = (int) $account->id;
 
@@ -75,7 +76,7 @@ class TreasurySulfaController extends Controller
                 $principal = round((float) $validated['principal_amount'], 2);
 
                 $row = TreasurySulfa::create([
-                    'user_id' => (int) Auth::id(),
+                    'user_id' => (int) (TenantContext::id() ?? Auth::id()),
                     'treasury_account_id' => (int) $account->id,
                     'lender_name' => $validated['lender_name'],
                     'principal_amount' => $principal,

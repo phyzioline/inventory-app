@@ -42,11 +42,14 @@ import {
   Calculator,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { canAbility, canAnyAbility } from '@/lib/abilities';
 
 interface NavChild {
   key: string;
   path?: string;
   isHeader?: boolean;
+  ability?: string;
+  anyAbility?: string[];
 }
 
 interface NavItem {
@@ -56,6 +59,8 @@ interface NavItem {
   children?: NavChild[];
   dividerBefore?: boolean;
   sectionTitleKey?: string;
+  ability?: string;
+  anyAbility?: string[];
 }
 
 const navItems: NavItem[] = [
@@ -66,8 +71,9 @@ const navItems: NavItem[] = [
   {
     key: 'nav.products',
     icon: Layers,
+    ability: 'stock.read',
     children: [
-      { key: 'nav.allProducts', path: '/master-products' },
+      { key: 'nav.allProducts', path: '/master-products', ability: 'stock.read' },
     ],
   },
 
@@ -75,10 +81,11 @@ const navItems: NavItem[] = [
   {
     key: 'nav.purchases',
     icon: Truck,
+    anyAbility: ['purchases.write', 'purchases.receive'],
     children: [
-      { key: 'nav.purchaseOrders', path: '/purchases' },
-      { key: 'nav.purchaseReturns', path: '/purchases/returns' },
-      { key: 'nav.smartImport', path: '/purchases/smart-import' },
+      { key: 'nav.purchaseOrders', path: '/purchases', ability: 'purchases.write' },
+      { key: 'nav.purchaseReturns', path: '/purchases/returns', ability: 'purchases.write' },
+      { key: 'nav.smartImport', path: '/purchases/smart-import', ability: 'purchases.write' },
     ],
   },
 
@@ -86,11 +93,12 @@ const navItems: NavItem[] = [
   {
     key: 'nav.inventoryManagement',
     icon: Globe,
+    anyAbility: ['stock.write', 'transfers.write', 'adjustments.write'],
     children: [
-      { key: 'nav.transfers', path: '/inventory/transfers' },
-      { key: 'nav.inventoryAdjustments', path: '/inventory/adjustments' },
-      { key: 'nav.cycleCounts', path: '/inventory/cycle-counts' },
-      { key: 'nav.lowStock', path: '/inventory/low-stock' },
+      { key: 'nav.transfers', path: '/inventory/transfers', ability: 'transfers.write' },
+      { key: 'nav.inventoryAdjustments', path: '/inventory/adjustments', ability: 'adjustments.write' },
+      { key: 'nav.cycleCounts', path: '/inventory/cycle-counts', ability: 'adjustments.write' },
+      { key: 'nav.lowStock', path: '/inventory/low-stock', ability: 'stock.read' },
     ],
   },
 
@@ -98,29 +106,31 @@ const navItems: NavItem[] = [
   {
     key: 'nav.orders',
     icon: ShoppingCart,
+    ability: 'orders.read',
     children: [
-      { key: 'nav.allOrders', path: '/orders' },
-      { key: 'nav.quotations', path: '/quotations' },
+      { key: 'nav.allOrders', path: '/orders', ability: 'orders.read' },
+      { key: 'nav.quotations', path: '/quotations', ability: 'orders.read' },
     ],
   },
-  { key: 'nav.customersSuppliers', icon: Contact, path: '/customers-suppliers' },
-  { key: 'nav.returns', icon: RotateCcw, path: '/returns' },
+  { key: 'nav.customersSuppliers', icon: Contact, path: '/customers-suppliers', anyAbility: ['orders.read', 'stock.read'] },
+  { key: 'nav.returns', icon: RotateCcw, path: '/returns', anyAbility: ['returns.write', 'stock.read'] },
 
   // ── 6. Sales (المبيعات) ──
-  { key: 'nav.salesInvoices', icon: Receipt, path: '/sales' },
+  { key: 'nav.salesInvoices', icon: Receipt, path: '/sales', anyAbility: ['sales.write', 'orders.read'] },
 
   // ── 7. Finance (المالية) ──
   {
     key: 'nav.finance',
     icon: Landmark,
+    ability: 'finance.read',
     children: [
-      { key: 'nav.reconciliationHub', path: '/reconciliation' },
-      { key: 'nav.bankAccounts', path: '/finance/bank-accounts' },
-      { key: 'nav.capitalManagement', path: '/finance/capital' },
-      { key: 'nav.sulfa', path: '/finance/sulfa' },
-      { key: 'nav.receipts', path: '/finance/receipts' },
-      { key: 'nav.payments', path: '/finance/payments' },
-      { key: 'nav.expenses', path: '/expenses' },
+      { key: 'nav.reconciliationHub', path: '/reconciliation', ability: 'finance.read' },
+      { key: 'nav.bankAccounts', path: '/finance/bank-accounts', ability: 'finance.read' },
+      { key: 'nav.capitalManagement', path: '/finance/capital', ability: 'finance.read' },
+      { key: 'nav.sulfa', path: '/finance/sulfa', ability: 'finance.read' },
+      { key: 'nav.receipts', path: '/finance/receipts', ability: 'finance.read' },
+      { key: 'nav.payments', path: '/finance/payments', ability: 'finance.read' },
+      { key: 'nav.expenses', path: '/expenses', ability: 'finance.read' },
     ],
   },
 
@@ -129,19 +139,20 @@ const navItems: NavItem[] = [
     key: 'nav.reports',
     icon: BarChart3,
     dividerBefore: true,
+    ability: 'reports.read',
     children: [
       // Inventory Group
       { key: 'nav.inventoryReports', isHeader: true },
-      { key: 'nav.reportsOverview', path: '/reports' },
-      { key: 'nav.transactions', path: '/transactions' },
-      { key: 'nav.reportDeadStock', path: '/reports?type=dead-stock' },
-      { key: 'nav.reportMarginAlerts', path: '/reports?type=margin-alerts' },
-      { key: 'nav.reportReturnRates', path: '/reports?type=return-rates' },
+      { key: 'nav.reportsOverview', path: '/reports', ability: 'reports.read' },
+      { key: 'nav.transactions', path: '/transactions', ability: 'reports.read' },
+      { key: 'nav.reportDeadStock', path: '/reports?type=dead-stock', ability: 'reports.read' },
+      { key: 'nav.reportMarginAlerts', path: '/reports?type=margin-alerts', ability: 'reports.read' },
+      { key: 'nav.reportReturnRates', path: '/reports?type=return-rates', ability: 'reports.read' },
 
       // Profit Engine Group (محرك الأرباح)
       { key: 'nav.profitEngine', isHeader: true },
-      { key: 'nav.profitByPeriod', path: '/profit/by-period' },
-      { key: 'nav.roi', path: '/profit/roi' },
+      { key: 'nav.profitByPeriod', path: '/profit/by-period', ability: 'reports.read' },
+      { key: 'nav.roi', path: '/profit/roi', ability: 'reports.read' },
     ],
   },
   { key: 'nav.settings', icon: Settings, path: '/settings' },
@@ -200,6 +211,36 @@ export function Sidebar({
     if (isMobile) onMobileClose?.();
   };
 
+  const itemAllowed = (item: { ability?: string; anyAbility?: string[] }): boolean => {
+    if (item.ability) return canAbility(user, item.ability);
+    if (item.anyAbility?.length) return canAnyAbility(user, item.anyAbility);
+    return true;
+  };
+
+  const visibleNavItems = navItems
+    .map((item) => {
+      if (!itemAllowed(item)) return null;
+      if (!item.children) return item;
+      const children = item.children.filter((child) => {
+        if (child.isHeader) return true;
+        return itemAllowed(child);
+      });
+      // Drop section headers that have no following visible path children
+      const pruned: NavChild[] = [];
+      for (let i = 0; i < children.length; i++) {
+        const c = children[i];
+        if (c.isHeader) {
+          const hasFollowing = children.slice(i + 1).some((n) => !n.isHeader);
+          if (hasFollowing) pruned.push(c);
+        } else {
+          pruned.push(c);
+        }
+      }
+      if (pruned.filter((c) => !c.isHeader).length === 0) return null;
+      return { ...item, children: pruned };
+    })
+    .filter((item): item is NavItem => item !== null);
+
   return (
     <motion.aside
       initial={{ width: 260 }}
@@ -252,7 +293,7 @@ export function Sidebar({
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto scrollbar-thin py-4 px-2">
         <ul className="space-y-1">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <li key={item.key}>
               {/* Section Title */}
               {item.sectionTitleKey && !collapsed && (

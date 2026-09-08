@@ -3,6 +3,7 @@
 namespace App\Presentation\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Application\Support\TenantContext;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -371,7 +372,7 @@ class CashFlowSummaryController extends Controller
             return $this->emptyCoreCashStatsRaw();
         }
 
-        return $this->buildCoreCashStatsForUser((int) Auth::id());
+        return $this->buildCoreCashStatsForUser((int) (TenantContext::id() ?? Auth::id()));
     }
 
     /**
@@ -548,7 +549,7 @@ class CashFlowSummaryController extends Controller
         if (Auth::check()) {
             $ledger = app(FinanceAccountLedgerService::class);
             $ledger->runForCurrentRequest();
-            $ledgerAccounts = $ledger->ledgerBalancesForUser((int) Auth::id());
+            $ledgerAccounts = $ledger->ledgerBalancesForUser((int) (TenantContext::id() ?? Auth::id()));
         }
 
         return response()->json([

@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { toast } from 'sonner';
+import { useCanViewCost } from '@/hooks/useCanViewCost';
 
 interface Props {
     open: boolean;
@@ -43,6 +44,7 @@ function buildFormFromProps(
 export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initialData, presetChannelId }: Props) {
     const { t, language } = useLanguage();
     const isAr = language === 'ar';
+    const canViewCost = useCanViewCost();
     const queryClient = useQueryClient();
     const wasOpenRef = useRef(false);
     const [formData, setFormData] = useState(() =>
@@ -192,6 +194,7 @@ export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initi
                         />
                     </div>
 
+                    {canViewCost ? (
                     <div>
                         <Label htmlFor="cost_price">
                             {isAr ? 'تكلفة تقديرية (ج.م) — اختياري' : 'Estimated cost (EGP) — optional'}
@@ -210,6 +213,7 @@ export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initi
                                 : 'Leave blank if unknown — purchase invoices record real cost; quotes use the store/channel selling price.'}
                         </p>
                     </div>
+                    ) : null}
 
                     <div className="flex items-center gap-2">
                         <input

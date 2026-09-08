@@ -30,6 +30,7 @@ class StaffMembershipController extends Controller
             $data['email'],
             (string) ($data['name'] ?? ''),
             $data['role'],
+            $data['password'] ?? null,
         );
 
         return response()->json([
@@ -50,7 +51,7 @@ class StaffMembershipController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         $data = $request->validate([
-            'role' => ['required', 'string', 'in:manager,warehouse,accountant,viewer'],
+            'role' => ['required', 'string', 'in:manager,warehouse,accountant,cashier,viewer'],
         ]);
 
         $membership = $this->staff->updateRole($id, $data['role']);

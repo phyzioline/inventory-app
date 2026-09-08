@@ -22,6 +22,7 @@ import { api } from "@/lib/api";
 import type { ChannelInventoryMetrics } from "@/lib/channelInventoryMetrics";
 import { dedupeWarehouseSummaryRows } from "@/lib/warehouseSummaryAggregation";
 import { toast } from "sonner";
+import { useCanViewCost } from "@/hooks/useCanViewCost";
 
 import amazonLogo from "@/assets/channel-logos/amazon.png";
 import noonLogo from "@/assets/channel-logos/noon.png";
@@ -121,6 +122,7 @@ const resolvePlatformKey = (channel: any): string => {
 
 export function ChannelsWidget() {
     const { language, t } = useLanguage();
+    const canViewCost = useCanViewCost();
     const isAr = language === 'ar';
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -504,15 +506,19 @@ export function ChannelsWidget() {
                                             </span>
                                         </div>
                                         <div className="flex flex-col gap-0.5 items-end shrink-0">
-                                            <span className="text-[9px] text-muted-foreground">{isAr ? "التكلفة" : "Cost"}</span>
-                                            {metricsPending ? (
-                                                renderMetricValue(0, "font-bold leading-none text-blue-600 dark:text-blue-400")
-                                            ) : (
-                                                <span className="font-bold leading-none text-blue-600 dark:text-blue-400">
-                                                    {Number(card.metrics?.purchaseCost || 0).toLocaleString()}{' '}
-                                                    <span className="text-[8px] font-normal">EGP</span>
-                                                </span>
-                                            )}
+                                            {canViewCost ? (
+                                                <>
+                                                    <span className="text-[9px] text-muted-foreground">{isAr ? "التكلفة" : "Cost"}</span>
+                                                    {metricsPending ? (
+                                                        renderMetricValue(0, "font-bold leading-none text-blue-600 dark:text-blue-400")
+                                                    ) : (
+                                                        <span className="font-bold leading-none text-blue-600 dark:text-blue-400">
+                                                            {Number(card.metrics?.purchaseCost || 0).toLocaleString()}{' '}
+                                                            <span className="text-[8px] font-normal">EGP</span>
+                                                        </span>
+                                                    )}
+                                                </>
+                                            ) : null}
                                         </div>
                                     </div>
                                 </div>

@@ -6,6 +6,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAbility } from '@/lib/abilities';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +21,21 @@ type StaffRow = {
   member: { id?: number; name?: string; email?: string } | null;
 };
 
-const ROLES = ['manager', 'warehouse', 'accountant', 'viewer'] as const;
+const ROLES = ['manager', 'warehouse', 'accountant', 'cashier', 'viewer'] as const;
+
+function roleLabel(role: string, isAr: boolean): string {
+  const map: Record<string, { ar: string; en: string }> = {
+    manager: { ar: 'مدير', en: 'Manager' },
+    warehouse: { ar: 'مخزن', en: 'Warehouse' },
+    accountant: { ar: 'محاسب', en: 'Accountant' },
+    cashier: { ar: 'كاشير', en: 'Cashier' },
+    viewer: { ar: 'مشاهد', en: 'Viewer' },
+    owner: { ar: 'مالك', en: 'Owner' },
+  };
+  const entry = map[role];
+  if (!entry) return role;
+  return isAr ? entry.ar : entry.en;
+}
 
 export function SettingsStaffPanel() {
   const { language } = useLanguage();
@@ -28,15 +43,15 @@ export function SettingsStaffPanel() {
   const { user, refreshUser } = useAuth();
   const queryClient = useQueryClient();
   const canManage =
-    user?.is_super_admin ||
+    !!user?.is_super_admin ||
     user?.role === 'owner' ||
     user?.role === 'manager' ||
-    (user?.abilities || []).includes('*') ||
-    (user?.abilities || []).includes('staff.manage');
+    canAbility(user, 'staff.manage');
 
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<string>('viewer');
+  const [role, setRole] = useState<string>('cashier');
+  const [password, setPassword] = useState('');
 
   const { data: staff = [], isLoading } = useQuery({
     queryKey: ['staff-memberships'],
@@ -49,7 +64,11 @@ export function SettingsStaffPanel() {
 
   const invite = useMutation({
     mutationFn: async () => {
-      const res = await axios.post('/api/inventory/staff', { email, name, role });
+      const payload: Record<string, string> = { email, name, role };
+      if (password.trim()) {
+        payload.password = password.trim();
+      }
+      const res = await axios.post('/api/inventory/staff', payload);
       return res.data;
     },
     onSuccess: (payload) => {
@@ -57,6 +76,7 @@ export function SettingsStaffPanel() {
       void refreshUser();
       setEmail('');
       setName('');
+      setPassword('');
       const temp = payload?.data?.temporary_password;
       if (temp) {
         toast.success(
@@ -167,7 +187,7 @@ export function SettingsStaffPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-5">
           <div className="space-y-1.5 sm:col-span-1">
             <Label>{isAr ? 'البريد' : 'Email'}</Label>
             <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
@@ -185,11 +205,21 @@ export function SettingsStaffPanel() {
               <SelectContent>
                 {ROLES.map((r) => (
                   <SelectItem key={r} value={r}>
-                    {r}
+                    {roleLabel(r, isAr)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>{isAr ? 'كلمة المرور (اختياري)' : 'Password (optional)'}</Label>
+            <Input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              autoComplete="new-password"
+              placeholder={isAr ? 'تُولَّد تلقائياً إن تُركت فارغة' : 'Auto-generated if empty'}
+            />
           </div>
           <div className="flex items-end">
             <Button
@@ -234,19 +264,19 @@ export function SettingsStaffPanel() {
                         value={row.role}
                         onValueChange={(next) => updateRole.mutate({ id: row.id, role: next })}
                       >
-                        <SelectTrigger className="w-[140px]">
+                        <SelectTrigger className="w-[160px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           {ROLES.map((r) => (
                             <SelectItem key={r} value={r}>
-                              {r}
+                              {roleLabel(r, isAr)}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <Badge variant="secondary" className="ms-2">
-                        {row.role}
+                        {roleLabel(row.role, isAr)}
                       </Badge>
                     </TableCell>
                     <TableCell>

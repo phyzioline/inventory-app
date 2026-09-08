@@ -75,6 +75,7 @@ import AddSKUDialog from '@/components/inventory/AddSKUDialog';
 import { ChannelSkuImportDialog } from '@/components/inventory/ChannelSkuImportDialog';
 import { SkuMovementTrackerDialog } from '@/components/inventory/SkuMovementTrackerDialog';
 import { getProductImageSrc } from '@/lib/utils';
+import { useCanViewCost } from '@/hooks/useCanViewCost';
 
 function isValidImageCandidate(url: string | null | undefined): boolean {
   if (!url) return false;
@@ -107,9 +108,11 @@ function positiveNumber(value: unknown): number {
   return Number.isFinite(x) && x > 0 ? x : 0;
 }
 
-function resolveDisplayUnitPrice(sku: any): number {
+function resolveDisplayUnitPrice(sku: any, canViewCost = true): number {
   const selling = positiveNumber(sku?.selling_price);
   if (selling > 0) return selling;
+  // Cashiers without cost.read must not see purchase-cost fallback as "price".
+  if (!canViewCost) return 0;
   return resolvePurchaseUnitCost(sku);
 }
 
@@ -137,6 +140,7 @@ function ProductThumb({ imageUrl }: { imageUrl: string | null | undefined }) {
 export default function ChannelDetail() {
   const { t } = useLanguage();
   const { toast } = useToast();
+  const canViewCost = useCanViewCost();
   const params = useParams();
   const slug = (params.slug && params['*']) ? `${params.slug}/${params['*']}`.replace(/\/+$/, '') : (params.slug || params['*'] || '');
   const navigate = useNavigate();
@@ -298,10 +302,37 @@ export default function ChannelDetail() {
       total: Number(channelSummary?.products ?? skuPage?.total ?? 0),
       totalPieces: Number(channelSummary?.pieces ?? 0),
       unlinked: Number(channelSummary?.unlinked ?? 0),
-      totalValue: Number(channelSummary?.purchaseCost ?? 0),
+      totalValue: canViewCost ? Number(channelSummary?.purchaseCost ?? 0) : 0,
       sellingValue: Number(channelSummary?.sellingValue ?? 0),
     };
-  }, [includeGeneral, skus, channelSummary, skuPage?.total]);
+  }, [includeGeneral, skus, channelSummary, skuPage?.total, canViewCost]);
+
+  const summaryCards = useMemo(() => {
+    const cards = [
+      { title: 'إجمالي المنتجات', value: stats.total, icon: Package, color: 'blue' },
+      { title: 'إجمالي القطع', value: stats.totalPieces, icon: ShoppingCart, color: 'emerald' },
+      { title: 'غير مربوط', value: stats.unlinked, icon: AlertCircle, color: 'orange' },
+    ];
+    if (canViewCost) {
+      cards.push({
+        title: 'إجمالي التكلفة',
+        value: `${stats.totalValue.toLocaleString()}`,
+        unit: 'ج.م',
+        icon: TrendingUp,
+        color: 'blue',
+      } as any);
+    }
+    cards.push({
+      title: 'القيمة البيعية',
+      value: `${stats.sellingValue.toLocaleString()}`,
+      unit: 'ج.م',
+      icon: ShoppingCart,
+      color: 'green',
+    } as any);
+    return cards;
+  }, [stats, canViewCost]);
+
+  const tableColSpan = canViewCost ? 9 : 8;
 
   const summaryPending = !includeGeneral && (loadingSummary || (fetchingSummary && !channelSummary));
 
@@ -312,12 +343,12 @@ export default function ChannelDetail() {
       return skus;
     }
     return [...skus].sort((a: any, b: any) => {
-      const priceA = resolveDisplayUnitPrice(a);
-      const priceB = resolveDisplayUnitPrice(b);
+      const priceA = resolveDisplayUnitPrice(a, canViewCost);
+      const priceB = resolveDisplayUnitPrice(b, canViewCost);
       const qtyA = getSkuQty(a);
       const qtyB = getSkuQty(b);
-      const costA = resolvePurchaseUnitCost(a) * qtyA;
-      const costB = resolvePurchaseUnitCost(b) * qtyB;
+      const costA = canViewCost ? resolvePurchaseUnitCost(a) * qtyA : 0;
+      const costB = canViewCost ? resolvePurchaseUnitCost(b) * qtyB : 0;
 
       const priceDelta = priceSort === 'desc' ? priceB - priceA : priceA - priceB;
       const qtyDelta = stockSort === 'desc' ? qtyB - qtyA : qtyA - qtyB;
@@ -339,7 +370,7 @@ export default function ChannelDetail() {
 
       return String(a?.sku || '').localeCompare(String(b?.sku || ''));
     });
-  }, [skus, stockSort, priceSort, costSort, sortPriority, includeGeneral]);
+  }, [skus, stockSort, priceSort, costSort, sortPriority, includeGeneral, canViewCost]);
 
   const totalFiltered = Number(skuPage?.total ?? filteredSkus.length);
   const totalPages = Math.max(1, Number(skuPage?.last_page ?? 1));
@@ -573,17 +604,11 @@ export default function ChannelDetail() {
 
       {/* Stats Grid */}
       <div
-        className={`grid gap-4 md:grid-cols-5 transition-opacity ${
+        className={`grid gap-4 ${canViewCost ? 'md:grid-cols-5' : 'md:grid-cols-4'} transition-opacity ${
           fetchingSummary || fetchingSkus ? 'opacity-80' : 'opacity-100'
         }`}
       >
-        {[
-          { title: 'إجمالي المنتجات', value: stats.total, icon: Package, color: 'blue' },
-          { title: 'إجمالي القطع', value: stats.totalPieces, icon: ShoppingCart, color: 'emerald' },
-          { title: 'غير مربوط', value: stats.unlinked, icon: AlertCircle, color: 'orange' },
-          { title: 'إجمالي التكلفة', value: `${stats.totalValue.toLocaleString()}`, unit: 'ج.م', icon: TrendingUp, color: 'blue' },
-          { title: 'القيمة البيعية', value: `${stats.sellingValue.toLocaleString()}`, unit: 'ج.م', icon: ShoppingCart, color: 'green' },
-        ].map((stat, i) => (
+        {summaryCards.map((stat: any, i) => (
           <Card key={i} className={`bg-white dark:bg-slate-900 border-l-4 border-l-${stat.color}-500 shadow-sm transition-all hover:scale-[1.02]`}>
             <CardContent className="pt-4 pb-4">
               <div className="flex justify-between items-center">
@@ -833,6 +858,7 @@ export default function ChannelDetail() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
+                {canViewCost && (
                 <TableHead>
                   <div className="flex items-center gap-1">
                     <span>إجمالي التكلفة</span>
@@ -849,19 +875,20 @@ export default function ChannelDetail() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
+                )}
                 <TableHead className="text-right">إجراءات</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {listPending ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-10">
+                  <TableCell colSpan={tableColSpan} className="text-center py-10">
                     <DataLoadingState />
                   </TableCell>
                 </TableRow>
               ) : pagedSkus.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-20">
+                  <TableCell colSpan={tableColSpan} className="text-center py-20">
                     <div className="flex flex-col items-center gap-3">
                       <Package className="w-12 h-12 text-slate-200" />
                       <p className="text-muted-foreground">لا توجد منتجات مطابقة في هذه القناة.</p>
@@ -879,10 +906,12 @@ export default function ChannelDetail() {
                   const masterStock = masterProduct?.total_stock;
 
                   const skuSellingNum = Number(sku.selling_price ?? 0);
-                  const purchaseUnit = resolvePurchaseUnitCost(sku);
-                  const displayUnit = resolveDisplayUnitPrice(sku);
+                  const purchaseUnit = canViewCost ? resolvePurchaseUnitCost(sku) : 0;
+                  const displayUnit = resolveDisplayUnitPrice(sku, canViewCost);
                   const showingPriceFromPurchase =
-                    !(Number.isFinite(skuSellingNum) && skuSellingNum > 0) && purchaseUnit > 0;
+                    canViewCost &&
+                    !(Number.isFinite(skuSellingNum) && skuSellingNum > 0) &&
+                    purchaseUnit > 0;
 
                   const priceMismatch =
                     !showingPriceFromPurchase &&
@@ -891,13 +920,14 @@ export default function ChannelDetail() {
                     skuSellingNum > 0 &&
                     Math.abs(Number(masterPrice) - skuSellingNum) > 1;
                   const costMismatch =
+                    canViewCost &&
                     !showingPriceFromPurchase &&
                     masterCost &&
                     sku.cost_price &&
                     Math.abs(Number(masterCost) - Number(sku.cost_price)) > 1;
                   const skuQty = getSkuQty(sku);
                   const stockMismatch = masterStock !== undefined && skuQty !== undefined && Number(masterStock) !== Number(skuQty);
-                  const rowTotalCost = resolvePurchaseUnitCost(sku) * skuQty;
+                  const rowTotalCost = canViewCost ? purchaseUnit * skuQty : 0;
 
                   const isLinked = !!sku.offer_id;
 
@@ -967,7 +997,7 @@ export default function ChannelDetail() {
                       <TableCell>
                         <div className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-1.5 font-bold">
-                            {displayUnit.toLocaleString()} ج.م
+                            {displayUnit > 0 ? `${displayUnit.toLocaleString()} ج.م` : '—'}
                             {(priceMismatch || costMismatch) && (
                               <div className="group/alert relative">
                                 <AlertTriangle className="w-3.5 h-3.5 text-orange-500 cursor-help" />
@@ -1037,9 +1067,11 @@ export default function ChannelDetail() {
                         )}
                         </div>
                       </TableCell>
+                      {canViewCost && (
                       <TableCell className="font-semibold">
                         {rowTotalCost.toLocaleString()} ج.م
                       </TableCell>
+                      )}
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button
@@ -1143,16 +1175,18 @@ export default function ChannelDetail() {
               <label className="text-sm font-medium">سعر البيع الجديد (اختياري)</label>
               <Input type="number" step="0.01" value={bulkSellingPrice} onChange={(e) => setBulkSellingPrice(e.target.value)} placeholder="اتركه فارغاً بدون تغيير" />
             </div>
+            {canViewCost && (
             <div className="space-y-1">
               <label className="text-sm font-medium">سعر التكلفة الجديد (اختياري)</label>
               <Input type="number" step="0.01" value={bulkCostPrice} onChange={(e) => setBulkCostPrice(e.target.value)} placeholder="اتركه فارغاً بدون تغيير" />
             </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsBulkEditOpen(false)}>إلغاء</Button>
             <Button
               onClick={() => {
-                if (bulkSellingPrice === '' && bulkCostPrice === '') {
+                if (bulkSellingPrice === '' && (!canViewCost || bulkCostPrice === '')) {
                   toast({ title: 'تنبيه', description: 'اكتب قيمة واحدة على الأقل للتعديل', variant: 'destructive' });
                   return;
                 }

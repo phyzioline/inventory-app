@@ -2,6 +2,7 @@
 
 namespace App\Application\Services;
 
+use App\Application\Support\TenantContext;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -409,7 +410,7 @@ class InventoryValuationService
             ->leftJoin('master_products as mp', 'mp.id', '=', 'o.master_product_id')
             ->whereIn('si.location_id', $locationIds);
 
-        $userId = Auth::id();
+        $userId = TenantContext::id() ?? Auth::id();
         if ($userId && Schema::hasColumn($inventoryTable, 'user_id')) {
             $query->where('si.user_id', $userId);
         }
@@ -530,7 +531,7 @@ class InventoryValuationService
 
     private function scopeSkusToUser($query): void
     {
-        $userId = Auth::id();
+        $userId = TenantContext::id() ?? Auth::id();
         if (! $userId) {
             return;
         }

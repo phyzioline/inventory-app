@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { TrendingUp, Download, ChevronLeft, ChevronRight, Trophy } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useCanViewCost } from '@/hooks/useCanViewCost';
 
 const ITEMS_PER_PAGE = 10;
 const PIE_COLORS = [
@@ -55,6 +56,7 @@ interface TopSellingProductsDialogProps {
 export function TopSellingProductsDialog({ open, onOpenChange }: TopSellingProductsDialogProps) {
   const { t, language } = useLanguage();
   const isAr = language === 'ar';
+  const canViewCost = useCanViewCost();
   
   const [datePreset, setDatePreset] = useState<DatePreset>('last_30');
   const [customFrom, setCustomFrom] = useState('');
@@ -285,23 +287,27 @@ export function TopSellingProductsDialog({ open, onOpenChange }: TopSellingProdu
                 <TableHead>{isAr ? 'مكان البيع' : 'Channel'}</TableHead>
                 <TableHead className="text-center">{isAr ? 'الكمية المباعة' : 'Qty Sold'}</TableHead>
                 <TableHead className="text-center">{isAr ? 'سعر البيع' : 'Price'}</TableHead>
-                <TableHead className="text-center">{isAr ? 'التكلفة' : 'Cost'}</TableHead>
-                <TableHead className="text-center">{isAr ? 'إجمالي الأرباح' : 'Profit'}</TableHead>
-                <TableHead className="text-center">{isAr ? 'نسبة الربح %' : 'Margin %'}</TableHead>
+                {canViewCost ? (
+                  <>
+                    <TableHead className="text-center">{isAr ? 'التكلفة' : 'Cost'}</TableHead>
+                    <TableHead className="text-center">{isAr ? 'إجمالي الأرباح' : 'Profit'}</TableHead>
+                    <TableHead className="text-center">{isAr ? 'نسبة الربح %' : 'Margin %'}</TableHead>
+                  </>
+                ) : null}
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 9 }).map((_, j) => (
+                    {Array.from({ length: canViewCost ? 9 : 6 }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : paginatedProducts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={canViewCost ? 9 : 6} className="text-center py-8 text-muted-foreground">
                     {isAr ? 'لا توجد بيانات' : 'No data found'}
                   </TableCell>
                 </TableRow>
@@ -322,17 +328,21 @@ export function TopSellingProductsDialog({ open, onOpenChange }: TopSellingProdu
                     </TableCell>
                     <TableCell className="text-center font-semibold">{p.total_quantity_sold}</TableCell>
                     <TableCell className="text-center">{p.selling_price.toLocaleString()} EGP</TableCell>
-                    <TableCell className="text-center">{p.cost_price.toLocaleString()} EGP</TableCell>
-                    <TableCell className="text-center">
-                      <span className={p.total_profit >= 0 ? 'text-success' : 'text-destructive'}>
-                        {Math.round(p.total_profit).toLocaleString()} EGP
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={p.profit_margin >= 20 ? 'default' : p.profit_margin >= 0 ? 'secondary' : 'destructive'}>
-                        {Math.round(p.profit_margin * 100) / 100}%
-                      </Badge>
-                    </TableCell>
+                    {canViewCost ? (
+                      <>
+                        <TableCell className="text-center">{p.cost_price.toLocaleString()} EGP</TableCell>
+                        <TableCell className="text-center">
+                          <span className={p.total_profit >= 0 ? 'text-success' : 'text-destructive'}>
+                            {Math.round(p.total_profit).toLocaleString()} EGP
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={p.profit_margin >= 20 ? 'default' : p.profit_margin >= 0 ? 'secondary' : 'destructive'}>
+                            {Math.round(p.profit_margin * 100) / 100}%
+                          </Badge>
+                        </TableCell>
+                      </>
+                    ) : null}
                   </TableRow>
                 ))
               )}

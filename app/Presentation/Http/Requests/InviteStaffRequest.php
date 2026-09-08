@@ -19,7 +19,8 @@ class InviteStaffRequest extends FormRequest
         return [
             'email' => ['required', 'email', 'max:255'],
             'name' => ['nullable', 'string', 'max:255'],
-            'role' => ['required', 'string', 'in:manager,warehouse,accountant,viewer'],
+            'role' => ['required', 'string', 'in:manager,warehouse,accountant,cashier,viewer'],
+            'password' => ['nullable', 'string', 'min:6', 'max:72'],
         ];
     }
 }

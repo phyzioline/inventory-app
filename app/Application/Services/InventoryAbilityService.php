@@ -7,6 +7,9 @@ use App\Models\User;
 
 class InventoryAbilityService
 {
+    /** Inviteable staff roles (owner is implicit, not inviteable). */
+    public const STAFF_ROLES = ['manager', 'warehouse', 'accountant', 'cashier', 'viewer'];
+
     /** @var array<string, list<string>> */
     public const ROLE_ABILITIES = [
         'owner' => ['*'],
@@ -14,18 +17,22 @@ class InventoryAbilityService
             'stock.read', 'stock.write', 'transfers.write', 'adjustments.write',
             'marketplace.import', 'marketplace.rollback',
             'purchases.write', 'purchases.receive', 'returns.write',
-            'orders.cancel', 'finance.read', 'reports.read', 'staff.manage',
+            'orders.read', 'orders.cancel', 'sales.write',
+            'finance.read', 'reports.read', 'staff.manage', 'cost.read',
         ],
         'warehouse' => [
             'stock.read', 'stock.write', 'transfers.write', 'adjustments.write',
-            'purchases.receive', 'finance.read', 'reports.read',
+            'purchases.receive', 'orders.read', 'finance.read', 'reports.read', 'cost.read',
         ],
         'accountant' => [
-            'stock.read', 'finance.read', 'finance.write', 'settlements.write',
-            'withdrawal.approve', 'reports.read',
+            'stock.read', 'orders.read', 'finance.read', 'finance.write', 'settlements.write',
+            'withdrawal.approve', 'reports.read', 'cost.read',
+        ],
+        'cashier' => [
+            'stock.read', 'orders.read', 'sales.write', 'returns.write',
         ],
         'viewer' => [
-            'stock.read', 'finance.read', 'reports.read',
+            'stock.read', 'orders.read', 'finance.read', 'reports.read', 'cost.read',
         ],
     ];
 

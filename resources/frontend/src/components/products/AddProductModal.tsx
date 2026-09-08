@@ -35,6 +35,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { MarketSelect } from '@/components/shared/MarketSelect';
+import { useCanViewCost } from '@/hooks/useCanViewCost';
 
 interface AddProductModalProps {
     isOpen: boolean;
@@ -44,6 +45,7 @@ interface AddProductModalProps {
 
 export function AddProductModal({ isOpen, onClose, onSuccess }: AddProductModalProps) {
     const { t } = useLanguage();
+    const canViewCost = useCanViewCost();
     const [isLoading, setIsLoading] = useState(false);
     const [newCategory, setNewCategory] = useState('');
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -306,6 +308,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess }: AddProductModalP
                                 )}
                             />
 
+                            {canViewCost ? (
                             <FormField
                                 control={form.control}
                                 name="last_purchase_price"
@@ -319,6 +322,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess }: AddProductModalP
                                     </FormItem>
                                 )}
                             />
+                            ) : null}
 
                             <FormField
                                 control={form.control}

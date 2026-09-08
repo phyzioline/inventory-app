@@ -9,6 +9,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import AbilityRoute from "@/components/AbilityRoute";
 import AdminProtectedRoute from "@/components/AdminProtectedRoute";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { InventoryRealtimeBridge } from "@/components/InventoryRealtimeBridge";
@@ -179,14 +180,24 @@ const App = () => (
                   <Route path="/warehouses" element={<Warehouses />} />
                   <Route path="/stores/:storeId" element={<StoreDetails />} />
                   <Route path="/stores/:storeId/import" element={<ImportProducts />} />
-                  <Route path="/inventory/transfers" element={<Transfers />} />
+                  <Route path="/inventory/transfers" element={
+                    <AbilityRoute ability="transfers.write"><Transfers /></AbilityRoute>
+                  } />
                   <Route path="/inventory/batch-tracking" element={<BatchTracking />} />
-                  <Route path="/inventory/adjustments" element={<InventoryAdjustments />} />
-                  <Route path="/inventory/cycle-counts" element={<CycleCounts />} />
+                  <Route path="/inventory/adjustments" element={
+                    <AbilityRoute ability="adjustments.write"><InventoryAdjustments /></AbilityRoute>
+                  } />
+                  <Route path="/inventory/cycle-counts" element={
+                    <AbilityRoute ability="adjustments.write"><CycleCounts /></AbilityRoute>
+                  } />
                   <Route path="/inventory/low-stock" element={<LowStockAlerts />} />
                   <Route path="/returns" element={<Returns />} />
-                  <Route path="/returns/analytics" element={<ReturnAnalytics />} />
-                  <Route path="/transactions" element={<InventoryTransactions />} />
+                  <Route path="/returns/analytics" element={
+                    <AbilityRoute ability="reports.read"><ReturnAnalytics /></AbilityRoute>
+                  } />
+                  <Route path="/transactions" element={
+                    <AbilityRoute ability="reports.read"><InventoryTransactions /></AbilityRoute>
+                  } />
 
                   {/* ── Orders ─────────────────────────────── */}
                   <Route path="/orders" element={<Orders />} />
@@ -194,13 +205,23 @@ const App = () => (
                   <Route path="/quotations/new" element={<QuotationEditorPage />} />
                   <Route path="/quotations/:id/edit" element={<QuotationEditorPage />} />
                   <Route path="/quotations" element={<Quotations />} />
-                  <Route path="/orders/profit" element={<OrderProfitView />} />
+                  <Route path="/orders/profit" element={
+                    <AbilityRoute ability="reports.read"><OrderProfitView /></AbilityRoute>
+                  } />
 
                   {/* ── Purchases ──────────────────────────── */}
-                  <Route path="/purchases" element={<PurchaseInvoices />} />
-                  <Route path="/purchases/smart-import" element={<SmartPurchaseImport />} />
-                  <Route path="/purchases/cost-tracking" element={<SupplierCostTracking />} />
-                  <Route path="/purchases/returns" element={<PurchaseReturns />} />
+                  <Route path="/purchases" element={
+                    <AbilityRoute ability={['purchases.write', 'purchases.receive']}><PurchaseInvoices /></AbilityRoute>
+                  } />
+                  <Route path="/purchases/smart-import" element={
+                    <AbilityRoute ability="purchases.write"><SmartPurchaseImport /></AbilityRoute>
+                  } />
+                  <Route path="/purchases/cost-tracking" element={
+                    <AbilityRoute ability="purchases.write"><SupplierCostTracking /></AbilityRoute>
+                  } />
+                  <Route path="/purchases/returns" element={
+                    <AbilityRoute ability="purchases.write"><PurchaseReturns /></AbilityRoute>
+                  } />
 
                   {/* ── Imports ────────────────────────────── */}
                   <Route path="/import/amazon" element={<AmazonImport />} />
@@ -208,28 +229,58 @@ const App = () => (
                   <Route path="/import/products/drafts" element={<DraftProductsReview />} />
 
                   {/* ── Reconciliation ─────────────────────── */}
-                  <Route path="/reconciliation" element={<Reconciliation />} />
-                  <Route path="/reconciliation/:platform" element={<Reconciliation />} />
+                  <Route path="/reconciliation" element={
+                    <AbilityRoute ability="finance.read"><Reconciliation /></AbilityRoute>
+                  } />
+                  <Route path="/reconciliation/:platform" element={
+                    <AbilityRoute ability="finance.read"><Reconciliation /></AbilityRoute>
+                  } />
 
                   {/* ── Finance ────────────────────────────── */}
-                  <Route path="/finance/bank-accounts" element={<BankAccounts />} />
-                  <Route path="/finance/receipts" element={<Receipts />} />
-                  <Route path="/finance/payments" element={<Payments />} />
-                  <Route path="/expenses" element={<Expenses />} />
-                  <Route path="/salaries" element={<Salaries />} />
-                  <Route path="/finance/capital" element={<CapitalManagement />} />
-                  <Route path="/finance/sulfa" element={<TreasurySulfa />} />
+                  <Route path="/finance/bank-accounts" element={
+                    <AbilityRoute ability="finance.read"><BankAccounts /></AbilityRoute>
+                  } />
+                  <Route path="/finance/receipts" element={
+                    <AbilityRoute ability="finance.read"><Receipts /></AbilityRoute>
+                  } />
+                  <Route path="/finance/payments" element={
+                    <AbilityRoute ability="finance.read"><Payments /></AbilityRoute>
+                  } />
+                  <Route path="/expenses" element={
+                    <AbilityRoute ability="finance.read"><Expenses /></AbilityRoute>
+                  } />
+                  <Route path="/salaries" element={
+                    <AbilityRoute ability="finance.read"><Salaries /></AbilityRoute>
+                  } />
+                  <Route path="/finance/capital" element={
+                    <AbilityRoute ability="finance.read"><CapitalManagement /></AbilityRoute>
+                  } />
+                  <Route path="/finance/sulfa" element={
+                    <AbilityRoute ability="finance.read"><TreasurySulfa /></AbilityRoute>
+                  } />
 
                   {/* ── Profit Engine ──────────────────────── */}
-                  <Route path="/profit/by-period" element={<ProfitEngine />} />
-                  <Route path="/profit/by-sku" element={<ProfitEngine />} />
-                  <Route path="/profit/by-product" element={<ProfitEngine />} />
-                  <Route path="/profit/by-channel" element={<ProfitEngine />} />
+                  <Route path="/profit/by-period" element={
+                    <AbilityRoute ability="reports.read"><ProfitEngine /></AbilityRoute>
+                  } />
+                  <Route path="/profit/by-sku" element={
+                    <AbilityRoute ability="reports.read"><ProfitEngine /></AbilityRoute>
+                  } />
+                  <Route path="/profit/by-product" element={
+                    <AbilityRoute ability="reports.read"><ProfitEngine /></AbilityRoute>
+                  } />
+                  <Route path="/profit/by-channel" element={
+                    <AbilityRoute ability="reports.read"><ProfitEngine /></AbilityRoute>
+                  } />
                   <Route path="/profit/capital-cycle" element={<Navigate to="/profit/roi" replace />} />
-                  <Route path="/profit/roi" element={<ProfitEngine />} />
+                  <Route path="/profit/roi" element={
+                    <AbilityRoute ability="reports.read"><ProfitEngine /></AbilityRoute>
+                  } />
 
                   {/* ── Reports & Settings ─────────────────── */}
-                  <Route path="/reports" element={<Reports />} />
+                  <Route path="/reports" element={
+                    <AbilityRoute ability="reports.read"><Reports /></AbilityRoute>
+                  } />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/settings/subscription" element={<Subscription />} />
                 </Route>

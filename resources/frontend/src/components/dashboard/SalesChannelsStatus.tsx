@@ -11,9 +11,10 @@ interface SalesChannelStatusProps {
     returns: number;
   }>;
   isError?: boolean;
+  showProfit?: boolean;
 }
 
-export function SalesChannelsStatus({ channels, isError = false }: SalesChannelStatusProps) {
+export function SalesChannelsStatus({ channels, isError = false, showProfit = true }: SalesChannelStatusProps) {
   const { language } = useLanguage();
   const isAr = language === 'ar';
 
@@ -57,13 +58,15 @@ export function SalesChannelsStatus({ channels, isError = false }: SalesChannelS
                 </div>
                 <div className="font-semibold">{channel.sales.toLocaleString()} EGP</div>
               </div>
-              <div className="rounded bg-background/60 p-2">
-                <div className="flex items-center gap-1 text-muted-foreground mb-1">
-                  <TrendingUp className="w-3 h-3" />
-                  <span>{isAr ? 'الربح' : 'Profit'}</span>
+              {showProfit ? (
+                <div className="rounded bg-background/60 p-2">
+                  <div className="flex items-center gap-1 text-muted-foreground mb-1">
+                    <TrendingUp className="w-3 h-3" />
+                    <span>{isAr ? 'الربح' : 'Profit'}</span>
+                  </div>
+                  <div className="font-semibold">{channel.profit.toLocaleString()} EGP</div>
                 </div>
-                <div className="font-semibold">{channel.profit.toLocaleString()} EGP</div>
-              </div>
+              ) : null}
             </div>
 
             <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
