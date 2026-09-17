@@ -52,7 +52,11 @@ class LowStockAlertService
               )";
 
         $hasTransactions = Schema::hasTable('inventory_transactions');
-        $hasVendorAliases = Schema::hasTable('supplier_product_aliases') && Schema::hasTable('vendors');
+        // Real purchase history (what a vendor has actually supplied), not supplier_product_aliases —
+        // that table has no write path anywhere in the app and stays empty, which made vendor filtering
+        // return zero results for every vendor. This mirrors VendorController::purchaseHistory().
+        $hasPurchaseHistory = Schema::hasTable('purchase_batch_items') && Schema::hasTable('purchase_batches')
+            && Schema::hasTable('vendors');
 
         $lastMovementExpr = $hasTransactions
             ? "(SELECT MAX(it.created_at)
@@ -62,11 +66,18 @@ class LowStockAlertService
                  WHERE o2.master_product_id = mp.id) as last_movement_at"
             : "NULL::timestamp as last_movement_at";
 
-        $vendorNamesExpr = $hasVendorAliases
+        // purchase_batch_items sometimes only has sku_id set (master_product_id resolved later at
+        // receive time) — fall back through skus -> inventory_offers, same as how
+        // VendorController::purchaseHistory() displays it via the sku.masterProduct relation.
+        $vendorNamesExpr = $hasPurchaseHistory
             ? "(SELECT string_agg(DISTINCT v.name, ', ')
-                  FROM supplier_product_aliases spa
-                  JOIN vendors v ON v.id = spa.vendor_id
-                 WHERE spa.master_product_id = mp.id) as vendor_names"
+                  FROM purchase_batch_items pbi
+                  JOIN purchase_batches pb ON pb.id = pbi.purchase_batch_id
+                  JOIN vendors v ON v.id = pb.vendor_id
+                  LEFT JOIN skus pbi_sk ON pbi_sk.id = pbi.sku_id
+                  LEFT JOIN inventory_offers pbi_io ON pbi_io.id = pbi_sk.offer_id
+                 WHERE COALESCE(pbi.master_product_id, pbi_io.master_product_id) = mp.id
+                   AND pb.status = 'received') as vendor_names"
             : "NULL::text as vendor_names";
 
         $rows = DB::table('master_products as mp')
@@ -76,8 +87,15 @@ class LowStockAlertService
             ->where('mp.user_id', $tenantId)
             ->when(Schema::hasColumn('master_products', 'deleted_at'), fn ($q) => $q->whereNull('mp.deleted_at'))
             ->when($channelId, fn ($q) => $q->where('s.channel_id', $channelId))
-            ->when($vendorId && $hasVendorAliases, fn ($q) => $q->whereIn('mp.id', function ($sub) use ($vendorId) {
-                $sub->select('master_product_id')->from('supplier_product_aliases')->where('vendor_id', $vendorId);
+            ->when($vendorId && $hasPurchaseHistory, fn ($q) => $q->whereIn('mp.id', function ($sub) use ($vendorId) {
+                $sub->selectRaw('COALESCE(pbi.master_product_id, pbi_io.master_product_id)')
+                    ->from('purchase_batch_items as pbi')
+                    ->join('purchase_batches as pb', 'pb.id', '=', 'pbi.purchase_batch_id')
+                    ->leftJoin('skus as pbi_sk', 'pbi_sk.id', '=', 'pbi.sku_id')
+                    ->leftJoin('inventory_offers as pbi_io', 'pbi_io.id', '=', 'pbi_sk.offer_id')
+                    ->where('pb.vendor_id', $vendorId)
+                    ->where('pb.status', 'received')
+                    ->whereRaw('COALESCE(pbi.master_product_id, pbi_io.master_product_id) IS NOT NULL');
             }))
             ->groupBy('mp.id')
             ->selectRaw(
