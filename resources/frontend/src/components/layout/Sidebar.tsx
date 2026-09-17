@@ -74,6 +74,7 @@ const navItems: NavItem[] = [
     ability: 'stock.read',
     children: [
       { key: 'nav.allProducts', path: '/master-products', ability: 'stock.read' },
+      { key: 'nav.lowStock', path: '/inventory/low-stock', ability: 'stock.read' },
     ],
   },
 
@@ -98,7 +99,6 @@ const navItems: NavItem[] = [
       { key: 'nav.transfers', path: '/inventory/transfers', ability: 'transfers.write' },
       { key: 'nav.inventoryAdjustments', path: '/inventory/adjustments', ability: 'adjustments.write' },
       { key: 'nav.cycleCounts', path: '/inventory/cycle-counts', ability: 'adjustments.write' },
-      { key: 'nav.lowStock', path: '/inventory/low-stock', ability: 'stock.read' },
     ],
   },
 

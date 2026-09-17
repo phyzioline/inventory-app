@@ -190,7 +190,9 @@ const App = () => (
                   <Route path="/inventory/cycle-counts" element={
                     <AbilityRoute ability="adjustments.write"><CycleCounts /></AbilityRoute>
                   } />
-                  <Route path="/inventory/low-stock" element={<LowStockAlerts />} />
+                  <Route path="/inventory/low-stock" element={
+                    <AbilityRoute ability="stock.read"><LowStockAlerts /></AbilityRoute>
+                  } />
                   <Route path="/returns" element={<Returns />} />
                   <Route path="/returns/analytics" element={
                     <AbilityRoute ability="reports.read"><ReturnAnalytics /></AbilityRoute>

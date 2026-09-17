@@ -21,9 +21,15 @@ class LowStockAlertController extends Controller
 
         $data = $request->validate([
             'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'channel_id' => ['nullable', 'integer', 'exists:channels,id'],
+            'vendor_id' => ['nullable', 'integer', 'exists:vendors,id'],
         ]);
 
-        $items = $this->alerts->alerts((int) ($data['limit'] ?? 50));
+        $items = $this->alerts->alerts(
+            (int) ($data['limit'] ?? 50),
+            isset($data['channel_id']) ? (int) $data['channel_id'] : null,
+            isset($data['vendor_id']) ? (int) $data['vendor_id'] : null,
+        );
 
         return response()->json([
             'success' => true,
