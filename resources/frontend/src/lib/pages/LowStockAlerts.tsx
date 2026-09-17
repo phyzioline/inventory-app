@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { motion } from 'framer-motion';
-import { AlertTriangle, Loader2, Printer } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, Loader2, Printer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
@@ -37,6 +38,8 @@ type AlertRow = {
 type ChannelOption = { id: number; name: string };
 type VendorOption = { id: number; name: string };
 
+type SortField = 'product' | 'sku' | 'current' | 'minimum' | 'suggested_reorder_qty' | 'vendors' | 'last_movement_at' | 'status';
+
 const ALL_VALUE = 'all';
 
 export default function LowStockAlerts() {
@@ -45,6 +48,11 @@ export default function LowStockAlerts() {
 
   const [channelId, setChannelId] = useState<number | null>(null);
   const [vendorId, setVendorId] = useState<number | null>(null);
+
+  // Excel-style per-column filter row + click-to-sort headers (same pattern as Orders.tsx).
+  const [columnFilters, setColumnFilters] = useState({ product: '', sku: '', vendor: '', status: '' });
+  const [sortField, setSortField] = useState<SortField>('current');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const { data: channels } = useQuery({
     queryKey: ['channels-for-low-stock'],
@@ -81,6 +89,52 @@ export default function LowStockAlerts() {
     [vendors, vendorId]
   );
 
+  const sortIndicator = (field: SortField) => (sortField === field ? (sortDirection === 'asc' ? '↑' : '↓') : '');
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortField(field);
+    setSortDirection(field === 'product' || field === 'sku' || field === 'vendors' ? 'asc' : 'desc');
+  };
+
+  const visibleRows = useMemo(() => {
+    const productFilter = columnFilters.product.trim().toLowerCase();
+    const skuFilter = columnFilters.sku.trim().toLowerCase();
+    const vendorFilter = columnFilters.vendor.trim().toLowerCase();
+
+    const filtered = rows.filter((row) => {
+      if (productFilter && !row.product.toLowerCase().includes(productFilter)) return false;
+      if (skuFilter && !row.sku.toLowerCase().includes(skuFilter)) return false;
+      if (vendorFilter && !(row.vendors || '').toLowerCase().includes(vendorFilter)) return false;
+      if (columnFilters.status && row.status !== columnFilters.status) return false;
+      return true;
+    });
+
+    const dir = sortDirection === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (sortField) {
+        case 'product':
+          return a.product.localeCompare(b.product) * dir;
+        case 'sku':
+          return a.sku.localeCompare(b.sku) * dir;
+        case 'vendors':
+          return (a.vendors || '').localeCompare(b.vendors || '') * dir;
+        case 'status':
+          return a.status.localeCompare(b.status) * dir;
+        case 'last_movement_at': {
+          const av = a.last_movement_at ? new Date(a.last_movement_at).getTime() : 0;
+          const bv = b.last_movement_at ? new Date(b.last_movement_at).getTime() : 0;
+          return (av - bv) * dir;
+        }
+        default:
+          return ((a[sortField] as number) - (b[sortField] as number)) * dir;
+      }
+    });
+  }, [rows, columnFilters, sortField, sortDirection]);
+
   const formatLastMovement = (value: string | null) => {
     if (!value) return isAr ? 'لا توجد حركة مسجلة' : 'No recorded movement';
     try {
@@ -100,7 +154,7 @@ export default function LowStockAlerts() {
       rtl: isAr,
       sections: [
         {
-          title: isAr ? `عدد الأصناف: ${rows.length}` : `Items: ${rows.length}`,
+          title: isAr ? `عدد الأصناف: ${visibleRows.length}` : `Items: ${visibleRows.length}`,
           columns: [
             isAr ? 'المنتج' : 'Product',
             'SKU',
@@ -109,7 +163,7 @@ export default function LowStockAlerts() {
             isAr ? 'مقترح الطلب' : 'Reorder qty',
             isAr ? 'المورد' : 'Vendor',
           ],
-          rows: rows.map((row) => [
+          rows: visibleRows.map((row) => [
             row.product,
             row.sku,
             row.current,
@@ -142,7 +196,7 @@ export default function LowStockAlerts() {
           <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
             {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : isAr ? 'تحديث' : 'Refresh'}
           </Button>
-          <Button variant="outline" onClick={handlePrint} disabled={rows.length === 0}>
+          <Button variant="outline" onClick={handlePrint} disabled={visibleRows.length === 0}>
             <Printer className="w-4 h-4 me-2" />
             {isAr ? 'طباعة' : 'Print'}
           </Button>
@@ -173,7 +227,7 @@ export default function LowStockAlerts() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <CardTitle className="text-base">
-                {isAr ? `عدد التنبيهات: ${data?.count ?? 0}` : `Alerts: ${data?.count ?? 0}`}
+                {isAr ? `عدد التنبيهات: ${visibleRows.length}` : `Alerts: ${visibleRows.length}`}
               </CardTitle>
               <CardDescription>
                 {isAr
@@ -214,53 +268,134 @@ export default function LowStockAlerts() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{isAr ? 'المنتج' : 'Product'}</TableHead>
-                  <TableHead>SKU</TableHead>
-                  <TableHead>{isAr ? 'الحالي' : 'Current'}</TableHead>
-                  <TableHead>{isAr ? 'الحد' : 'Minimum'}</TableHead>
-                  <TableHead>{isAr ? 'مقترح الطلب' : 'Reorder qty'}</TableHead>
-                  <TableHead>{isAr ? 'المورد' : 'Vendor'}</TableHead>
-                  <TableHead>{isAr ? 'آخر حركة' : 'Last movement'}</TableHead>
-                  <TableHead>{isAr ? 'الحالة' : 'Status'}</TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('product')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'المنتج' : 'Product'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('product')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('sku')}>
+                    <span className="inline-flex items-center gap-1">
+                      SKU <ArrowUpDown className="w-3 h-3" /> {sortIndicator('sku')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('current')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'الحالي' : 'Current'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('current')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('minimum')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'الحد' : 'Minimum'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('minimum')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('suggested_reorder_qty')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'مقترح الطلب' : 'Reorder qty'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('suggested_reorder_qty')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('vendors')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'المورد' : 'Vendor'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('vendors')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('last_movement_at')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'آخر حركة' : 'Last movement'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('last_movement_at')}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort('status')}>
+                    <span className="inline-flex items-center gap-1">
+                      {isAr ? 'الحالة' : 'Status'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('status')}
+                    </span>
+                  </TableHead>
+                </TableRow>
+                <TableRow>
+                  <TableHead className="py-2">
+                    <Input
+                      className="h-8 text-xs"
+                      placeholder={isAr ? 'فلتر المنتج' : 'Filter product'}
+                      value={columnFilters.product}
+                      onChange={(e) => setColumnFilters((prev) => ({ ...prev, product: e.target.value }))}
+                    />
+                  </TableHead>
+                  <TableHead className="py-2">
+                    <Input
+                      className="h-8 text-xs"
+                      placeholder={isAr ? 'فلتر SKU' : 'Filter SKU'}
+                      value={columnFilters.sku}
+                      onChange={(e) => setColumnFilters((prev) => ({ ...prev, sku: e.target.value }))}
+                    />
+                  </TableHead>
+                  <TableHead className="py-2 text-xs text-muted-foreground">—</TableHead>
+                  <TableHead className="py-2 text-xs text-muted-foreground">—</TableHead>
+                  <TableHead className="py-2 text-xs text-muted-foreground">—</TableHead>
+                  <TableHead className="py-2">
+                    <Input
+                      className="h-8 text-xs"
+                      placeholder={isAr ? 'فلتر المورد' : 'Filter vendor'}
+                      value={columnFilters.vendor}
+                      onChange={(e) => setColumnFilters((prev) => ({ ...prev, vendor: e.target.value }))}
+                    />
+                  </TableHead>
+                  <TableHead className="py-2 text-xs text-muted-foreground">—</TableHead>
+                  <TableHead className="py-2">
+                    <select
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                      value={columnFilters.status}
+                      onChange={(e) => setColumnFilters((prev) => ({ ...prev, status: e.target.value }))}
+                    >
+                      <option value="">{isAr ? 'كل الحالات' : 'All statuses'}</option>
+                      <option value="low_stock">{isAr ? 'منخفض' : 'Low'}</option>
+                      <option value="out_of_stock">{isAr ? 'نفد' : 'Out'}</option>
+                    </select>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <Link className="font-medium text-primary hover:underline" to={`/master-products/${row.id}`}>
-                        {row.product}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{row.sku}</TableCell>
-                    <TableCell>{row.current}</TableCell>
-                    <TableCell>{row.minimum}</TableCell>
-                    <TableCell className="font-semibold">{row.suggested_reorder_qty}</TableCell>
-                    <TableCell>
-                      {row.vendors ? (
-                        row.vendors
-                      ) : (
-                        <Badge variant="outline" className="text-muted-foreground font-normal">
-                          {isAr ? 'غير مرتبط' : 'Unlinked'}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {formatLastMovement(row.last_movement_at)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={row.status === 'out_of_stock' ? 'destructive' : 'secondary'}>
-                        {row.status === 'out_of_stock'
-                          ? isAr
-                            ? 'نفد'
-                            : 'Out'
-                          : isAr
-                            ? 'منخفض'
-                            : 'Low'}
-                      </Badge>
+                {visibleRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground text-sm">
+                      {isAr ? 'لا توجد نتائج مطابقة للفلاتر.' : 'No rows match the current filters.'}
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  visibleRows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>
+                        <Link className="font-medium text-primary hover:underline" to={`/master-products/${row.id}`}>
+                          {row.product}
+                        </Link>
+                      </TableCell>
+                      <TableCell>{row.sku}</TableCell>
+                      <TableCell>{row.current}</TableCell>
+                      <TableCell>{row.minimum}</TableCell>
+                      <TableCell className="font-semibold">{row.suggested_reorder_qty}</TableCell>
+                      <TableCell>
+                        {row.vendors ? (
+                          row.vendors
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground font-normal">
+                            {isAr ? 'غير مرتبط' : 'Unlinked'}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {formatLastMovement(row.last_movement_at)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={row.status === 'out_of_stock' ? 'destructive' : 'secondary'}>
+                          {row.status === 'out_of_stock'
+                            ? isAr
+                              ? 'نفد'
+                              : 'Out'
+                            : isAr
+                              ? 'منخفض'
+                              : 'Low'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           )}
