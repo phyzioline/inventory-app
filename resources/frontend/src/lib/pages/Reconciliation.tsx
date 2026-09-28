@@ -503,8 +503,11 @@ export default function Reconciliation() {
           <CardContent className="pt-6">
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'صافي الربح' : 'Net Profit'}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'صافي التسوية' : 'Settlement net'}</p>
                 <p className="text-2xl font-bold text-blue-600 mt-1">{formatCurrency(toNumber(summary?.net_profit || 0))}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {isAr ? 'إيراد − رسوم − مرتجعات التسوية — ليس صافي ربح الشركة الرسمي' : 'Revenue − fees − settlement refunds — not company official P&L'}
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">{isAr ? 'بعد الخصومات' : 'After fees & refunds'}</p>
               </div>
               <div className="p-2 bg-blue-500/10 rounded-lg">

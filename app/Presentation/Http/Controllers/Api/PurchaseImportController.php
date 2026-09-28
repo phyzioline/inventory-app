@@ -733,14 +733,19 @@ class PurchaseImportController extends Controller
                         $newQty = array_key_exists('quantity', $itemData) ? (float) ($itemData['quantity'] ?? 0) : $oldQty;
                         $deltaQty = $newQty - $oldQty;
 
+                        // Capture where stock for THIS line lives BEFORE changing master/SKU.
+                        // After master remap, findBatchPostedSkuIdForItem can no longer see the old product.
+                        $sourceSkuId = $this->importService->resolvePostedSkuIdForReceivedLine($batch, $item);
+
                         if (! empty($itemData['master_product_id'])) {
                             $item->master_product_id = (int) $itemData['master_product_id'];
                         }
                         if (! empty($itemData['raw_description'])) {
                             $item->raw_description = (string) $itemData['raw_description'];
                         }
-                        if (! empty($itemData['sku_id'])) {
-                            $item->sku_id = (int) $itemData['sku_id'];
+                        if (array_key_exists('sku_id', $itemData)) {
+                            // Allow clearing a stale SKU when the user remaps the master product.
+                            $item->sku_id = ! empty($itemData['sku_id']) ? (int) $itemData['sku_id'] : null;
                         }
                         $item->save();
 
@@ -759,26 +764,25 @@ class PurchaseImportController extends Controller
                             );
                         }
                         $skuId = $resolvedSkuId ? (int) $resolvedSkuId : null;
-                        if ($skuId && $receiveLocationId > 0) {
-                            if (abs($deltaQty) > 0.0000001) {
-                                $this->importService->applyReceivedStockDelta(
-                                    $batch,
-                                    $skuId,
-                                    $receiveLocationId,
-                                    (float) $deltaQty,
-                                    "Purchase batch {$batch->batch_number} line {$item->id} quantity edit"
-                                );
-                            } elseif (array_key_exists('quantity', $itemData)) {
-                                // Qty already saved but stock may be on another SKU — realign without changing the line again.
-                                $this->importService->reconcileReceivedLineStockToTargetSku(
-                                    $batch,
-                                    $item->fresh(),
-                                    $skuId,
-                                    $receiveLocationId,
-                                    (float) $newQty,
-                                    "Purchase batch {$batch->batch_number} line {$item->id} stock reconcile"
-                                );
-                            }
+                        $shouldTouchStock = $skuId
+                            && $receiveLocationId > 0
+                            && (
+                                abs($deltaQty) > 0.0000001
+                                || ($sourceSkuId && (int) $sourceSkuId !== (int) $skuId)
+                                || array_key_exists('quantity', $itemData)
+                                || array_key_exists('master_product_id', $itemData)
+                                || array_key_exists('sku_id', $itemData)
+                            );
+                        if ($shouldTouchStock) {
+                            $this->importService->applyReceivedLineStockChange(
+                                $batch,
+                                $receiveLocationId,
+                                $sourceSkuId,
+                                (float) $oldQty,
+                                (int) $skuId,
+                                (float) $newQty,
+                                "Purchase batch {$batch->batch_number} line {$item->id} received edit"
+                            );
                         } elseif (abs($deltaQty) > 0.0000001) {
                             if (! $skuId) {
                                 throw new \Exception('Cannot adjust received quantity: missing SKU mapping on the line.');
@@ -883,6 +887,14 @@ class PurchaseImportController extends Controller
                         $this->importService->adjustVendorPayableBalance($newVendorId, $delta);
                     }
                 }
+            }
+
+            if ($isReceived) {
+                // Fail the whole edit if orphan/excess stock remains (legacy shortfalls still allowed).
+                $this->importService->assertReceivedBatchLedgerMatchesLines(
+                    $batch->refresh()->loadMissing('items.sku'),
+                    true
+                );
             }
         });
         } catch (\Throwable $e) {

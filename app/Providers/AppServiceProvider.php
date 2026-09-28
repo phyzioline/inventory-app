@@ -133,6 +133,8 @@ class AppServiceProvider extends ServiceProvider
                 SyncSkuCostsFromMasterProductsCommand::class,
                 AuditImportSkuDrift::class,
                 RepairImportSkuDrift::class,
+                \App\Presentation\Console\Commands\RepairReceivedPurchaseSkuRemapCommand::class,
+                \App\Presentation\Console\Commands\AuditPurchaseReceiveLedgerCommand::class,
                 \App\Presentation\Console\Commands\FixSwappedMarketplaceOrderDatesCommand::class,
                 \App\Presentation\Console\Commands\BackfillReturnTransactionDatesCommand::class,
                 \App\Presentation\Console\Commands\BackfillRemovalFbaDeductionsCommand::class,

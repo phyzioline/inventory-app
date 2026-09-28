@@ -20,13 +20,13 @@ class LowStockAlertController extends Controller
         $this->abilities->assertCan('stock.read');
 
         $data = $request->validate([
-            'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:500'],
             'channel_id' => ['nullable', 'integer', 'exists:channels,id'],
             'vendor_id' => ['nullable', 'integer', 'exists:vendors,id'],
         ]);
 
         $items = $this->alerts->alerts(
-            (int) ($data['limit'] ?? 50),
+            (int) ($data['limit'] ?? 200),
             isset($data['channel_id']) ? (int) $data['channel_id'] : null,
             isset($data['vendor_id']) ? (int) $data['vendor_id'] : null,
         );

@@ -66,3 +66,60 @@ it('lists low-stock alerts when qty is below min_stock', function () {
         ->assertJsonPath('count', 1)
         ->assertJsonPath('data.0.suggested_reorder_qty', 7);
 });
+
+it('lists zero-qty products even when min_stock is not configured', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    $master = MasterProduct::query()->create([
+        'internal_name' => 'Zero Without Min',
+        'is_active' => true,
+        'min_stock' => 0,
+        'user_id' => $user->id,
+    ]);
+    $channel = Channel::query()->create([
+        'name' => 'Shop',
+        'slug' => 'zmin-'.uniqid(),
+        'type' => 'store',
+        'is_active' => true,
+        'user_id' => $user->id,
+    ]);
+    $offer = InventoryOffer::query()->create([
+        'master_product_id' => $master->id,
+        'name' => 'O',
+        'type' => 'single',
+        'user_id' => $user->id,
+    ]);
+    $sku = Sku::query()->create([
+        'offer_id' => $offer->id,
+        'sku' => 'ZMIN-'.uniqid(),
+        'channel_id' => $channel->id,
+        'cost_price' => 1,
+        'selling_price' => 2,
+        'is_active' => true,
+        'user_id' => $user->id,
+    ]);
+    $location = InventoryLocation::query()->create([
+        'name' => 'WH-Z',
+        'type' => 'warehouse',
+        'is_active' => true,
+        'user_id' => $user->id,
+    ]);
+    SkuInventory::query()->create([
+        'sku_id' => $sku->id,
+        'location_id' => $location->id,
+        'quantity' => 0,
+        'reserved' => 0,
+        'user_id' => $user->id,
+    ]);
+
+    $this->getJson('/api/inventory/alerts/low-stock?channel_id='.$channel->id)
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->assertJsonPath('count', 1)
+        ->assertJsonPath('data.0.product', 'Zero Without Min')
+        ->assertJsonPath('data.0.current', 0)
+        ->assertJsonPath('data.0.minimum', 1)
+        ->assertJsonPath('data.0.suggested_reorder_qty', 1)
+        ->assertJsonPath('data.0.status', 'out_of_stock');
+});

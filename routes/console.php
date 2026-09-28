@@ -12,3 +12,10 @@ Schedule::command('inventory:ensure-queue-healthy')
     ->everyMinute()
     ->withoutOverlapping(2)
     ->runInBackground();
+
+// Nightly dry-run: classify received PO ledger drift (no stock writes).
+Schedule::command('inventory:audit-purchase-receive-ledger')
+    ->dailyAt('02:40')
+    ->withoutOverlapping(120)
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/purchase-receive-ledger-audit.log'));

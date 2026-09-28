@@ -199,6 +199,13 @@ export default function CapitalManagement() {
     queryFn: () => api.getArray('/adjustments'),
   });
 
+  // Canonical accrual P&L (same Profit Engine as dashboard / ROI) — never use purchases as COGS.
+  const { data: officialRoiMetrics } = useQuery({
+    queryKey: ['roi-metrics', 'capital-mgmt-all-time'],
+    queryFn: () => api.get('/reports/roi-metrics'),
+    staleTime: 120_000,
+  });
+
   const { data: channels = [] } = useQuery({
     queryKey: ['channels-capital'],
     queryFn: () => api.getArray('/channels'),
@@ -379,7 +386,7 @@ export default function CapitalManagement() {
     const revenueOrders = (Array.isArray(orders) ? orders : []).filter(orderCountsForRevenue);
     const totalRevenue = revenueOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
 
-    // COGS / Purchases
+    // COGS / Purchases — purchases are inventory investment only (not used for official P&L).
     const purchaseCountsForCogs = (p: any) => {
       const st = String(p?.status || p?.backend_status || '').toLowerCase();
       return !['cancelled', 'draft', 'review'].includes(st);
@@ -463,12 +470,26 @@ export default function CapitalManagement() {
 
     const channelArray = Object.values(channelBreakdown).sort((a, b) => b.revenue - a.revenue);
 
-    // Profit calculations
-    const grossProfit = totalRevenue - totalPurchases;
-    const netProfit = grossProfit - totalExpenses - totalLossAmount - totalRefunds;
-    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-    const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-    const roi = totalCapital > 0 ? (netProfit / totalCapital) * 100 : 0;
+    // Official accrual P&L from Profit Engine (purchases must never enter these).
+    const official = officialRoiMetrics as Record<string, unknown> | undefined;
+    const officialRevenue = official ? Number(official.revenue ?? official.total_sales ?? 0) : totalRevenue;
+    const officialCogs = official ? Number(official.cogs ?? official.total_cogs ?? 0) : 0;
+    const hasOfficial = Boolean(official && (official.net_profit != null || official.revenue != null));
+    const grossProfit = hasOfficial
+      ? officialRevenue - officialCogs
+      : totalRevenue - totalPurchases; // fallback only before API loads
+    const netProfit = hasOfficial
+      ? Number(official!.net_profit ?? 0)
+      : grossProfit - totalExpenses - totalLossAmount - totalRefunds;
+    const grossMargin = hasOfficial
+      ? Number(official!.gross_margin ?? (officialRevenue > 0 ? (grossProfit / officialRevenue) * 100 : 0))
+      : totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const netMargin = hasOfficial
+      ? Number(official!.net_margin ?? (officialRevenue > 0 ? (netProfit / officialRevenue) * 100 : 0))
+      : totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+    const roi = hasOfficial
+      ? Number(official!.roi ?? (totalCapital > 0 ? (netProfit / totalCapital) * 100 : 0))
+      : totalCapital > 0 ? (netProfit / totalCapital) * 100 : 0;
 
     /** Tangible net capital: stock at cost + receivables (incl. pending settlement) − supplier payables. */
     const inventoryValue = toNum(currentInventoryCost);
@@ -479,7 +500,8 @@ export default function CapitalManagement() {
 
     return {
       totalCapital,
-      totalRevenue,
+      totalRevenue: hasOfficial ? officialRevenue : totalRevenue,
+      totalCogs: officialCogs,
       totalPurchases,
       totalExpenses,
       shippingExpenses,
@@ -503,6 +525,7 @@ export default function CapitalManagement() {
       grossMargin,
       netMargin,
       roi,
+      hasOfficialPnl: hasOfficial,
       netRealCapital,
       inventoryValue,
       frozenCapital,
@@ -524,6 +547,7 @@ export default function CapitalManagement() {
     summaryMap,
     currentInventoryCost,
     externalReceivables,
+    officialRoiMetrics,
   ]);
 
   useEffect(() => {
@@ -1006,20 +1030,36 @@ export default function CapitalManagement() {
         <TabsContent value="pnl" className="space-y-6 mt-6">
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">{isAr ? 'تفصيل المصروفات' : 'Expense breakdown'}</CardTitle>
+              <CardTitle className="text-lg">
+                {isAr ? 'قائمة الدخل الرسمية (محرك الأرباح)' : 'Official P&L (Profit Engine)'}
+              </CardTitle>
+              {financials.hasOfficialPnl && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {isAr
+                    ? 'صافي الربح من /reports/roi-metrics — نفس الداشبورد. المشتريات استثمار مخزون وليست COGS.'
+                    : 'Net profit from /reports/roi-metrics — same as dashboard. Purchases are inventory investment, not COGS.'}
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
                 {/* Revenue */}
                 <div className="flex justify-between items-center p-3 rounded-lg bg-green-500/5 border border-green-500/20">
-                  <span className="font-semibold text-green-500">{isAr ? 'الإيرادات (المبيعات)' : 'Revenue (Sales)'}</span>
+                  <span className="font-semibold text-green-500">{isAr ? 'الإيرادات (رسمي)' : 'Revenue (official)'}</span>
                   <span className="font-bold text-green-500 text-lg">+{financials.totalRevenue.toLocaleString()} EGP</span>
                 </div>
 
-                {/* COGS */}
+                {/* COGS — unit cost, not purchase invoices */}
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground ps-4">{isAr ? '(-) تكلفة البضاعة المباعة' : '(-) Cost of Goods Sold'}</span>
-                  <span className="font-medium text-red-400">-{financials.totalPurchases.toLocaleString()} EGP</span>
+                  <span className="text-muted-foreground ps-4">{isAr ? '(-) تكلفة البضاعة المباعة (وحدات)' : '(-) COGS (units sold)'}</span>
+                  <span className="font-medium text-red-400">-{(financials.totalCogs ?? 0).toLocaleString()} EGP</span>
+                </div>
+
+                <div className="flex justify-between items-center p-3 rounded-lg bg-muted/30">
+                  <span className="text-muted-foreground ps-4 text-xs">
+                    {isAr ? 'مشتريات (استثمار مخزون — خارج معادلة الربح)' : 'Purchases (inventory investment — outside P&L)'}
+                  </span>
+                  <span className="font-medium text-muted-foreground text-sm">{financials.totalPurchases.toLocaleString()} EGP</span>
                 </div>
 
                 {/* Gross Profit */}
@@ -1030,7 +1070,6 @@ export default function CapitalManagement() {
                     <span className="text-xs text-muted-foreground ms-2">({financials.grossMargin.toFixed(1)}%)</span>
                   </span>
                 </div>
-
                 {/* Operating Expenses */}
                 <div className="ps-4 space-y-1 pt-2">
                   <p className="text-sm font-medium text-muted-foreground mb-2">{isAr ? 'المصروفات التشغيلية:' : 'Operating Expenses:'}</p>
@@ -1060,21 +1099,25 @@ export default function CapitalManagement() {
                   <span className="font-medium text-red-400">-{financials.totalExpenses.toLocaleString()} EGP</span>
                 </div>
 
-                {/* Losses */}
+                {/* Losses — informational; official net from Profit Engine does not re-subtract these */}
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground ps-4">{isAr ? '(-) خسائر المخزون (تلف/سرقة/منتهي)' : '(-) Inventory Losses (Damage/Theft/Expired)'}</span>
-                  <span className="font-medium text-red-400">-{financials.totalLossAmount.toLocaleString()} EGP</span>
+                  <span className="text-muted-foreground ps-4">
+                    {isAr ? 'خسائر المخزون (معلومة — خارج صافي الربح الرسمي)' : 'Inventory losses (info — outside official net)'}
+                  </span>
+                  <span className="font-medium text-muted-foreground">{financials.totalLossAmount.toLocaleString()} EGP</span>
                 </div>
 
-                {/* Returns */}
+                {/* Returns — already reflected in official engine when order-linked */}
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground ps-4">{isAr ? '(-) المرتجعات والاستردادات' : '(-) Returns & Refunds'}</span>
-                  <span className="font-medium text-orange-400">-{financials.totalRefunds.toLocaleString()} EGP</span>
+                  <span className="text-muted-foreground ps-4">
+                    {isAr ? 'مرتجعات مسجّلة (مرجع)' : 'Recorded refunds (reference)'}
+                  </span>
+                  <span className="font-medium text-orange-400">{financials.totalRefunds.toLocaleString()} EGP</span>
                 </div>
 
                 {/* Net Profit */}
                 <div className={`flex justify-between items-center p-4 rounded-lg border-2 ${financials.netProfit >= 0 ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
-                  <span className="font-bold text-lg">{isAr ? '= صافي الربح' : '= Net Profit'}</span>
+                  <span className="font-bold text-lg">{isAr ? '= صافي الربح الرسمي' : '= Official Net Profit'}</span>
                   <span className={`font-bold text-xl ${financials.netProfit >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                     {financials.netProfit >= 0 ? '+' : ''}{financials.netProfit.toLocaleString()} EGP
                     <span className="text-xs text-muted-foreground ms-2">({financials.netMargin.toFixed(1)}%)</span>

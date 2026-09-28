@@ -90,6 +90,8 @@ const KIND: Record<string, KindCfg> = {
     transfer_in:   { badge: 'bg-violet-100  text-violet-800  border-violet-200',  row: 'bg-violet-50/30',   qty: 'text-violet-700',  sign: '↙', icon: ArrowRightLeft,  isOut: false },
     auto_transfer: { badge: 'bg-indigo-100  text-indigo-800  border-indigo-200',  row: 'bg-indigo-50/30',   qty: 'text-indigo-700',  sign: '→', icon: Zap,             isOut: false },
     adjustment:    { badge: 'bg-amber-100   text-amber-800   border-amber-200',   row: 'bg-amber-50/30',    qty: 'text-amber-700',   sign: '±', icon: SlidersHorizontal, isOut: false },
+    bundle_out:    { badge: 'bg-orange-100  text-orange-800  border-orange-200',  row: 'bg-orange-50/30',   qty: 'text-orange-700',  sign: '↗', icon: ArrowRightLeft,  isOut: true  },
+    bundle_in:     { badge: 'bg-cyan-100    text-cyan-800    border-cyan-200',    row: 'bg-cyan-50/30',     qty: 'text-cyan-700',    sign: '↙', icon: ArrowRightLeft,  isOut: false },
 };
 const DEFAULT_KIND: KindCfg = { badge: 'bg-slate-100 text-slate-700 border-slate-200', row: '', qty: 'text-slate-700', sign: '·', icon: Minus, isOut: false };
 
@@ -363,7 +365,7 @@ export function SkuMovementTrackerDialog({
                                 {Object.entries(KIND).map(([k, v]) => (
                                     <span key={k} className="flex items-center gap-1">
                                         <span className={`inline-flex h-2 w-2 rounded-full ${v.badge.split(' ')[0]}`} />
-                                        {k === 'purchase' ? 'شراء' : k === 'import_sale' ? 'بيع شيت' : k === 'sale' ? 'بيع' : k === 'return_in' ? 'مرتجع' : k === 'transfer_out' ? 'تحويل صادر' : k === 'transfer_in' ? 'تحويل وارد' : k === 'adjustment' ? 'تسوية' : k === 'auto_transfer' ? 'تحويل تلقائي' : k === 'in' ? 'وارد' : k === 'out' ? 'صادر' : k}
+                                        {k === 'purchase' ? 'شراء' : k === 'import_sale' ? 'بيع شيت' : k === 'sale' ? 'بيع' : k === 'return_in' ? 'مرتجع' : k === 'transfer_out' ? 'تحويل صادر' : k === 'transfer_in' ? 'تحويل وارد' : k === 'adjustment' ? 'تسوية' : k === 'auto_transfer' ? 'تحويل تلقائي' : k === 'in' ? 'وارد' : k === 'out' ? 'صادر' : k === 'bundle_out' ? 'تجميع صادر' : k === 'bundle_in' ? 'تجميع وارد' : k}
                                     </span>
                                 ))}
                                 <span className="mr-auto text-slate-400">الرصيد = رصيد ما بعد كل حركة</span>

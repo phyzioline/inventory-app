@@ -89,7 +89,7 @@ class ProfitReportController extends Controller
     }
 
     /**
-     * Lightweight ROI / capital-cycle aggregates (SQL sums only).
+     * ROI / capital-cycle metrics. Accrual P&L matches profit-summary; purchases are money-flow only.
      */
     public function roiMetrics(Request $request)
     {

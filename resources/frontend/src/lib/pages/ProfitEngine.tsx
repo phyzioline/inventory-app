@@ -1006,7 +1006,7 @@ export default function ProfitEngine() {
     return Array.from(grouped.values());
   }, [periodNetRows]);
 
-  // Capital cycle — server-side aggregates (no full order/purchase lists).
+  // Capital cycle — server-side aggregates (accrual P&L + money-flow purchases).
   const capitalCycleData = useMemo(() => {
     if ((view !== 'capital-cycle' && view !== 'roi') || !roiMetrics) return null;
     const m = roiMetrics as Record<string, unknown>;
@@ -1014,7 +1014,8 @@ export default function ProfitEngine() {
     return {
       totalCapital: toNumber(m.total_capital),
       totalPurchases: toNumber(m.total_purchases),
-      totalSales: toNumber(m.total_sales),
+      totalSales: toNumber(m.revenue ?? m.total_sales),
+      totalCogs: toNumber(m.cogs ?? m.total_cogs),
       totalExpensesAmt: toNumber(m.total_expenses),
       totalLosses: toNumber(m.total_losses),
       netProfit: toNumber(m.net_profit),
@@ -1031,10 +1032,13 @@ export default function ProfitEngine() {
       m.expenses_by_category && typeof m.expenses_by_category === 'object'
         ? (m.expenses_by_category as Record<string, number>)
         : {};
+    const revenue = toNumber(m.revenue ?? m.total_sales);
+    const cogs = toNumber(m.cogs ?? m.total_cogs);
 
     return {
       totalCapital: toNumber(m.total_capital),
-      totalSales: toNumber(m.total_sales),
+      totalSales: revenue,
+      totalCogs: cogs,
       totalPurchases: toNumber(m.total_purchases),
       totalExpensesAmt: toNumber(m.total_expenses),
       totalLosses: toNumber(m.total_losses),
@@ -2146,22 +2150,22 @@ export default function ProfitEngine() {
             <CardContent>
               <div className="flex flex-wrap items-center justify-center gap-3 py-6">
                 {[
-                  { label: 'Capital Invested', value: capitalCycleData.totalCapital, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-                  { label: 'Purchases (COGS)', value: capitalCycleData.totalPurchases, color: 'text-orange-500', bg: 'bg-orange-500/10' },
-                  { label: 'Inventory Value', value: capitalCycleData.purchasedInventory, color: 'text-purple-500', bg: 'bg-purple-500/10' },
-                  { label: 'Sales Revenue', value: capitalCycleData.totalSales, color: 'text-green-500', bg: 'bg-green-500/10' },
-                  { label: 'Expenses', value: capitalCycleData.totalExpensesAmt, color: 'text-red-500', bg: 'bg-red-500/10' },
-                  { label: 'Losses', value: capitalCycleData.totalLosses, color: 'text-red-400', bg: 'bg-red-400/10' },
-                ].map((step, idx) => (
+                  { label: isAr ? 'رأس المال المستثمر' : 'Capital Invested', value: capitalCycleData.totalCapital, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+                  { label: isAr ? 'مشتريات الفترة' : 'Period Purchases', value: capitalCycleData.totalPurchases, color: 'text-orange-500', bg: 'bg-orange-500/10' },
+                  { label: isAr ? 'استثمار مخزون (مشتريات)' : 'Inventory Investment', value: capitalCycleData.purchasedInventory, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+                  { label: isAr ? 'إيراد المبيعات (رسمي)' : 'Sales Revenue (official)', value: capitalCycleData.totalSales, color: 'text-green-500', bg: 'bg-green-500/10' },
+                  { label: isAr ? 'تكلفة البضاعة المباعة' : 'COGS (units sold)', value: capitalCycleData.totalCogs ?? 0, color: 'text-amber-600', bg: 'bg-amber-500/10' },
+                  { label: isAr ? 'المصاريف' : 'Expenses', value: capitalCycleData.totalExpensesAmt, color: 'text-red-500', bg: 'bg-red-500/10' },
+                  { label: isAr ? 'خسائر المخزون' : 'Loss Losses', value: capitalCycleData.totalLosses, color: 'text-red-400', bg: 'bg-red-400/10' },
+                ].map((step, idx, arr) => (
                   <div key={idx} className="flex items-center gap-3">
                     <div className={`p-4 rounded-xl ${step.bg} text-center min-w-[120px]`}>
                       <p className="text-xs text-muted-foreground">{step.label}</p>
                       <p className={`text-lg font-bold ${step.color}`}>{formatNumber(step.value)}</p>
                     </div>
-                    {idx < 5 && <ArrowRight className="w-5 h-5 text-muted-foreground hidden sm:block" />}
+                    {idx < arr.length - 1 && <ArrowRight className="w-5 h-5 text-muted-foreground hidden sm:block" />}
                   </div>
-                ))}
-              </div>
+                ))}              </div>
             </CardContent>
           </Card>
 
@@ -2187,11 +2191,13 @@ export default function ProfitEngine() {
                     <TrendingUp className="w-5 h-5 text-green-500" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Net Profit</p>
+                    <p className="text-sm text-muted-foreground">{isAr ? 'صافي الربح (رسمي)' : 'Net Profit (official)'}</p>
                     <p className={`text-2xl font-bold ${capitalCycleData.netProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                       {formatNumber(capitalCycleData.netProfit)} EGP
                     </p>
-                  </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {isAr ? 'محرك الأرباح — نفس الداشبورد' : 'Profit Engine — same as dashboard'}
+                    </p>                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -2243,7 +2249,7 @@ export default function ProfitEngine() {
               <CardContent className="pt-6">
                 <p className="text-sm text-muted-foreground mb-1">Gross Margin</p>
                 <p className="text-4xl font-bold text-blue-500">{roiData.grossMargin.toFixed(1)}%</p>
-                <p className="text-xs text-muted-foreground mt-1">(Revenue - COGS) / Revenue</p>
+                <p className="text-xs text-muted-foreground mt-1">(Revenue − COGS) / Revenue</p>
               </CardContent>
             </Card>
             <Card className="glass-card border-l-4 border-l-purple-500">
@@ -2265,36 +2271,39 @@ export default function ProfitEngine() {
             <CardContent>
               <div className="space-y-3">
                 <div className="flex justify-between items-center p-3 rounded-lg bg-green-500/5 border border-green-500/20">
-                  <span className="font-medium text-green-500">Revenue (Sales)</span>
+                  <span className="font-medium text-green-500">{isAr ? 'الإيراد (رسمي)' : 'Revenue (official)'}</span>
                   <span className="font-bold text-green-500">+{formatNumber(roiData.totalSales)} EGP</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground">Cost of Goods Sold (COGS)</span>
-                  <span className="font-medium text-red-400">-{formatNumber(roiData.totalPurchases)} EGP</span>
+                  <span className="text-muted-foreground">{isAr ? 'تكلفة البضاعة المباعة (وحدات)' : 'Cost of Goods Sold (units sold)'}</span>
+                  <span className="font-medium text-red-400">-{formatNumber(roiData.totalCogs)} EGP</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-                  <span className="font-medium text-blue-500">Gross Profit</span>
-                  <span className="font-bold text-blue-500">{formatNumber(roiData.totalSales - roiData.totalPurchases)} EGP</span>
+                  <span className="font-medium text-blue-500">{isAr ? 'مجمل الربح' : 'Gross Profit'}</span>
+                  <span className="font-bold text-blue-500">{formatNumber(roiData.totalSales - roiData.totalCogs)} EGP</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground">Operating Expenses</span>
+                  <span className="text-muted-foreground">{isAr ? 'مشتريات الفترة (استثمار مخزون — ليست COGS)' : 'Period purchases (inventory investment — not COGS)'}</span>
+                  <span className="font-medium text-muted-foreground">{formatNumber(roiData.totalPurchases)} EGP</span>
+                </div>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
+                  <span className="text-muted-foreground">{isAr ? 'مصاريف تشغيلية' : 'Operating Expenses'}</span>
                   <span className="font-medium text-red-400">-{formatNumber(roiData.totalExpensesAmt)} EGP</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground">Inventory Losses (Damage/Theft/Expired)</span>
-                  <span className="font-medium text-red-400">-{formatNumber(roiData.totalLosses)} EGP</span>
+                  <span className="text-muted-foreground">{isAr ? 'خسائر مخزون (معلومة — خارج صافي الربح الرسمي)' : 'Inventory losses (info — outside official net)'}</span>
+                  <span className="font-medium text-red-400">{formatNumber(roiData.totalLosses)} EGP</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                  <span className="text-muted-foreground">Returns & Refunds</span>
+                  <span className="text-muted-foreground">{isAr ? 'مرتجعات (ضمن الربح الرسمي)' : 'Returns & refunds (in official P&L)'}</span>
                   <span className="font-medium text-orange-400">-{formatNumber(roiData.totalRefunds)} EGP</span>
                 </div>
                 <div className={`flex justify-between items-center p-4 rounded-lg border-2 ${roiData.netProfit >= 0 ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
-                  <span className="font-bold text-lg">Net Profit</span>
+                  <span className="font-bold text-lg">{isAr ? 'صافي الربح الرسمي' : 'Official Net Profit'}</span>
                   <span className={`font-bold text-xl ${roiData.netProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                     {roiData.netProfit >= 0 ? '+' : ''}{formatNumber(roiData.netProfit)} EGP
                   </span>
-                </div>
-              </div>
+                </div>              </div>
             </CardContent>
           </Card>
 

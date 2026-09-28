@@ -69,7 +69,7 @@ export default function LowStockAlerts() {
     queryFn: async () => {
       const res = await api.get<{ count: number; data: AlertRow[] }>('alerts/low-stock', {
         params: {
-          limit: 100,
+          limit: 500,
           channel_id: channelId ?? undefined,
           vendor_id: vendorId ?? undefined,
         },
@@ -161,7 +161,7 @@ export default function LowStockAlerts() {
             isAr ? 'الحالي' : 'Current',
             isAr ? 'الحد' : 'Minimum',
             isAr ? 'مقترح الطلب' : 'Reorder qty',
-            isAr ? 'المورد' : 'Vendor',
+            isAr ? 'موردون من المشتريات' : 'Vendors (purchases)',
           ],
           rows: visibleRows.map((row) => [
             row.product,
@@ -187,8 +187,8 @@ export default function LowStockAlerts() {
             <h1 className="text-2xl font-bold">{isAr ? 'تنبيهات نقص المخزون' : 'Low-stock alerts'}</h1>
             <p className="text-muted-foreground">
               {isAr
-                ? 'منتجات تحت الحد الأدنى مع كمية إعادة الطلب المقترحة.'
-                : 'Products under minimum with suggested reorder quantities.'}
+                ? 'منتجات تحت الحد الأدنى أو بكمية صفر، مع كمية إعادة الطلب المقترحة. تبويب «الكل» يجمع كل القنوات — للتحقق من المحل اختَر تبويب المحل.'
+                : 'Products under minimum or at zero qty, with suggested reorder. “All” sums every channel — pick a channel tab (e.g. shop) to match that channel’s stock.'}
             </p>
           </div>
         </div>
@@ -231,8 +231,8 @@ export default function LowStockAlerts() {
               </CardTitle>
               <CardDescription>
                 {isAr
-                  ? 'الحد من عمود min_stock أو مواصفات المنتج (min_stock / reorder_point).'
-                  : 'Threshold from min_stock column or product specs (min_stock / reorder_point).'}
+                  ? 'الحد من min_stock أو مواصفات المنتج؛ كمية 0 تظهر حتى لو لم يُضبط حد. عمود الموردين = سجل المشتريات المستلمة.'
+                  : 'Threshold from min_stock or product specs; qty 0 is listed even without a min. Vendors column = received purchase history.'}
               </CardDescription>
             </div>
             <Select
@@ -295,7 +295,7 @@ export default function LowStockAlerts() {
                   </TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => handleSort('vendors')}>
                     <span className="inline-flex items-center gap-1">
-                      {isAr ? 'المورد' : 'Vendor'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('vendors')}
+                      {isAr ? 'موردون من المشتريات' : 'Vendors (purchases)'} <ArrowUpDown className="w-3 h-3" /> {sortIndicator('vendors')}
                     </span>
                   </TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => handleSort('last_movement_at')}>

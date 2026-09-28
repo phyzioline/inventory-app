@@ -189,6 +189,172 @@ describe('Received purchase edit SKU mapping', function () {
         expect($needlesNet)->toBe(15.0);
     });
 
+    it('moves stock off the old product when remapping a received line to a new master/SKU', function () {
+        ChannelStockResolver::clearCache();
+
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $store = Channel::query()->create([
+            'name' => 'المحل',
+            'slug' => 'store-yoga-remap-'.uniqid(),
+            'type' => 'pos',
+            'is_active' => true,
+        ]);
+        $store->update(['user_id' => $user->id]);
+
+        $location = InventoryLocation::query()->create([
+            'name' => 'المحل',
+            'type' => 'physical',
+            'channel_id' => null,
+            'is_active' => true,
+        ]);
+        $location->update(['user_id' => $user->id]);
+
+        $yoga45 = seedStoreSku($user, (int) $store->id, 'رول يوجا 45', 'PHY45-T-'.uniqid());
+        $yoga31 = seedStoreSku($user, (int) $store->id, 'رول يوجا 3*1', 'PHY462-T-'.uniqid());
+
+        $batch = PurchaseBatch::create([
+            'batch_number' => 'PB-YOGA-'.uniqid(),
+            'user_id' => $user->id,
+            'status' => 'received',
+            'location_id' => $location->id,
+            'received_at' => now(),
+            'currency' => 'EGP',
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'grand_total' => 0,
+        ]);
+
+        $line = PurchaseBatchItem::create([
+            'purchase_batch_id' => $batch->id,
+            'master_product_id' => $yoga45['master']->id,
+            'sku_id' => $yoga45['sku']->id,
+            'raw_description' => 'رول يوجا 45',
+            'product_matched' => true,
+            'quantity' => 10,
+            'received_quantity' => 10,
+            'unit_price' => 100,
+            'total_price' => 1000,
+            'batch_cost_id' => 'BC-'.$batch->batch_number,
+        ]);
+
+        $svc = app(PurchaseImportService::class);
+        $svc->applyReceivedStockDelta(
+            $batch,
+            (int) $yoga45['sku']->id,
+            (int) $location->id,
+            10,
+            'seed yoga 45 receive'
+        );
+
+        $this->putJson("/api/inventory/purchases/smart-import/batches/{$batch->id}", [
+            'items' => [[
+                'id' => $line->id,
+                'master_product_id' => $yoga31['master']->id,
+                // Stale SKU from the old product — server must reject and resolve the new one.
+                'sku_id' => $yoga45['sku']->id,
+                'quantity' => 10,
+                'unit_price' => 100,
+                'raw_description' => 'رول يوجا 3*1',
+            ]],
+        ])->assertOk();
+
+        expect((int) $line->fresh()->master_product_id)->toBe((int) $yoga31['master']->id);
+        expect((int) $line->fresh()->sku_id)->toBe((int) $yoga31['sku']->id);
+
+        $oldQty = (float) SkuInventory::query()
+            ->where('sku_id', $yoga45['sku']->id)
+            ->where('location_id', $location->id)
+            ->value('quantity');
+        $newQty = (float) SkuInventory::query()
+            ->where('sku_id', $yoga31['sku']->id)
+            ->where('location_id', $location->id)
+            ->value('quantity');
+
+        expect($oldQty)->toBe(0.0);
+        expect($newQty)->toBe(10.0);
+    });
+
+    it('reverses old SKU then posts new qty when remapping with a quantity change', function () {
+        ChannelStockResolver::clearCache();
+
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $store = Channel::query()->create([
+            'name' => 'المحل',
+            'slug' => 'store-yoga-qty-'.uniqid(),
+            'type' => 'pos',
+            'is_active' => true,
+        ]);
+        $store->update(['user_id' => $user->id]);
+
+        $location = InventoryLocation::query()->create([
+            'name' => 'المحل',
+            'type' => 'physical',
+            'channel_id' => null,
+            'is_active' => true,
+        ]);
+        $location->update(['user_id' => $user->id]);
+
+        $yoga45 = seedStoreSku($user, (int) $store->id, 'رول يوجا 45', 'PHY45Q-T-'.uniqid());
+        $yoga31 = seedStoreSku($user, (int) $store->id, 'رول يوجا 3*1', 'PHY462Q-T-'.uniqid());
+
+        $batch = PurchaseBatch::create([
+            'batch_number' => 'PB-YOGAQ-'.uniqid(),
+            'user_id' => $user->id,
+            'status' => 'received',
+            'location_id' => $location->id,
+            'received_at' => now(),
+            'currency' => 'EGP',
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'grand_total' => 0,
+        ]);
+
+        $line = PurchaseBatchItem::create([
+            'purchase_batch_id' => $batch->id,
+            'master_product_id' => $yoga45['master']->id,
+            'sku_id' => $yoga45['sku']->id,
+            'raw_description' => 'رول يوجا 45',
+            'product_matched' => true,
+            'quantity' => 10,
+            'received_quantity' => 10,
+            'unit_price' => 100,
+            'total_price' => 1000,
+            'batch_cost_id' => 'BC-'.$batch->batch_number,
+        ]);
+
+        app(PurchaseImportService::class)->applyReceivedStockDelta(
+            $batch,
+            (int) $yoga45['sku']->id,
+            (int) $location->id,
+            10,
+            'seed yoga 45 receive'
+        );
+
+        $this->putJson("/api/inventory/purchases/smart-import/batches/{$batch->id}", [
+            'items' => [[
+                'id' => $line->id,
+                'master_product_id' => $yoga31['master']->id,
+                'sku_id' => $yoga31['sku']->id,
+                'quantity' => 15,
+                'unit_price' => 100,
+                'raw_description' => 'رول يوجا 3*1',
+            ]],
+        ])->assertOk();
+
+        expect((float) SkuInventory::query()
+            ->where('sku_id', $yoga45['sku']->id)
+            ->where('location_id', $location->id)
+            ->value('quantity'))->toBe(0.0);
+        expect((float) SkuInventory::query()
+            ->where('sku_id', $yoga31['sku']->id)
+            ->where('location_id', $location->id)
+            ->value('quantity'))->toBe(15.0);
+    });
+
     it('does not double-post stock when older purchase movements used the monolith class name', function () {
         ChannelStockResolver::clearCache();
 
@@ -272,5 +438,141 @@ describe('Received purchase edit SKU mapping', function () {
             ->where('sku_id', $needles['sku']->id)
             ->where('location_id', $location->id)
             ->value('quantity'))->toBe(18.0);
+    });
+
+    it('repair removes orphan stock left on the old SKU after a remap', function () {
+        ChannelStockResolver::clearCache();
+
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $store = Channel::query()->create([
+            'name' => 'المحل',
+            'slug' => 'store-repair-remap-'.uniqid(),
+            'type' => 'pos',
+            'is_active' => true,
+        ]);
+        $store->update(['user_id' => $user->id]);
+
+        $location = InventoryLocation::query()->create([
+            'name' => 'المحل',
+            'type' => 'physical',
+            'channel_id' => null,
+            'is_active' => true,
+        ]);
+        $location->update(['user_id' => $user->id]);
+
+        $old = seedStoreSku($user, (int) $store->id, 'رول يوجا 45', 'PHY45-R-'.uniqid());
+        $new = seedStoreSku($user, (int) $store->id, 'رول يوجا 3*1', 'PHY462-R-'.uniqid());
+
+        $batch = PurchaseBatch::create([
+            'batch_number' => 'PB-REPAIR-'.uniqid(),
+            'user_id' => $user->id,
+            'status' => 'received',
+            'location_id' => $location->id,
+            'received_at' => now(),
+            'currency' => 'EGP',
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'grand_total' => 0,
+        ]);
+
+        PurchaseBatchItem::create([
+            'purchase_batch_id' => $batch->id,
+            'master_product_id' => $new['master']->id,
+            'sku_id' => $new['sku']->id,
+            'raw_description' => 'رول يوجا 3*1',
+            'product_matched' => true,
+            'quantity' => 10,
+            'received_quantity' => 10,
+            'unit_price' => 100,
+            'total_price' => 1000,
+            'batch_cost_id' => 'BC-'.$batch->batch_number,
+        ]);
+
+        $svc = app(PurchaseImportService::class);
+        $svc->applyReceivedStockDelta($batch, (int) $old['sku']->id, (int) $location->id, 10, 'orphan old');
+        $svc->applyReceivedStockDelta($batch, (int) $new['sku']->id, (int) $location->id, 10, 'new already posted');
+
+        $result = $svc->repairReceivedBatchStockToMatchLines($batch->fresh(['items.sku']), false);
+        expect($result['changes'])->not->toBeEmpty();
+        expect(collect($result['changes'])->every(fn ($c) => ($c['status'] ?? '') === 'fixed'))->toBeTrue();
+
+        expect((float) SkuInventory::query()
+            ->where('sku_id', $old['sku']->id)
+            ->where('location_id', $location->id)
+            ->value('quantity'))->toBe(0.0);
+        expect((float) SkuInventory::query()
+            ->where('sku_id', $new['sku']->id)
+            ->where('location_id', $location->id)
+            ->value('quantity'))->toBe(10.0);
+        expect($svc->diffReceivedBatchStockVsLines($batch->fresh(['items.sku'])))->toBe([]);
+    });
+
+    it('classifies orphan excess and asserts receive ledger gate', function () {
+        ChannelStockResolver::clearCache();
+
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $store = Channel::query()->create([
+            'name' => 'المحل',
+            'slug' => 'store-assert-'.uniqid(),
+            'type' => 'pos',
+            'is_active' => true,
+        ]);
+        $store->update(['user_id' => $user->id]);
+
+        $location = InventoryLocation::query()->create([
+            'name' => 'المحل',
+            'type' => 'physical',
+            'channel_id' => null,
+            'is_active' => true,
+        ]);
+        $location->update(['user_id' => $user->id]);
+
+        $old = seedStoreSku($user, (int) $store->id, 'Old', 'OLD-'.uniqid());
+        $new = seedStoreSku($user, (int) $store->id, 'New', 'NEW-'.uniqid());
+
+        $batch = PurchaseBatch::create([
+            'batch_number' => 'PB-ASSERT-'.uniqid(),
+            'user_id' => $user->id,
+            'status' => 'received',
+            'location_id' => $location->id,
+            'received_at' => now(),
+            'currency' => 'EGP',
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'grand_total' => 0,
+        ]);
+
+        PurchaseBatchItem::create([
+            'purchase_batch_id' => $batch->id,
+            'master_product_id' => $new['master']->id,
+            'sku_id' => $new['sku']->id,
+            'raw_description' => 'New',
+            'product_matched' => true,
+            'quantity' => 5,
+            'received_quantity' => 5,
+            'unit_price' => 10,
+            'total_price' => 50,
+            'batch_cost_id' => 'BC-'.$batch->batch_number,
+        ]);
+
+        $svc = app(PurchaseImportService::class);
+        $svc->applyReceivedStockDelta($batch, (int) $old['sku']->id, (int) $location->id, 5, 'orphan');
+        $svc->applyReceivedStockDelta($batch, (int) $new['sku']->id, (int) $location->id, 5, 'current');
+
+        $classified = $svc->classifyReceivedBatchLedgerDiffs($batch->fresh(['items.sku']));
+        expect($classified)->not->toBeEmpty();
+        expect(collect($classified)->pluck('category')->contains('orphan_excess')
+            || collect($classified)->pluck('category')->contains('multi_sku_batch'))->toBeTrue();
+
+        expect(fn () => $svc->assertReceivedBatchLedgerMatchesLines($batch->fresh(['items.sku']), true))
+            ->toThrow(\Exception::class);
+
+        $svc->repairReceivedBatchStockToMatchLines($batch->fresh(['items.sku']), false);
+        $svc->assertReceivedBatchLedgerMatchesLines($batch->fresh(['items.sku']), false);
+        expect($svc->diffReceivedBatchStockVsLines($batch->fresh(['items.sku'])))->toBe([]);
     });
 });

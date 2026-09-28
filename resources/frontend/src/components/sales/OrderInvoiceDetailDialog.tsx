@@ -306,6 +306,18 @@ export function OrderInvoiceDetailDialog({ order, open, onOpenChange, startEditi
       toast.error(isAr ? 'يوجد بند فارغ — اختر منتجًا أو احذفه.' : 'There is an empty item — pick a product or remove it.');
       return;
     }
+    const missingSku = (localOrder.items || []).some((it: any) => {
+      const sid = it?._sku_id ?? it?.sku_id ?? it?.product_id ?? it?.sku?.id ?? null;
+      return !sid;
+    });
+    if (missingSku) {
+      toast.error(
+        isAr
+          ? 'كل بند يجب أن يكون مربوطًا بـ SKU قبل الحفظ — اختر المنتج من القائمة.'
+          : 'Each line must have a SKU before saving — pick the product from the list.'
+      );
+      return;
+    }
     setIsSaving(true);
     try {
       const { total, paid, remaining, discount, tax } = computeTotalsFromItems(localOrder);
@@ -318,14 +330,18 @@ export function OrderInvoiceDetailDialog({ order, open, onOpenChange, startEditi
         paid_amount: paid,
         remaining_amount: remaining,
         total_amount: total,
-        items: (localOrder.items || []).map((it: any) => ({
-          id: it?._new ? undefined : (it?.id ?? undefined),
-          product_id: it?._sku_id ?? it?.product_id ?? it?.sku_id ?? it?.sku?.id ?? null,
-          sku_code: it?.sku_code ?? undefined,
-          product_name: it?.product_name ?? undefined,
-          quantity: toNumber(it?.quantity),
-          unit_price: toNumber(it?.unit_price),
-        })),
+        items: (localOrder.items || []).map((it: any) => {
+          const skuId = it?._sku_id ?? it?.sku_id ?? it?.product_id ?? it?.sku?.id ?? null;
+          return {
+            id: it?._new ? undefined : (it?.id ?? undefined),
+            product_id: skuId,
+            sku_id: skuId,
+            sku_code: it?.sku_code ?? undefined,
+            product_name: it?.product_name ?? undefined,
+            quantity: toNumber(it?.quantity),
+            unit_price: toNumber(it?.unit_price),
+          };
+        }),
       };
 
       await api.put(`orders/${localOrder.id}`, payload);
@@ -595,10 +611,14 @@ export function OrderInvoiceDetailDialog({ order, open, onOpenChange, startEditi
                                         key={row.id}
                                         value={row.id}
                                         onSelect={() => {
+                                          const nextSkuId = row.sku_id ? Number(row.sku_id) : null;
                                           setLocalOrderItem(idx, {
                                             product_name: row.product_name,
                                             sku_code: row.sku_code,
-                                            _sku_id: row.sku_id ? Number(row.sku_id) : null,
+                                            _sku_id: nextSkuId,
+                                            // Keep sku_id in sync so save payload never falls back to the previous product.
+                                            sku_id: nextSkuId,
+                                            product_id: nextSkuId,
                                           });
                                           setProductSearchByRow((prev) => ({ ...prev, [idx]: '' }));
                                           setRowPickerOpen((prev) => ({ ...prev, [idx]: false }));

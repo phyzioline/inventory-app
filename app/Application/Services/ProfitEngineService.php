@@ -959,29 +959,31 @@ class ProfitEngineService
     }
 
     /**
-     * Aggregated metrics for ROI / capital-cycle screens (no full order or purchase list load).
+     * ROI / capital-cycle metrics.
+     * Accrual P&L (revenue, COGS, refunds, expenses, net_profit) comes from getProfitSummary —
+     * the same source as the dashboard. Purchase invoice totals are money-flow only and never enter net_profit.
      *
-     * @return array<string, float|array<string, float>>
+     * @return array<string, float|int|array<string, float>>
      */
     public function getRoiMetrics(array $filters = []): array
     {
         $totalCapital = (float) CapitalSource::query()->sum('amount');
 
-        $ordersQuery = InventoryOrder::query()
-            ->whereIn('status', ['completed', 'processing', 'shipped', 'sold', 'delivered'])
-            ->where(function ($q) {
-                $q->whereNull('financial_status')
-                    ->orWhere('financial_status', '<>', 'cancelled');
-            });
-        if (Auth::check()) {
-            $ordersQuery->where('user_id', Auth::id());
-        }
-        if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
-            [$startAt, $endAt] = $this->normalizeRange((string) $filters['start_date'], (string) $filters['end_date']);
-            $ordersQuery->whereBetween('order_date', [$startAt, $endAt]);
-        }
-        $totalSales = (float) $ordersQuery->sum('total_amount');
+        $startDate = ! empty($filters['start_date']) ? (string) $filters['start_date'] : '2000-01-01';
+        $endDate = ! empty($filters['end_date']) ? (string) $filters['end_date'] : now()->toDateString();
 
+        $summary = $this->getProfitSummary($startDate, $endDate, array_merge($filters, [
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+        ]));
+
+        $revenue = (float) ($summary['revenue'] ?? $summary['total_revenue'] ?? 0);
+        $cogs = (float) ($summary['cogs'] ?? $summary['total_cogs'] ?? 0);
+        $expensesAmt = (float) ($summary['expenses'] ?? $summary['total_expenses'] ?? 0);
+        $refunds = (float) ($summary['refunds'] ?? 0);
+        $netProfit = (float) ($summary['net_profit'] ?? 0);
+
+        // Purchases = inventory investment in the period (not COGS).
         $purchasesQuery = PurchaseBatch::query()
             ->whereRaw("LOWER(COALESCE(status, '')) <> 'cancelled'");
         if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
@@ -993,16 +995,6 @@ class ProfitEngineService
         }
         $totalPurchases = (float) $purchasesQuery->sum(DB::raw('COALESCE(grand_total, subtotal, 0)'));
 
-        $expensesQuery = Expense::query();
-        if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
-            [$startAt, $endAt] = $this->normalizeRange((string) $filters['start_date'], (string) $filters['end_date']);
-            $expensesQuery->whereBetween('expense_date', [
-                Carbon::parse($startAt)->toDateString(),
-                Carbon::parse($endAt)->toDateString(),
-            ]);
-        }
-        $totalExpensesAmt = (float) $expensesQuery->sum('amount');
-
         $lossesQuery = InventoryAdjustment::query();
         if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
             [$startAt, $endAt] = $this->normalizeRange((string) $filters['start_date'], (string) $filters['end_date']);
@@ -1010,23 +1002,10 @@ class ProfitEngineService
         }
         $totalLosses = (float) $lossesQuery->sum('total_loss_amount');
 
-        $refundsQuery = InventoryReturn::query()
-            ->whereNotNull('refund_amount')
-            ->where('refund_amount', '>', 0);
-        if (! empty($filters['start_date']) && ! empty($filters['end_date'])) {
-            [$startAt, $endAt] = $this->normalizeRange((string) $filters['start_date'], (string) $filters['end_date']);
-            $refundsQuery->whereBetween('return_date', [
-                Carbon::parse($startAt)->toDateString(),
-                Carbon::parse($endAt)->toDateString(),
-            ]);
-        }
-        $totalRefunds = (float) $refundsQuery->sum('refund_amount');
-
-        $netProfit = $totalSales - $totalPurchases - $totalExpensesAmt - $totalLosses - $totalRefunds;
         $roi = $totalCapital > 0 ? ($netProfit / $totalCapital) * 100 : 0.0;
-        $grossMargin = $totalSales > 0 ? (($totalSales - $totalPurchases) / $totalSales) * 100 : 0.0;
-        $netMargin = $totalSales > 0 ? ($netProfit / $totalSales) * 100 : 0.0;
-        $rotationDays = $totalSales > 0 ? (int) round(($totalPurchases / $totalSales) * 365) : 0;
+        $grossMargin = $revenue > 0 ? (($revenue - $cogs) / $revenue) * 100 : 0.0;
+        $netMargin = $revenue > 0 ? ($netProfit / $revenue) * 100 : 0.0;
+        $rotationDays = $revenue > 0 ? (int) round(($totalPurchases / $revenue) * 365) : 0;
 
         $expensesByCategory = Expense::query()
             ->when(! empty($filters['start_date']) && ! empty($filters['end_date']), function ($q) use ($filters) {
@@ -1044,25 +1023,33 @@ class ProfitEngineService
 
         return [
             'total_capital' => round($totalCapital, 2),
-            'total_sales' => round($totalSales, 2),
-            'total_purchases' => round($totalPurchases, 2),
-            'total_expenses' => round($totalExpensesAmt, 2),
-            'total_losses' => round($totalLosses, 2),
-            'total_refunds' => round($totalRefunds, 2),
+            // Accrual P&L (canonical — matches /reports/profit-summary)
+            'revenue' => round($revenue, 2),
+            'total_sales' => round($revenue, 2), // UI compat
+            'cogs' => round($cogs, 2),
+            'total_cogs' => round($cogs, 2),
+            'total_expenses' => round($expensesAmt, 2),
+            'total_refunds' => round($refunds, 2),
             'net_profit' => round($netProfit, 2),
+            'margin' => $revenue > 0 ? round(($netProfit / $revenue) * 100, 2) : 0.0,
             'roi' => round($roi, 2),
             'gross_margin' => round($grossMargin, 2),
             'net_margin' => round($netMargin, 2),
-            'rotation_days' => $rotationDays,
+            // Money-flow / inventory investment (not used in net_profit)
+            'total_purchases' => round($totalPurchases, 2),
             'purchased_inventory' => round($totalPurchases, 2),
-            'cash_in_hand' => round($totalCapital - $totalPurchases + $totalSales - $totalExpensesAmt, 2),
+            'total_losses' => round($totalLosses, 2),
+            'rotation_days' => $rotationDays,
+            'cash_in_hand' => round($totalCapital - $totalPurchases + $revenue - $expensesAmt, 2),
             'expenses_by_category' => $expensesByCategory,
+            'period_start' => $startDate,
+            'period_end' => $endDate,
         ];
     }
 
     /**
-     * Cash-based period profit: all receipts (receipt_date) − COGS for receipt-linked SKUs − expenses (expense_date).
-     * COGS uses master-product purchase cost × qty for SKUs tied to receipt-linked orders/settlements (not every order line in the period).
+     * Cash-based period result: receipts − receipt-linked COGS − expenses.
+     * Not the official net profit — use getProfitSummary for accrual P&L.
      */
     public function getCashProfitSnapshot(string $startDate, string $endDate): array
     {
@@ -1182,6 +1169,9 @@ class ProfitEngineService
             'total_receipts' => $totalReceipts,
             'total_cogs' => $totalCogs,
             'total_expenses' => $totalExpenses,
+            // Canonical name for cash-basis result (not official accrual net profit).
+            'cash_period_result' => $netProfit,
+            // Deprecated alias — same value as cash_period_result; prefer cash_period_result in new UI.
             'net_profit' => $netProfit,
             'receipt_count' => $receipts->count(),
             'linked_order_count' => $linkedOrderCount,

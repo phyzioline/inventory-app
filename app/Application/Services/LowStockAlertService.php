@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 /**
  * Low-stock / reorder alerts for the current tenant.
  * Uses master_products.min_stock column, falling back to specifications.min_stock / reorder_point.
+ * Also includes zero/negative quantity products even when no minimum is configured.
  */
 class LowStockAlertService
 {
@@ -27,7 +28,7 @@ class LowStockAlertService
      *   vendors: ?string
      * }>
      */
-    public function alerts(int $limit = 50, ?int $channelId = null, ?int $vendorId = null): array
+    public function alerts(int $limit = 200, ?int $channelId = null, ?int $vendorId = null): array
     {
         if (! Schema::hasTable('sku_inventory') || ! Schema::hasTable('master_products')) {
             return [];
@@ -50,6 +51,8 @@ class LowStockAlertService
                 COALESCE((MAX(mp.specifications::text)::jsonb->>'min_stock')::numeric, 0),
                 COALESCE((MAX(mp.specifications::text)::jsonb->>'reorder_point')::numeric, 0)
               )";
+
+        $qtyExpr = 'COALESCE(SUM(si.quantity), 0)';
 
         $hasTransactions = Schema::hasTable('inventory_transactions');
         // Real purchase history (what a vendor has actually supplied), not supplier_product_aliases —
@@ -82,11 +85,16 @@ class LowStockAlertService
 
         $rows = DB::table('master_products as mp')
             ->leftJoin('inventory_offers as o', 'o.master_product_id', '=', 'mp.id')
-            ->leftJoin('skus as s', 's.offer_id', '=', 'o.id')
+            ->leftJoin('skus as s', function ($join) use ($channelId) {
+                $join->on('s.offer_id', '=', 'o.id');
+                if ($channelId) {
+                    $join->where('s.channel_id', '=', $channelId);
+                }
+            })
             ->leftJoin('sku_inventory as si', 'si.sku_id', '=', 's.id')
             ->where('mp.user_id', $tenantId)
             ->when(Schema::hasColumn('master_products', 'deleted_at'), fn ($q) => $q->whereNull('mp.deleted_at'))
-            ->when($channelId, fn ($q) => $q->where('s.channel_id', $channelId))
+            ->when($channelId, fn ($q) => $q->whereNotNull('s.id'))
             ->when($vendorId && $hasPurchaseHistory, fn ($q) => $q->whereIn('mp.id', function ($sub) use ($vendorId) {
                 $sub->selectRaw('COALESCE(pbi.master_product_id, pbi_io.master_product_id)')
                     ->from('purchase_batch_items as pbi')
@@ -103,14 +111,14 @@ class LowStockAlertService
                 "MAX(mp.internal_name) as internal_name, ".
                 "(MAX(mp.specifications::text))::jsonb as specifications, ".
                 ($hasMinStockCol ? "MAX(mp.min_stock) as min_stock_col, " : "NULL::numeric as min_stock_col, ").
-                "COALESCE(SUM(si.quantity), 0) as total_qty, ".
+                "{$qtyExpr} as total_qty, ".
                 "MIN(s.sku) as sku, ".
                 "{$minExpr} as threshold, ".
                 "{$lastMovementExpr}, ".
                 "{$vendorNamesExpr}"
             )
-            ->havingRaw("{$minExpr} > 0")
-            ->havingRaw("COALESCE(SUM(si.quantity), 0) < {$minExpr}")
+            // Below configured minimum, OR zero/negative qty even when no minimum is set.
+            ->havingRaw("(({$minExpr} > 0 AND {$qtyExpr} < {$minExpr}) OR ({$qtyExpr} <= 0))")
             ->orderBy('total_qty')
             ->limit($limit)
             ->get();
@@ -122,8 +130,12 @@ class LowStockAlertService
             $minCol = (float) ($row->min_stock_col ?? 0);
             $minSpec = (float) ($specs['min_stock'] ?? 0);
             $reorder = (float) ($specs['reorder_point'] ?? 0);
-            $minimum = max($minCol, $minSpec, $reorder);
+            $configuredMinimum = max($minCol, $minSpec, $reorder);
             $current = round((float) $row->total_qty, 2);
+            // Zero/negative stock with no configured min still needs a usable reorder suggestion.
+            $minimum = ($configuredMinimum <= 0 && $current <= 0)
+                ? 1.0
+                : $configuredMinimum;
             $suggested = max(0, round($minimum - $current, 2));
 
             return [

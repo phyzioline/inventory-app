@@ -130,6 +130,27 @@ polls forever. Stale `queued` jobs auto-fail after 120s.
 
 ---
 
+## Inventory artisan commands — wrong project trap
+
+**Always** run `php artisan inventory:*` from this app only:
+
+```bash
+cd /home/phyzioline-inventory/htdocs/inventory.phyzioline.com
+pwd && git remote -v   # must show inventory-app.git
+```
+
+Do **not** run these from `/home/phyzioline/htdocs/phyzioline.com` (laravel-phyzio /
+`Modules/Ecommerce`). That tree has different `inventory:*` commands (e.g.
+`inventory:check-low-stock`) and will say `repair-received-purchase-sku-remap` is
+undefined.
+
+| Command | Purpose |
+|---|---|
+| `inventory:repair-received-purchase-sku-remap` | Dry-run / `--apply` orphan stock after SKU remap on received POs |
+| `inventory:audit-purchase-receive-ledger` | Classify receive ledger drift (orphans, shortfalls, legacy morph) — no auto-fill |
+
+---
+
 # AI AGENT EXECUTION RULES (MANDATORY)
 
 These rules override all other instructions. Violation = failed implementation.

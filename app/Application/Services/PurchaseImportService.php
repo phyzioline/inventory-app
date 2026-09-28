@@ -422,7 +422,11 @@ class PurchaseImportService
             'received_at' => now(),
         ]);
 
-        return $batch->refresh()->load('items.masterProduct', 'items.sku');
+        $fresh = $batch->refresh()->load('items.masterProduct', 'items.sku');
+        // Bank-grade: a freshly received batch must have ledger nets matching line quantities.
+        $this->assertReceivedBatchLedgerMatchesLines($fresh, false);
+
+        return $fresh;
     }
 
     /**
@@ -664,8 +668,363 @@ class PurchaseImportService
     }
 
     /**
+     * Where this received line's stock currently lives (batch IN matching the line master, else line sku_id).
+     * Call BEFORE mutating master_product_id / sku_id on the line.
+     */
+    public function resolvePostedSkuIdForReceivedLine(PurchaseBatch $batch, PurchaseBatchItem $item): ?int
+    {
+        $postedSkuId = $this->findBatchPostedSkuIdForItem($batch, $item);
+        if ($postedSkuId && $postedSkuId > 0) {
+            return $postedSkuId;
+        }
+
+        $lineSkuId = (int) ($item->sku_id ?? 0);
+
+        return $lineSkuId > 0 ? $lineSkuId : null;
+    }
+
+    /**
+     * Apply stock for one received-line edit.
+     * Same SKU → quantity delta only. Different SKU → reverse the previous line qty, then post the new qty.
+     * Never clears another line's batch stock on the old SKU (uses line qty, not full batch net).
+     */
+    public function applyReceivedLineStockChange(
+        PurchaseBatch $batch,
+        int $receiveLocationId,
+        ?int $fromSkuId,
+        float $fromQty,
+        int $toSkuId,
+        float $toQty,
+        ?string $note = null
+    ): void {
+        if ($receiveLocationId <= 0 || $toSkuId <= 0) {
+            return;
+        }
+
+        $note = $note ?: "Purchase batch {$batch->batch_number} line stock change";
+        $fromSkuId = $fromSkuId && $fromSkuId > 0 ? (int) $fromSkuId : null;
+
+        if ($fromSkuId !== null && $fromSkuId === $toSkuId) {
+            $delta = (float) $toQty - (float) $fromQty;
+            if (abs($delta) > 0.0000001) {
+                $this->applyReceivedStockDelta($batch, $toSkuId, $receiveLocationId, $delta, $note);
+            }
+
+            return;
+        }
+
+        if ($fromSkuId !== null && (float) $fromQty > 0.0000001) {
+            $this->applyReceivedStockDelta(
+                $batch,
+                $fromSkuId,
+                $receiveLocationId,
+                -((float) $fromQty),
+                $note.' (reverse previous product/SKU)'
+            );
+        }
+
+        if ((float) $toQty > 0.0000001) {
+            $this->applyReceivedStockDelta(
+                $batch,
+                $toSkuId,
+                $receiveLocationId,
+                (float) $toQty,
+                $note.' (apply new product/SKU)'
+            );
+        }
+    }
+
+    /**
+     * Diff current received-line quantities (by SKU) vs net stock posted for this batch.
+     * Positive delta = stock short of what lines claim (need IN). Negative = orphan/excess posted stock (need OUT).
+     *
+     * @return list<array{
+     *   sku_id: int,
+     *   sku_code: string,
+     *   expected: float,
+     *   posted: float,
+     *   delta: float
+     * }>
+     */
+    public function diffReceivedBatchStockVsLines(PurchaseBatch $batch): array
+    {
+        $batch->loadMissing(['items.sku']);
+
+        /** @var array<int, float> $expected */
+        $expected = [];
+        foreach ($batch->items as $item) {
+            $skuId = (int) ($item->sku_id ?? 0);
+            if ($skuId <= 0) {
+                continue;
+            }
+            $qty = (float) ($item->received_quantity ?? $item->quantity ?? 0);
+            $expected[$skuId] = ($expected[$skuId] ?? 0.0) + $qty;
+        }
+
+        $postedSkuIds = InventoryTransaction::query()
+            ->whereIn('reference_type', $this->purchaseBatchTransactionReferenceTypes())
+            ->where('reference_id', $batch->id)
+            ->distinct()
+            ->pluck('sku_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->all();
+
+        $allSkuIds = array_values(array_unique(array_merge(array_keys($expected), $postedSkuIds)));
+        $diffs = [];
+
+        foreach ($allSkuIds as $skuId) {
+            $skuId = (int) $skuId;
+            $posted = $this->netBatchStockPostedForSku($batch, $skuId);
+            $exp = (float) ($expected[$skuId] ?? 0.0);
+            $delta = $exp - $posted;
+            if (abs($delta) <= 0.0000001) {
+                continue;
+            }
+
+            $skuCode = (string) (Sku::query()->whereKey($skuId)->value('sku') ?: $skuId);
+            $diffs[] = [
+                'sku_id' => $skuId,
+                'sku_code' => $skuCode,
+                'expected' => round($exp, 4),
+                'posted' => round($posted, 4),
+                'delta' => round($delta, 4),
+            ];
+        }
+
+        return $diffs;
+    }
+
+    /**
+     * Classify receive-ledger drift for audits (no stock writes).
+     *
+     * @return list<array{
+     *   sku_id: int,
+     *   sku_code: string,
+     *   expected: float,
+     *   posted: float,
+     *   delta: float,
+     *   category: string
+     * }>
+     */
+    public function classifyReceivedBatchLedgerDiffs(PurchaseBatch $batch): array
+    {
+        $hasLegacyMorph = InventoryTransaction::query()
+            ->where('reference_type', 'Modules\\Inventory\\app\\Domain\\Models\\Wms\\PurchaseBatch')
+            ->where('reference_id', $batch->id)
+            ->exists();
+
+        $classified = [];
+        foreach ($this->diffReceivedBatchStockVsLines($batch) as $diff) {
+            $expected = (float) ($diff['expected'] ?? 0);
+            $posted = (float) ($diff['posted'] ?? 0);
+            $delta = (float) ($diff['delta'] ?? 0);
+
+            if ($delta < -0.0000001) {
+                $category = $expected <= 0.0000001 ? 'orphan_excess' : 'over_posted';
+            } elseif ($delta > 0.0000001 && $posted <= 0.0000001) {
+                $category = 'shortfall_zero_posted';
+            } elseif ($delta > 0.0000001) {
+                $category = 'shortfall_partial';
+            } else {
+                continue;
+            }
+
+            if ($hasLegacyMorph && in_array($category, ['shortfall_zero_posted', 'shortfall_partial'], true)) {
+                $category = 'legacy_morph_candidate';
+            }
+
+            $classified[] = array_merge($diff, ['category' => $category]);
+        }
+
+        $postedSkuCount = InventoryTransaction::query()
+            ->whereIn('reference_type', $this->purchaseBatchTransactionReferenceTypes())
+            ->where('reference_id', $batch->id)
+            ->distinct()
+            ->pluck('sku_id')
+            ->filter(fn ($id) => (int) $id > 0)
+            ->unique()
+            ->count();
+        $lineSkuCount = $batch->items
+            ->pluck('sku_id')
+            ->filter(fn ($id) => (int) $id > 0)
+            ->unique()
+            ->count();
+        if ($postedSkuCount > 1 && $lineSkuCount > 0 && $postedSkuCount !== $lineSkuCount) {
+            foreach ($classified as &$row) {
+                if (($row['category'] ?? '') === 'orphan_excess') {
+                    $row['category'] = 'multi_sku_batch';
+                }
+            }
+            unset($row);
+        }
+
+        return $classified;
+    }
+
+    /**
+     * Fail when received-batch stock ledger does not match current line quantities.
+     *
+     * @param  bool  $orphansOnly  When true (edits on legacy batches), only orphan/excess fails;
+     *                             pre-existing shortfall_zero_posted is allowed until classified repair.
+     *
+     * @throws \Exception
+     */
+    public function assertReceivedBatchLedgerMatchesLines(PurchaseBatch $batch, bool $orphansOnly = false): void
+    {
+        if ((string) $batch->status !== 'received') {
+            return;
+        }
+
+        $diffs = $this->diffReceivedBatchStockVsLines($batch->loadMissing('items.sku'));
+        if ($orphansOnly) {
+            $diffs = array_values(array_filter(
+                $diffs,
+                fn (array $d) => (float) ($d['delta'] ?? 0) < -0.0000001
+            ));
+        }
+
+        if ($diffs === []) {
+            return;
+        }
+
+        $sample = collect($diffs)->take(3)->map(function (array $d) {
+            return sprintf(
+                '%s expected=%s posted=%s delta=%s',
+                $d['sku_code'] ?? $d['sku_id'],
+                $d['expected'] ?? 0,
+                $d['posted'] ?? 0,
+                $d['delta'] ?? 0
+            );
+        })->implode('; ');
+
+        throw new \Exception(
+            'عدم اتساق دفتر استلام المشتريات مع بنود الفاتورة: '.$sample
+            .' — صلّح الحركات أو أعد الاستلام قبل المتابعة.'
+        );
+    }
+
+    /**
+     * Align inventory ledger for a received batch to match current line SKU quantities.
+     * Fixes pre-fix remaps that left stock on the old SKU while also posting to the new one.
+     *
+     * @return array{
+     *   batch_id: int,
+     *   batch_number: string,
+     *   dry_run: bool,
+     *   changes: list<array{sku_id: int, sku_code: string, expected: float, posted: float, delta: float, status: string, error?: string}>
+     * }
+     */
+    public function repairReceivedBatchStockToMatchLines(
+        PurchaseBatch $batch,
+        bool $dryRun = true,
+        ?array $onlyDiffs = null
+    ): array {
+        $locationId = (int) ($batch->location_id ?? 0);
+        $diffs = $onlyDiffs ?? $this->diffReceivedBatchStockVsLines($batch);
+        $changes = [];
+
+        foreach ($diffs as $diff) {
+            $row = array_merge($diff, ['status' => $dryRun ? 'would_fix' : 'fixed']);
+
+            if ($locationId <= 0) {
+                $row['status'] = 'error';
+                $row['error'] = 'Batch missing location_id';
+                $changes[] = $row;
+
+                continue;
+            }
+
+            if ($dryRun) {
+                $changes[] = $row;
+
+                continue;
+            }
+
+            try {
+                $this->applyReceivedStockDelta(
+                    $batch,
+                    (int) $diff['sku_id'],
+                    $locationId,
+                    (float) $diff['delta'],
+                    "Repair received purchase SKU remap drift — batch {$batch->batch_number}"
+                );
+            } catch (\Throwable $e) {
+                // Orphan stock already sold/transferred: align batch ledger only so audits stop flagging it.
+                $delta = (float) $diff['delta'];
+                if ($delta < -0.0000001) {
+                    try {
+                        $this->writeReceivedBatchLedgerOnlyCorrection(
+                            $batch,
+                            (int) $diff['sku_id'],
+                            $locationId,
+                            $delta,
+                            "Repair received purchase SKU remap drift (ledger-only; on-hand already consumed) — batch {$batch->batch_number}"
+                        );
+                        $row['status'] = 'fixed_ledger_only';
+                        $row['error'] = $e->getMessage();
+                    } catch (\Throwable $ledgerError) {
+                        $row['status'] = 'error';
+                        $row['error'] = $e->getMessage().' | ledger: '.$ledgerError->getMessage();
+                    }
+                } else {
+                    $row['status'] = 'error';
+                    $row['error'] = $e->getMessage();
+                }
+            }
+
+            $changes[] = $row;
+        }
+
+        return [
+            'batch_id' => (int) $batch->id,
+            'batch_number' => (string) ($batch->batch_number ?? $batch->id),
+            'dry_run' => $dryRun,
+            'changes' => $changes,
+        ];
+    }
+
+    /**
+     * Post a PurchaseBatch-referenced IN/OUT that does not change SkuInventory.
+     * Used when orphan remap stock was already sold so on-hand cannot be reversed,
+     * but the batch net still needs to match current line quantities for audits.
+     */
+    public function writeReceivedBatchLedgerOnlyCorrection(
+        PurchaseBatch $batch,
+        int $skuId,
+        int $locationId,
+        float $deltaQty,
+        ?string $note = null
+    ): void {
+        if ($skuId <= 0 || abs($deltaQty) < 0.0000001) {
+            return;
+        }
+
+        $note = $note ?: "Purchase batch {$batch->batch_number} ledger-only correction";
+        $type = $deltaQty > 0 ? 'IN' : 'OUT';
+        $qty = abs((float) $deltaQty);
+        $loc = $locationId > 0 ? $locationId : (int) ($batch->location_id ?? 0);
+        if ($loc <= 0) {
+            throw new \Exception('Cannot write ledger-only correction: missing location.');
+        }
+
+        InventoryTransaction::create([
+            'sku_id' => $skuId,
+            'location_id' => $loc,
+            'type' => $type,
+            'quantity' => $qty,
+            'reference_type' => PurchaseBatch::class,
+            'reference_id' => (int) $batch->id,
+            'notes' => $note,
+            'user_id' => (int) ($batch->user_id ?? null),
+        ]);
+    }
+
+    /**
      * When a received line was stocked on a different SKU than the one shown on the invoice,
      * move batch stock to the target SKU and align to the line quantity (fixes legacy mis-posts).
+     *
+     * Prefer applyReceivedLineStockChange for invoice edits — it scopes reversal to the line quantity.
      */
     public function reconcileReceivedLineStockToTargetSku(
         PurchaseBatch $batch,
@@ -673,39 +1032,31 @@ class PurchaseImportService
         int $targetSkuId,
         int $receiveLocationId,
         float $targetQty,
-        ?string $note = null
+        ?string $note = null,
+        ?int $sourceSkuId = null,
+        ?float $sourceQty = null
     ): void {
         if ($targetSkuId <= 0 || $receiveLocationId <= 0) {
             return;
         }
 
         $note = $note ?: "Purchase batch {$batch->batch_number} line {$item->id} stock reconcile";
+        $fromSkuId = $sourceSkuId && $sourceSkuId > 0
+            ? (int) $sourceSkuId
+            : $this->resolvePostedSkuIdForReceivedLine($batch, $item);
+        $fromQty = $sourceQty !== null
+            ? (float) $sourceQty
+            : (float) ($item->received_quantity ?? $item->quantity ?? 0);
 
-        $postedSkuId = $this->findBatchPostedSkuIdForItem($batch, $item);
-        if ($postedSkuId && $postedSkuId !== $targetSkuId) {
-            $postedNet = $this->netBatchStockPostedForSku($batch, $postedSkuId);
-            if ($postedNet > 0.0000001) {
-                $this->applyReceivedStockDelta(
-                    $batch,
-                    $postedSkuId,
-                    $receiveLocationId,
-                    -$postedNet,
-                    $note.' (clear mis-posted SKU)'
-                );
-            }
-        }
-
-        $targetNet = $this->netBatchStockPostedForSku($batch, $targetSkuId);
-        $need = (float) $targetQty - $targetNet;
-        if (abs($need) > 0.0000001) {
-            $this->applyReceivedStockDelta(
-                $batch,
-                $targetSkuId,
-                $receiveLocationId,
-                $need,
-                $note.' (align line quantity)'
-            );
-        }
+        $this->applyReceivedLineStockChange(
+            $batch,
+            $receiveLocationId,
+            $fromSkuId,
+            $fromQty,
+            $targetSkuId,
+            (float) $targetQty,
+            $note
+        );
     }
 
     /**
@@ -726,22 +1077,31 @@ class PurchaseImportService
         }
 
         $masterId = (int) ($item->master_product_id ?? 0);
+        $lineSkuId = (int) ($item->sku_id ?? 0);
+
+        // Unmapped / blank lines must not inherit another line's posted SKU.
+        if ($masterId <= 0) {
+            if ($lineSkuId > 0 && (float) ($inBySku[$lineSkuId] ?? 0) > 0.0000001) {
+                return $lineSkuId;
+            }
+
+            return null;
+        }
+
         $candidates = [];
         foreach ($inBySku as $skuId => $qty) {
             $skuId = (int) $skuId;
             if ($skuId <= 0) {
                 continue;
             }
-            if ($masterId > 0) {
-                $matchesMaster = Sku::query()
-                    ->whereKey($skuId)
-                    ->whereHas('offer', function ($q) use ($masterId) {
-                        $q->where('master_product_id', $masterId);
-                    })
-                    ->exists();
-                if (! $matchesMaster) {
-                    continue;
-                }
+            $matchesMaster = Sku::query()
+                ->whereKey($skuId)
+                ->whereHas('offer', function ($q) use ($masterId) {
+                    $q->where('master_product_id', $masterId);
+                })
+                ->exists();
+            if (! $matchesMaster) {
+                continue;
             }
             $candidates[$skuId] = (float) $qty;
         }

@@ -729,6 +729,16 @@ class InventoryTransactionController extends Controller
         if (str_starts_with($rt, 'transfer_in') || ($typeUpper === 'IN' && str_contains($notes, 'Transfer IN'))) {
             return ['transfer_in', 'تحويل وارد', 'Transfer in'];
         }
+        // Kit pack/unpack conversions (ProductCompositionService::applyConversion): the "_out"
+        // leg is TRANSFER type but never contains the English "Transfer OUT" marker, so it must
+        // be matched on reference_type explicitly or it silently falls through to 'other' (and
+        // the tracker UI then treats it as inbound, corrupting the running balance).
+        if (str_starts_with($rt, 'bundle_pack_out') || str_starts_with($rt, 'bundle_unpack_out')) {
+            return ['bundle_out', 'تجميع (صادر)', 'Kit conversion (component out)'];
+        }
+        if (str_starts_with($rt, 'bundle_pack_in') || str_starts_with($rt, 'bundle_unpack_in')) {
+            return ['bundle_in', 'تجميع (وارد)', 'Kit conversion (component in)'];
+        }
         if ($refType === 'ImportedOrder' && $typeUpper === 'OUT') {
             return ['import_sale', 'بيع (استيراد شيت)', 'Sale (imported order)'];
         }

@@ -30,7 +30,7 @@
 | 09 | Database Integrity | [09-database.md](./09-database.md) | Done + Phase C |
 | 10 | API Testing | [10-api.md](./10-api.md) | **Completed** (executed) |
 
-Also: [11-phase-b-notes.md](./11-phase-b-notes.md), [12-staff-rbac-design.md](./12-staff-rbac-design.md), [ROADMAP.md](./ROADMAP.md)
+Also: [11-phase-b-notes.md](./11-phase-b-notes.md), [12-staff-rbac-design.md](./12-staff-rbac-design.md), [14-phase-2.md](./14-phase-2.md), [15-ledger-governance.md](./15-ledger-governance.md), [ROADMAP.md](./ROADMAP.md)
 
 ## Safety
 

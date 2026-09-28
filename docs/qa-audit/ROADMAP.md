@@ -35,8 +35,10 @@ grep DB_DATABASE .env.testing phpunit.xml
 - [x] Low-stock alerts + reorder suggestion MVP
 - [x] Broader audit log (pay / settlement delete / transfer / cycle post)
 - [x] SPA production build (live under `public/app/`, gitignored)
+- [x] Ledger governance (`15-ledger-governance.md`, purchase receive audit + gates)
 - [ ] git push (ask explicitly)
 - [ ] Remaining Phase 2 stubs (invoice audit, write IDOR, valuation UX, lot/serial)
+- [ ] Manual review of high-value `shortfall_zero_posted` purchase batches
 
 ## Operating rules
 
