@@ -686,95 +686,95 @@ export default function Reconciliation() {
             : 'No payment sheets for this channel yet — zeros mean no data, not a calculation error.'}
         </p>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
-        <Card className="border-border bg-card overflow-hidden">
-          <CardContent className="pt-5 pb-4 min-h-[120px]">
-            <div className="flex justify-between items-start gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <Card className="border-border bg-card">
+          <CardContent className="p-5 min-h-[148px]">
+            <div className="flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'صافي التسوية' : 'Settlement net'}</p>
-                <p className="text-xl font-bold text-blue-600 mt-1 truncate">{formatCurrency(toNumber(summary?.net_profit || 0))}</p>
-                <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'صافي التسوية' : 'Settlement net'}</p>
+                <p className="text-sm font-bold text-blue-600 mt-2 break-words leading-snug">{formatCurrency(toNumber(summary?.net_profit || 0))}</p>
+                <p className="text-[10px] text-muted-foreground mt-2 line-clamp-2">
                   {isAr ? 'إيراد − رسوم − مرتجعات — ليس ربح الشركة الرسمي' : 'Revenue − fees − refunds — not official P&L'}
                 </p>
               </div>
-              <div className="p-2 bg-blue-500/10 rounded-lg shrink-0">
+              <div className="p-2.5 bg-blue-500/10 rounded-lg shrink-0">
                 <DollarSign className="w-4 h-4 text-blue-500" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card overflow-hidden">
-          <CardContent className="pt-5 pb-4 min-h-[120px]">
-            <div className="flex justify-between items-start gap-2">
+        <Card className="border-border bg-card">
+          <CardContent className="p-5 min-h-[148px]">
+            <div className="flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'إجمالي المرتجعات' : 'Refunds'}</p>
-                <p className="text-xl font-bold text-orange-600 mt-1 truncate">{formatCurrency(toNumber(summary?.total_refunds || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1 truncate">{toNumber(summary?.refund_count || 0)} {isAr ? 'مرتجع' : 'returns'}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'إجمالي المرتجعات' : 'Refunds'}</p>
+                <p className="text-sm font-bold text-orange-600 mt-2 break-words leading-snug">{formatCurrency(toNumber(summary?.total_refunds || 0))}</p>
+                <p className="text-xs text-muted-foreground mt-2">{toNumber(summary?.refund_count || 0)} {isAr ? 'مرتجع' : 'returns'}</p>
               </div>
-              <div className="p-2 bg-orange-500/10 rounded-lg shrink-0">
+              <div className="p-2.5 bg-orange-500/10 rounded-lg shrink-0">
                 <Undo2 className="w-4 h-4 text-orange-500" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card overflow-hidden">
-          <CardContent className="pt-5 pb-4 min-h-[120px]">
-            <div className="flex justify-between items-start gap-2">
+        <Card className="border-border bg-card">
+          <CardContent className="p-5 min-h-[148px]">
+            <div className="flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{platformFeesLabel}</p>
-                <p className="text-xl font-bold text-red-600 mt-1 truncate">{formatCurrency(platformFeesValue)}</p>
-                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{isAr ? 'عمولات وخصومات المنصة' : 'Commission & platform charges'}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{platformFeesLabel}</p>
+                <p className="text-sm font-bold text-red-600 mt-2 break-words leading-snug">{formatCurrency(platformFeesValue)}</p>
+                <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{isAr ? 'عمولات وخصومات المنصة' : 'Commission & platform charges'}</p>
               </div>
-              <div className="p-2 bg-red-500/10 rounded-lg shrink-0">
+              <div className="p-2.5 bg-red-500/10 rounded-lg shrink-0">
                 <TrendingDown className="w-4 h-4 text-red-500" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card overflow-hidden">
-          <CardContent className="pt-5 pb-4 min-h-[120px]">
-            <div className="flex justify-between items-start gap-2">
+        <Card className="border-border bg-card">
+          <CardContent className="p-5 min-h-[148px]">
+            <div className="flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'رسوم الشحن' : 'Shipping Fees'}</p>
-                <p className="text-xl font-bold text-amber-600 mt-1 truncate">{formatCurrency(toNumber(summary?.shipping_fees || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shippingHint}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'رسوم الشحن' : 'Shipping Fees'}</p>
+                <p className="text-sm font-bold text-amber-600 mt-2 break-words leading-snug">{formatCurrency(toNumber(summary?.shipping_fees || 0))}</p>
+                <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{shippingHint}</p>
               </div>
-              <div className="p-2 bg-amber-500/10 rounded-lg shrink-0">
+              <div className="p-2.5 bg-amber-500/10 rounded-lg shrink-0">
                 <Truck size={16} className="text-amber-500" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card overflow-hidden">
-          <CardContent className="pt-5 pb-4 min-h-[120px]">
-            <div className="flex justify-between items-start gap-2">
+        <Card className="border-border bg-card">
+          <CardContent className="p-5 min-h-[148px]">
+            <div className="flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'إجمالي الإيراد' : 'Total Revenue'}</p>
-                <p className="text-xl font-bold text-green-600 mt-1 truncate">{formatCurrency(toNumber(summary?.total_revenue || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{toNumber(summary?.order_count || 0)} {isAr ? 'عملية' : 'tx'} · {isAr ? 'رسوم' : 'Fees'} {formatCurrency(toNumber(summary?.total_fees || 0))}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'إجمالي الإيراد' : 'Total Revenue'}</p>
+                <p className="text-sm font-bold text-green-600 mt-2 break-words leading-snug">{formatCurrency(toNumber(summary?.total_revenue || 0))}</p>
+                <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{toNumber(summary?.order_count || 0)} {isAr ? 'عملية' : 'tx'} · {isAr ? 'رسوم' : 'Fees'} {formatCurrency(toNumber(summary?.total_fees || 0))}</p>
               </div>
-              <div className="p-2 bg-green-500/10 rounded-lg shrink-0">
+              <div className="p-2.5 bg-green-500/10 rounded-lg shrink-0">
                 <TrendingUp size={16} className="text-green-500" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-border bg-card overflow-hidden">
-          <CardContent className="pt-5 pb-4 min-h-[120px]">
-            <div className="flex justify-between items-start gap-2">
+        <Card className="border-border bg-card">
+          <CardContent className="p-5 min-h-[148px]">
+            <div className="flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'أموال قيد التأجيل' : 'Deferred money'}</p>
-                <p className="text-xl font-bold text-amber-600 mt-1 truncate">{formatCurrency(toNumber(summary?.pending_money || 0))}</p>
-                <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'أموال قيد التأجيل' : 'Deferred money'}</p>
+                <p className="text-sm font-bold text-amber-600 mt-2 break-words leading-snug">{formatCurrency(toNumber(summary?.pending_money || 0))}</p>
+                <p className="text-[10px] text-muted-foreground mt-2 line-clamp-2">
                   {isAr ? 'لا تدخل الربح حتى الإصدار — حدّث بعد رفع الشيت' : 'Excluded until released — refresh after upload'}
                 </p>
               </div>
-              <div className="p-2 bg-amber-500/10 rounded-lg shrink-0">
+              <div className="p-2.5 bg-amber-500/10 rounded-lg shrink-0">
                 <Clock size={16} className="text-amber-500" />
               </div>
             </div>
