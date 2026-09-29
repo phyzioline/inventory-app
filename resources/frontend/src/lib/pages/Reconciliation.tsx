@@ -15,7 +15,9 @@ import {
   TrendingDown,
   Undo2,
   DollarSign,
-  Truck
+  Truck,
+  Wallet,
+  Store,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,6 +43,15 @@ import api from '@/lib/api';
 import { fetchInventoryPaginatedList } from '@/lib/supabase-services';
 import { toast } from 'sonner';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns';
+
+function defaultReconciliationMonth(): { from: string; to: string } {
+  const now = new Date();
+  return {
+    from: format(startOfMonth(now), 'yyyy-MM-dd'),
+    to: format(endOfMonth(now), 'yyyy-MM-dd'),
+  };
+}
 
 export default function Reconciliation() {
   const { t, language } = useLanguage();
@@ -53,6 +64,9 @@ export default function Reconciliation() {
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
   const [selectedImportChannelId, setSelectedImportChannelId] = useState<number | null>(null);
   const [selectedSettlementId, setSelectedSettlementId] = useState<number | null>(null);
+  const initialMonth = useMemo(() => defaultReconciliationMonth(), []);
+  const [fromDate, setFromDate] = useState(initialMonth.from);
+  const [toDate, setToDate] = useState(initialMonth.to);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toNumber = (value: unknown) => {
     const n = Number(value ?? 0);
@@ -192,25 +206,57 @@ export default function Reconciliation() {
     }
   }, [selectedChannelGroup, selectedImportChannelId]);
 
+  const periodParams = useMemo(
+    () => ({
+      start_date: fromDate || undefined,
+      end_date: toDate || undefined,
+    }),
+    [fromDate, toDate]
+  );
+
+  const setThisMonth = () => {
+    const range = defaultReconciliationMonth();
+    setFromDate(range.from);
+    setToDate(range.to);
+  };
+
+  const setLastMonth = () => {
+    const d = subMonths(new Date(), 1);
+    setFromDate(format(startOfMonth(d), 'yyyy-MM-dd'));
+    setToDate(format(endOfMonth(d), 'yyyy-MM-dd'));
+  };
+
   const { data: settlements = [], isLoading } = useQuery({
-    queryKey: ['settlements', selectedChannelIds, search],
+    queryKey: ['settlements', selectedChannelIds, search, fromDate, toDate],
     queryFn: () =>
       fetchInventoryPaginatedList('settlements', {
         channel_ids: selectedChannelIds.length ? selectedChannelIds.join(',') : undefined,
         search: search || undefined,
+        ...periodParams,
       }),
     enabled: selectedChannelIds.length > 0,
   });
 
   const { data: summary } = useQuery({
-    queryKey: ['settlements-summary', selectedChannelIds, search],
+    queryKey: ['settlements-summary', selectedChannelIds, search, fromDate, toDate],
     queryFn: () => api.get('/settlements/summary', {
       params: {
         channel_ids: selectedChannelIds.length ? selectedChannelIds.join(',') : undefined,
         search: search || undefined,
+        ...periodParams,
       },
     }),
-    enabled: selectedChannelIds.length > 0,
+    enabled: selectedChannelIds.length > 0 && !!fromDate && !!toDate,
+    staleTime: 0,
+  });
+
+  /** Company-wide collections for the period (shop cash + all platforms) — not tied to selected channel. */
+  const { data: periodCollectionsSummary } = useQuery({
+    queryKey: ['settlements-collections-period', fromDate, toDate],
+    queryFn: () => api.get('/settlements/summary', {
+      params: { ...periodParams },
+    }),
+    enabled: !!fromDate && !!toDate,
     staleTime: 0,
   });
 
@@ -445,7 +491,111 @@ export default function Reconciliation() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground">{t('nav.reconciliationHub')}</h1>
           <p className="text-muted-foreground">{isAr ? 'مكان موحّد لرفع شيتات الدفع وتحديث الطلبات والمرتجعات' : 'Upload payment sheets and sync orders/returns across channels'}</p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            type="date"
+            className="w-auto bg-background"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            aria-label={isAr ? 'من تاريخ' : 'From date'}
+          />
+          <span className="text-muted-foreground text-sm">{isAr ? '→' : '→'}</span>
+          <Input
+            type="date"
+            className="w-auto bg-background"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            aria-label={isAr ? 'إلى تاريخ' : 'To date'}
+          />
+          <Button type="button" variant="outline" size="sm" onClick={setThisMonth}>
+            {isAr ? 'هذا الشهر' : 'This month'}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={setLastMonth}>
+            {isAr ? 'الشهر الماضي' : 'Last month'}
+          </Button>
+        </div>
       </div>
+
+      {(() => {
+        const collections = periodCollectionsSummary?.collections;
+        const totalReceived = toNumber(collections?.total_received);
+        const marketplace = toNumber(collections?.marketplace);
+        const shopCash = toNumber(collections?.shop_cash);
+        const topSources = Array.isArray(collections?.by_source) ? collections.by_source.slice(0, 4) : [];
+        return (
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-foreground">
+              {isAr ? 'إجمالي المستلم في الفترة (كل المصادر)' : 'Total received in period (all sources)'}
+              <span className="text-muted-foreground font-normal ms-2">
+                {fromDate} → {toDate}
+              </span>
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <Card className="border-border bg-card overflow-hidden">
+                <CardContent className="pt-4 pb-4 min-h-[96px]">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-muted-foreground truncate">{isAr ? 'إجمالي المستلم' : 'Total received'}</p>
+                      <p className="text-xl font-bold text-emerald-600 mt-1 truncate">{formatCurrency(totalReceived)}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{isAr ? 'من إيصالات الخزينة في الفترة' : 'From treasury receipts in range'}</p>
+                    </div>
+                    <div className="p-2 bg-emerald-500/10 rounded-lg shrink-0">
+                      <Wallet className="w-4 h-4 text-emerald-500" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border bg-card overflow-hidden">
+                <CardContent className="pt-4 pb-4 min-h-[96px]">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-muted-foreground truncate">{isAr ? 'من المنصات' : 'Marketplaces'}</p>
+                      <p className="text-xl font-bold text-blue-600 mt-1 truncate">{formatCurrency(marketplace)}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{isAr ? 'شيتات دفع / تحصيل قنوات' : 'Payment sheets / channel collections'}</p>
+                    </div>
+                    <div className="p-2 bg-blue-500/10 rounded-lg shrink-0">
+                      <Landmark className="w-4 h-4 text-blue-500" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border bg-card overflow-hidden">
+                <CardContent className="pt-4 pb-4 min-h-[96px]">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-muted-foreground truncate">{isAr ? 'كاش المحل' : 'Shop cash'}</p>
+                      <p className="text-xl font-bold text-amber-600 mt-1 truncate">{formatCurrency(shopCash)}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{isAr ? 'مبيعات نقدية / تحصيل عملاء' : 'Cash sales / customer collections'}</p>
+                    </div>
+                    <div className="p-2 bg-amber-500/10 rounded-lg shrink-0">
+                      <Store className="w-4 h-4 text-amber-500" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border bg-card overflow-hidden">
+                <CardContent className="pt-4 pb-4 min-h-[96px]">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground truncate">{isAr ? 'تفصيل المصادر' : 'By source'}</p>
+                    {topSources.length === 0 ? (
+                      <p className="text-sm text-muted-foreground mt-2">{isAr ? 'لا إيصالات في الفترة' : 'No receipts in range'}</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1">
+                        {topSources.map((s: any) => (
+                          <li key={s.key} className="flex justify-between gap-2 text-xs">
+                            <span className="truncate text-muted-foreground">{s.label}</span>
+                            <span className="font-semibold text-foreground shrink-0">{formatCurrency(toNumber(s.amount))}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
         {channelGroups.map((group: any) => (
@@ -485,6 +635,7 @@ export default function Reconciliation() {
             onClick={() => {
               queryClient.invalidateQueries({ queryKey: ['settlements'] });
               queryClient.invalidateQueries({ queryKey: ['settlements-summary'] });
+              queryClient.invalidateQueries({ queryKey: ['settlements-collections-period'] });
             }}
           >
             <RefreshCcw size={16} />
@@ -536,99 +687,95 @@ export default function Reconciliation() {
         </p>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
-        <Card className="border-border bg-card">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'صافي التسوية' : 'Settlement net'}</p>
-                <p className="text-2xl font-bold text-blue-600 mt-1">{formatCurrency(toNumber(summary?.net_profit || 0))}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  {isAr ? 'إيراد − رسوم − مرتجعات التسوية — ليس صافي ربح الشركة الرسمي' : 'Revenue − fees − settlement refunds — not company official P&L'}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{isAr ? 'بعد الخصومات' : 'After fees & refunds'}</p>
-              </div>
-              <div className="p-2 bg-blue-500/10 rounded-lg">
-                <DollarSign className="w-5 h-5 text-blue-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border bg-card">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'إجمالي المرتجعات' : 'Refunds'}</p>
-                <p className="text-2xl font-bold text-orange-600 mt-1">{formatCurrency(toNumber(summary?.total_refunds || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1">{toNumber(summary?.refund_count || 0)} {isAr ? 'مرتجع' : 'returns'}</p>
-              </div>
-              <div className="p-2 bg-orange-500/10 rounded-lg">
-                <Undo2 className="w-5 h-5 text-orange-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border bg-card">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{platformFeesLabel}</p>
-                <p className="text-2xl font-bold text-red-600 mt-1">{formatCurrency(platformFeesValue)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{isAr ? 'عمولات وخصومات المنصة' : 'Commission, FBA, and platform charges'}</p>
-              </div>
-              <div className="p-2 bg-red-500/10 rounded-lg">
-                <TrendingDown className="w-5 h-5 text-red-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border bg-card">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'رسوم الشحن' : 'Shipping Fees'}</p>
-                <p className="text-2xl font-bold text-amber-600 mt-1">{formatCurrency(toNumber(summary?.shipping_fees || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1">{shippingHint}</p>
-              </div>
-              <div className="p-2 bg-amber-500/10 rounded-lg">
-                <Truck size={20} className="text-amber-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border bg-card">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'إجمالي الإيراد' : 'Total Revenue'}</p>
-                <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(toNumber(summary?.total_revenue || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1">{toNumber(summary?.order_count || 0)} {isAr ? 'عملية طلب' : 'order tx'} - {isAr ? 'إجمالي الرسوم' : 'Fees Total'}: {formatCurrency(toNumber(summary?.total_fees || 0))}</p>
-              </div>
-              <div className="p-2 bg-green-500/10 rounded-lg">
-                <TrendingUp size={20} className="text-green-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border bg-card">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'أموال قيد التأجيل' : 'Deferred / Pending Money'}</p>
-                <p className="text-2xl font-bold text-amber-600 mt-1">{formatCurrency(toNumber(summary?.pending_money || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1">{isAr ? 'لا تُحتسب ضمن الربح حتى يتم الإصدار' : 'Excluded from profit until released'}</p>
-                <p className="text-[10px] text-muted-foreground mt-1 leading-snug">
-                  {isAr
-                    ? 'يُحسب من كل الشيتات المرفوعة. اضغط «تحديث» بجانب الرفع لتحديث الأرقام. صفوف «مؤجل» في تقارير قديمة تبقى حتى يُعاد رفع ذلك التقرير أو تحديثه.'
-                    : 'Sum across all uploaded reports. Use the refresh button next to Upload to reload KPIs. Deferred rows in older reports remain until that report file is re-imported.'}
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="pt-5 pb-4 min-h-[120px]">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'صافي التسوية' : 'Settlement net'}</p>
+                <p className="text-xl font-bold text-blue-600 mt-1 truncate">{formatCurrency(toNumber(summary?.net_profit || 0))}</p>
+                <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                  {isAr ? 'إيراد − رسوم − مرتجعات — ليس ربح الشركة الرسمي' : 'Revenue − fees − refunds — not official P&L'}
                 </p>
               </div>
-              <div className="p-2 bg-amber-500/10 rounded-lg">
-                <Clock size={20} className="text-amber-500" />
+              <div className="p-2 bg-blue-500/10 rounded-lg shrink-0">
+                <DollarSign className="w-4 h-4 text-blue-500" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="pt-5 pb-4 min-h-[120px]">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'إجمالي المرتجعات' : 'Refunds'}</p>
+                <p className="text-xl font-bold text-orange-600 mt-1 truncate">{formatCurrency(toNumber(summary?.total_refunds || 0))}</p>
+                <p className="text-xs text-muted-foreground mt-1 truncate">{toNumber(summary?.refund_count || 0)} {isAr ? 'مرتجع' : 'returns'}</p>
+              </div>
+              <div className="p-2 bg-orange-500/10 rounded-lg shrink-0">
+                <Undo2 className="w-4 h-4 text-orange-500" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="pt-5 pb-4 min-h-[120px]">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{platformFeesLabel}</p>
+                <p className="text-xl font-bold text-red-600 mt-1 truncate">{formatCurrency(platformFeesValue)}</p>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{isAr ? 'عمولات وخصومات المنصة' : 'Commission & platform charges'}</p>
+              </div>
+              <div className="p-2 bg-red-500/10 rounded-lg shrink-0">
+                <TrendingDown className="w-4 h-4 text-red-500" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="pt-5 pb-4 min-h-[120px]">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'رسوم الشحن' : 'Shipping Fees'}</p>
+                <p className="text-xl font-bold text-amber-600 mt-1 truncate">{formatCurrency(toNumber(summary?.shipping_fees || 0))}</p>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shippingHint}</p>
+              </div>
+              <div className="p-2 bg-amber-500/10 rounded-lg shrink-0">
+                <Truck size={16} className="text-amber-500" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="pt-5 pb-4 min-h-[120px]">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'إجمالي الإيراد' : 'Total Revenue'}</p>
+                <p className="text-xl font-bold text-green-600 mt-1 truncate">{formatCurrency(toNumber(summary?.total_revenue || 0))}</p>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{toNumber(summary?.order_count || 0)} {isAr ? 'عملية' : 'tx'} · {isAr ? 'رسوم' : 'Fees'} {formatCurrency(toNumber(summary?.total_fees || 0))}</p>
+              </div>
+              <div className="p-2 bg-green-500/10 rounded-lg shrink-0">
+                <TrendingUp size={16} className="text-green-500" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="pt-5 pb-4 min-h-[120px]">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">{isAr ? 'أموال قيد التأجيل' : 'Deferred money'}</p>
+                <p className="text-xl font-bold text-amber-600 mt-1 truncate">{formatCurrency(toNumber(summary?.pending_money || 0))}</p>
+                <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                  {isAr ? 'لا تدخل الربح حتى الإصدار — حدّث بعد رفع الشيت' : 'Excluded until released — refresh after upload'}
+                </p>
+              </div>
+              <div className="p-2 bg-amber-500/10 rounded-lg shrink-0">
+                <Clock size={16} className="text-amber-500" />
               </div>
             </div>
           </CardContent>

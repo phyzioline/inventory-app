@@ -105,7 +105,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
   const [settlingSupplier, setSettlingSupplier] = useState<any | null>(null);
   const [settleForm, setSettleForm] = useState({
     amount: '',
-    payment_method: 'cash',
+    payment_method: 'bank_transfer',
     payment_date: todayIso,
     notes: '',
   });
@@ -282,7 +282,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       setSettlingSupplier(null);
       setSettleForm({
         amount: '',
-        payment_method: 'cash',
+        payment_method: 'bank_transfer',
         payment_date: todayIso,
         notes: '',
       });
@@ -300,7 +300,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     setIsSettleDialogOpen(true);
     setSettleForm({
       amount: '',
-      payment_method: 'cash',
+      payment_method: 'bank_transfer',
       payment_date: todayIso,
       notes: '',
     });
@@ -312,7 +312,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       setSummaryMap((prev) => ({ ...prev, [String(supplier.id)]: data.summary }));
       setSettleForm({
         amount: outstanding > 0 ? String(outstanding) : '',
-        payment_method: 'cash',
+        payment_method: 'bank_transfer',
         payment_date: todayIso,
         notes: '',
       });
@@ -320,7 +320,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       const outstanding = Math.max(0, getSupplierOutstanding(supplier, summaryMap));
       setSettleForm({
         amount: outstanding > 0 ? String(outstanding) : '',
-        payment_method: 'cash',
+        payment_method: 'bank_transfer',
         payment_date: todayIso,
         notes: '',
       });

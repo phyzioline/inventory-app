@@ -57,7 +57,7 @@ export default function Salaries() {
   const [payForm, setPayForm] = useState({
     amount: '',
     expense_date: format(new Date(), 'yyyy-MM-dd'),
-    payment_method: 'cash',
+    payment_method: 'bank_transfer',
     description: '',
   });
 
@@ -184,7 +184,7 @@ export default function Salaries() {
     setPayForm({
       amount: employee.base_salary != null ? String(employee.base_salary) : '',
       expense_date: format(new Date(), 'yyyy-MM-dd'),
-      payment_method: 'cash',
+      payment_method: 'bank_transfer',
       description: isAr ? `راتب — ${employee.name}` : `Salary — ${employee.name}`,
     });
     setPayDialogOpen(true);
@@ -664,8 +664,8 @@ export default function Salaries() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="cash">{t('paymentMethod.cash')}</SelectItem>
                   <SelectItem value="bank_transfer">{t('paymentMethod.bankTransfer')}</SelectItem>
+                  <SelectItem value="cash">{t('paymentMethod.cash')}</SelectItem>
                   <SelectItem value="card">{t('paymentMethod.card')}</SelectItem>
                   <SelectItem value="check">{t('paymentMethod.check')}</SelectItem>
                 </SelectContent>

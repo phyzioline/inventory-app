@@ -53,7 +53,7 @@ export default function Payments() {
     supplier_id: '',
     warehouse_id: '',
     amount: '',
-    payment_method: 'cash',
+    payment_method: 'bank_transfer',
     description: '',
     payment_date: format(new Date(), 'yyyy-MM-dd'),
   });
@@ -137,7 +137,7 @@ export default function Payments() {
       supplier_id: '',
       warehouse_id: '',
       amount: '',
-      payment_method: 'cash',
+      payment_method: 'bank_transfer',
       description: '',
       payment_date: format(new Date(), 'yyyy-MM-dd'),
     });
@@ -387,8 +387,8 @@ export default function Payments() {
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cash">{t('paymentMethod.cash')}</SelectItem>
                       <SelectItem value="bank_transfer">{t('paymentMethod.bankTransfer')}</SelectItem>
+                      <SelectItem value="cash">{t('paymentMethod.cash')}</SelectItem>
                       <SelectItem value="card">{t('paymentMethod.card')}</SelectItem>
                       <SelectItem value="check">{t('paymentMethod.check')}</SelectItem>
                       <SelectItem value="online">{t('paymentMethod.online')}</SelectItem>

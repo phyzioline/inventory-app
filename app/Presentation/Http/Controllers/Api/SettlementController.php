@@ -51,6 +51,8 @@ class SettlementController extends Controller
             $this->applySearchToSettlementQuery($query, $search);
         }
 
+        $this->applySettlementPeriodFilter($query, request());
+
         $perPage = min(500, max(1, (int) request()->input('per_page', 50)));
 
         $settlements = $query->paginate($perPage);
@@ -59,7 +61,7 @@ class SettlementController extends Controller
     }
 
     /**
-     * Financial summary across settlement items.
+     * Financial summary across settlement items (+ period collections incl. shop cash).
      */
     public function summary(Request $request)
     {
@@ -77,9 +79,24 @@ class SettlementController extends Controller
             $this->applySearchToSettlementQuery($settlementQuery, $search);
         }
 
-        $items = SettlementItem::query()
-            ->whereIn('settlement_id', $settlementQuery)
-            ->get(['transaction_type', 'transaction_status', 'description', 'amount', 'fee_amount', 'raw_data', 'line_kind']);
+        $this->applySettlementPeriodFilter($settlementQuery, $request);
+
+        $itemsQuery = SettlementItem::query()
+            ->whereIn('settlement_id', $settlementQuery);
+
+        // Prefer transaction_date when filtering a period; fall back to all lines of in-range settlements.
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $startAt = \Carbon\Carbon::parse((string) $request->input('start_date'))->startOfDay();
+            $endAt = \Carbon\Carbon::parse((string) $request->input('end_date'))->endOfDay();
+            $itemsQuery->where(function ($q) use ($startAt, $endAt) {
+                $q->whereBetween('transaction_date', [$startAt, $endAt])
+                    ->orWhereNull('transaction_date');
+            });
+        }
+
+        $items = $itemsQuery->get([
+            'transaction_type', 'transaction_status', 'description', 'amount', 'fee_amount', 'raw_data', 'line_kind',
+        ]);
 
         $summary = [
             'total_revenue' => 0.0,
@@ -95,6 +112,11 @@ class SettlementController extends Controller
             'refund_count' => 0,
             'fee_count' => 0,
             'settlements_count' => (clone $settlementQuery)->count(),
+            'period' => [
+                'start_date' => $request->input('start_date'),
+                'end_date' => $request->input('end_date'),
+            ],
+            'collections' => $this->buildPeriodCollections($request),
         ];
 
         $classifier = app(\App\Application\Services\SettlementLineClassifier::class);
@@ -158,13 +180,11 @@ class SettlementController extends Controller
             }
 
             if ($bucket === 'disbursal') {
-                // Bank payout rows are cash movement, not product revenue/fees.
                 continue;
             }
 
-            // platform_fee / other
             $summary['platform_fees'] += $value;
-            $summary['amazon_fees'] += $value; // legacy alias for older SPA clients
+            $summary['amazon_fees'] += $value;
             $summary['total_fees'] += $value;
             $summary['fee_count']++;
         }
@@ -172,6 +192,176 @@ class SettlementController extends Controller
         $summary['net_profit'] = $summary['total_revenue'] - $summary['total_fees'] - $summary['total_refunds'];
 
         return response()->json($summary);
+    }
+
+    /**
+     * Money actually received in the period (treasury receipts), by source — includes shop cash.
+     *
+     * @return array{
+     *   total_received: float,
+     *   marketplace: float,
+     *   shop_cash: float,
+     *   other: float,
+     *   by_source: list<array{key: string, label: string, amount: float}>
+     * }
+     */
+    private function buildPeriodCollections(Request $request): array
+    {
+        $empty = [
+            'total_received' => 0.0,
+            'marketplace' => 0.0,
+            'shop_cash' => 0.0,
+            'other' => 0.0,
+            'by_source' => [],
+        ];
+
+        if (! $request->filled('start_date') || ! $request->filled('end_date')) {
+            return $empty;
+        }
+
+        $startDay = \Carbon\Carbon::parse((string) $request->input('start_date'))->toDateString();
+        $endDay = \Carbon\Carbon::parse((string) $request->input('end_date'))->toDateString();
+
+        $receipts = Receipt::query()
+            ->whereDate('receipt_date', '>=', $startDay)
+            ->whereDate('receipt_date', '<=', $endDay)
+            ->get(['id', 'amount', 'category', 'payment_method', 'reference_type', 'reference_id', 'description']);
+
+        $settlementRefTypes = \App\Infrastructure\Support\InventoryMorphTypes::settlementReferenceTypes();
+        $orderRefTypes = \App\Infrastructure\Support\InventoryMorphTypes::inventoryOrderReferenceTypes();
+
+        $settlementIds = [];
+        $orderIds = [];
+        foreach ($receipts as $r) {
+            $refType = (string) ($r->reference_type ?? '');
+            $refId = (int) ($r->reference_id ?? 0);
+            if ($refId <= 0) {
+                continue;
+            }
+            if (in_array($refType, $settlementRefTypes, true)) {
+                $settlementIds[$refId] = true;
+            } elseif (in_array($refType, $orderRefTypes, true)) {
+                $orderIds[$refId] = true;
+            }
+        }
+
+        $settlementChannel = [];
+        if ($settlementIds !== []) {
+            $settlementChannel = Settlement::query()
+                ->with('channel:id,name,slug,type')
+                ->whereIn('id', array_keys($settlementIds))
+                ->get(['id', 'channel_id'])
+                ->keyBy('id');
+        }
+
+        $orderChannel = [];
+        if ($orderIds !== []) {
+            $orderChannel = InventoryOrder::query()
+                ->with('channel:id,name,slug,type')
+                ->whereIn('id', array_keys($orderIds))
+                ->get(['id', 'channel_id'])
+                ->keyBy('id');
+        }
+
+        $bySource = [];
+        $marketplace = 0.0;
+        $shopCash = 0.0;
+        $other = 0.0;
+
+        foreach ($receipts as $r) {
+            $amount = (float) ($r->amount ?? 0);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $category = strtolower(trim((string) ($r->category ?? '')));
+            $method = strtolower(trim((string) ($r->payment_method ?? '')));
+            $refType = (string) ($r->reference_type ?? '');
+            $refId = (int) ($r->reference_id ?? 0);
+
+            $sourceKey = 'other';
+            $sourceLabel = 'أخرى / Other';
+
+            if (in_array($refType, $settlementRefTypes, true) || $category === 'channel_collection') {
+                $marketplace += $amount;
+                $ch = $settlementChannel[$refId]?->channel ?? null;
+                $name = trim((string) ($ch?->name ?? ''));
+                $sourceKey = 'mkt:'.($ch?->id ?: 'unknown');
+                $sourceLabel = $name !== '' ? $name : 'منصة / Marketplace';
+            } elseif (
+                $category === 'customer_collection'
+                || in_array($method, ['cash', ''], true)
+                || in_array($refType, $orderRefTypes, true)
+            ) {
+                $ch = $orderChannel[$refId]?->channel ?? null;
+                $type = strtolower(trim((string) ($ch?->type ?? '')));
+                $hay = strtolower(trim((string) ($ch?->name ?? '').' '.($ch?->slug ?? '')));
+                $isShop = in_array($type, ['pos', 'store', 'shop'], true)
+                    || str_contains($hay, 'محل')
+                    || str_contains($hay, 'shop')
+                    || str_contains($hay, 'store')
+                    || $category === 'customer_collection';
+
+                if ($isShop || $method === 'cash') {
+                    $shopCash += $amount;
+                    $sourceKey = 'shop';
+                    $sourceLabel = 'كاش المحل / Shop cash';
+                } else {
+                    $marketplace += $amount;
+                    $name = trim((string) ($ch?->name ?? ''));
+                    $sourceKey = 'mkt:'.($ch?->id ?: 'order');
+                    $sourceLabel = $name !== '' ? $name : 'طلبات / Orders';
+                }
+            } else {
+                $other += $amount;
+            }
+
+            if (! isset($bySource[$sourceKey])) {
+                $bySource[$sourceKey] = [
+                    'key' => $sourceKey,
+                    'label' => $sourceLabel,
+                    'amount' => 0.0,
+                ];
+            }
+            $bySource[$sourceKey]['amount'] += $amount;
+        }
+
+        $sorted = array_values($bySource);
+        usort($sorted, fn ($a, $b) => $b['amount'] <=> $a['amount']);
+        foreach ($sorted as &$row) {
+            $row['amount'] = round((float) $row['amount'], 2);
+        }
+        unset($row);
+
+        return [
+            'total_received' => round($marketplace + $shopCash + $other, 2),
+            'marketplace' => round($marketplace, 2),
+            'shop_cash' => round($shopCash, 2),
+            'other' => round($other, 2),
+            'by_source' => $sorted,
+        ];
+    }
+
+    /**
+     * Filter settlements whose cycle overlaps [start_date, end_date].
+     */
+    private function applySettlementPeriodFilter($query, Request $request): void
+    {
+        if (! $request->filled('start_date') || ! $request->filled('end_date')) {
+            return;
+        }
+
+        $start = \Carbon\Carbon::parse((string) $request->input('start_date'))->toDateString();
+        $end = \Carbon\Carbon::parse((string) $request->input('end_date'))->toDateString();
+
+        $query->where(function ($q) use ($start, $end) {
+            $q->whereBetween('end_date', [$start, $end])
+                ->orWhereBetween('start_date', [$start, $end])
+                ->orWhere(function ($inner) use ($start, $end) {
+                    $inner->where('start_date', '<=', $start)
+                        ->where('end_date', '>=', $end);
+                });
+        });
     }
 
     private function applySearchToSettlementQuery($query, string $search): void

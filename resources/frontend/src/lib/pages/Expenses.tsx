@@ -75,7 +75,7 @@ export default function Expenses() {
     category: 'general',
     warehouse_id: '',
     amount: '',
-    payment_method: 'cash',
+    payment_method: 'bank_transfer',
     description: '',
     vendor_name: '',
     expense_date: format(new Date(), 'yyyy-MM-dd'),
@@ -156,7 +156,7 @@ export default function Expenses() {
       category: 'general',
       warehouse_id: '',
       amount: '',
-      payment_method: 'cash',
+      payment_method: 'bank_transfer',
       description: '',
       vendor_name: '',
       expense_date: format(new Date(), 'yyyy-MM-dd'),
@@ -529,8 +529,8 @@ export default function Expenses() {
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="cash">{t('paymentMethod.cash')}</SelectItem>
                         <SelectItem value="bank_transfer">{t('paymentMethod.bankTransfer')}</SelectItem>
+                        <SelectItem value="cash">{t('paymentMethod.cash')}</SelectItem>
                         <SelectItem value="card">{t('paymentMethod.card')}</SelectItem>
                         <SelectItem value="check">{t('paymentMethod.check')}</SelectItem>
                       </SelectContent>

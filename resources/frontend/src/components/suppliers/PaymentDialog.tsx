@@ -19,7 +19,7 @@ interface PaymentDialogProps {
 export function PaymentDialog({ open, onOpenChange, supplier, onSuccess }: PaymentDialogProps) {
     const queryClient = useQueryClient();
     const [amount, setAmount] = useState('');
-    const [paymentMethod, setPaymentMethod] = useState('cash');
+    const [paymentMethod, setPaymentMethod] = useState('bank_transfer');
     const [notes, setNotes] = useState('');
 
     const payMutation = useMutation({
@@ -84,8 +84,8 @@ export function PaymentDialog({ open, onOpenChange, supplier, onSuccess }: Payme
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="cash">Cash</SelectItem>
                                 <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                <SelectItem value="cash">Cash</SelectItem>
                                 <SelectItem value="check">Check</SelectItem>
                                 <SelectItem value="other">Other</SelectItem>
                             </SelectContent>
