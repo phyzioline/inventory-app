@@ -13,8 +13,8 @@ Schedule::command('inventory:ensure-queue-healthy')
     ->withoutOverlapping(2)
     ->runInBackground();
 
-// Nightly dry-run: classify received PO ledger drift (no stock writes).
-Schedule::command('inventory:audit-purchase-receive-ledger')
+// Nightly dry-run: classify received PO ledger drift; fail if NEW/WORSE vs baseline or any orphan.
+Schedule::command('inventory:audit-purchase-receive-ledger --fail-on-regression')
     ->dailyAt('02:40')
     ->withoutOverlapping(120)
     ->runInBackground()

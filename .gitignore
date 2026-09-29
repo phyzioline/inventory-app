@@ -6,6 +6,8 @@
 /public/downloads
 /storage/*.key
 /storage/pail
+/storage/app/purchase-receive-ledger-baseline.json
+/storage/logs/purchase-receive-ledger-audit*
 /bootstrap/cache/*.php
 /.phpunit.cache
 /.idea

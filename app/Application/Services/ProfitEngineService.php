@@ -525,6 +525,40 @@ class ProfitEngineService
     }
 
     /**
+     * Refund amounts that are NOT already embedded in settlement payment sheets.
+     * Amazon/Noon deduct product returns on a later settlement — that cash hit lives in
+     * SUM(settlement_items.amount). Claiming InventoryReturn rows created from those sheets
+     * must not be subtracted again from official P&L.
+     *
+     * @param  list<int>  $orderIds
+     * @return \Illuminate\Support\Collection<int|string, float>
+     */
+    private function nonSettlementRefundsByOrderId(array $orderIds)
+    {
+        $orderIds = array_values(array_unique(array_filter(array_map('intval', $orderIds))));
+        if ($orderIds === []) {
+            return collect();
+        }
+
+        return InventoryReturn::query()
+            ->whereIn('inventory_order_id', $orderIds)
+            ->whereNotNull('refund_amount')
+            ->where('refund_amount', '>', 0)
+            ->where(function ($q) {
+                $q->where(function ($w) {
+                    $w->whereNull('external_status')
+                        ->orWhere('external_status', '<>', 'refund_from_payment_sheet');
+                })->where(function ($w) {
+                    $w->whereNull('metadata')
+                        ->orWhereRaw("NULLIF(TRIM(COALESCE(metadata->>'settlement_item_id', '')), '') IS NULL");
+                });
+            })
+            ->selectRaw('inventory_order_id, SUM(refund_amount) as total')
+            ->groupBy('inventory_order_id')
+            ->pluck('total', 'inventory_order_id');
+    }
+
+    /**
      * @param  array<string, float>  $netMap
      */
     private function lookupOrderSettlementNet(?string $platformOrderId, array $netMap): ?float
@@ -662,12 +696,8 @@ class ProfitEngineService
 
         $orderIds = $lineSales->pluck('order_id')->unique()->values();
 
-        $orderReturnMap = InventoryReturn::whereIn('inventory_order_id', $orderIds)
-            ->whereNotNull('refund_amount')
-            ->where('refund_amount', '>', 0)
-            ->select('inventory_order_id', DB::raw('SUM(refund_amount) as refund_total'))
-            ->groupBy('inventory_order_id')
-            ->pluck('refund_total', 'inventory_order_id');
+        // Exclude payment-sheet claim returns — those amounts already sit inside settlement net.
+        $orderReturnMap = $this->nonSettlementRefundsByOrderId($orderIds->all());
 
         // Include settlement deductions (negative amounts) as additional order costs.
         $settlementCostMap = SettlementItem::whereIn('inventory_order_id', $orderIds)
@@ -764,6 +794,7 @@ class ProfitEngineService
                 $allocatedCosts = $orderRevenue > 0 ? ($lineRevenueList / $orderRevenue) * $orderCosts : 0.0;
             }
 
+            // Payment-sheet claim returns are already inside settlement net; map excludes them.
             $orderRefund = (float) ($orderReturnMap[$line->order_id] ?? 0);
             $allocatedRefund = $orderRevenue > 0 ? ($lineRevenueList / $orderRevenue) * $orderRefund : 0.0;
             $grossProfit = $lineRevenueEffective - $lineCogs;
@@ -885,11 +916,8 @@ class ProfitEngineService
         $platformSkuNetMap = $this->settlementPlatformOrderSkuNetMap($filters);
 
         $orderIds = $ordersCollection->pluck('id')->all();
-        $refundsByOrderId = InventoryReturn::whereIn('inventory_order_id', $orderIds)
-            ->whereNotNull('refund_amount')
-            ->selectRaw('inventory_order_id, SUM(refund_amount) as total')
-            ->groupBy('inventory_order_id')
-            ->pluck('total', 'inventory_order_id');
+        // Manual / FBA-sheet returns only. Payment-sheet claim returns are inside settlement net.
+        $refundsByOrderId = $this->nonSettlementRefundsByOrderId($orderIds);
 
         $platformOrderIds = $ordersCollection->pluck('platform_order_id')->filter()->unique()->values()->all();
         $negativeFees = $this->settlementNegativeFeesForOrders($orderIds, $platformOrderIds, $filters);
@@ -922,22 +950,24 @@ class ProfitEngineService
                 }
             }
 
-            $orderRefunds = (float) ($refundsByOrderId[$order->id] ?? 0.0);
+            $nonSettlementRefunds = (float) ($refundsByOrderId[$order->id] ?? 0.0);
 
             $orderNet = $this->lookupOrderSettlementNet($order->platform_order_id, $platformNetMap);
 
-            if ($orderNet !== null && $orderNet > 0) {
+            if ($orderNet !== null) {
+                // Settlement net (incl. later-sheet refunds) is cash truth — even when ≤ 0 after returns.
                 $displayRevenue += $orderNet;
-                $orderProfitSum += $orderNet - $orderCogs - $orderRefunds;
+                $orderProfitSum += $orderNet - $orderCogs - $nonSettlementRefunds;
+                $totalRefunds += $nonSettlementRefunds;
             } else {
                 $feeDeductions = ($negativeFees['by_order_id'][(int) $order->id] ?? 0.0)
                     + ($negativeFees['by_platform_id'][$order->platform_order_id] ?? 0.0);
                 $displayRevenue += $listSum;
-                $orderProfitSum += $listSum - $orderCogs - $orderRefunds - $feeDeductions;
+                $orderProfitSum += $listSum - $orderCogs - $nonSettlementRefunds - $feeDeductions;
+                $totalRefunds += $nonSettlementRefunds;
             }
 
             $totalCogs += $orderCogs;
-            $totalRefunds += $orderRefunds;
         }
 
         $netProfit = $orderProfitSum - $expenses;

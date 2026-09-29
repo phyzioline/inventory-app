@@ -480,6 +480,8 @@ export default function Reconciliation() {
           <Button
             variant="outline"
             className="gap-2"
+            aria-label={isAr ? 'تحديث' : 'Refresh'}
+            title={isAr ? 'تحديث' : 'Refresh'}
             onClick={() => {
               queryClient.invalidateQueries({ queryKey: ['settlements'] });
               queryClient.invalidateQueries({ queryKey: ['settlements-summary'] });
@@ -489,7 +491,7 @@ export default function Reconciliation() {
           </Button>
           <Button className="gap-2 bg-slate-700 hover:bg-slate-600 text-white" onClick={downloadTemplate}>
             <Download className="w-4 h-4" />
-            {isAr ? 'تحميل Template' : 'Download Template'}
+            {isAr ? 'تحميل القالب' : 'Download Template'}
           </Button>
           <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setIsImportOpen(true)} disabled={!selectedChannelGroup}>
             <FileUp className="w-4 h-4" />
@@ -498,6 +500,41 @@ export default function Reconciliation() {
         </div>
       </div>
 
+      {(() => {
+        const hasSettlementData = toNumber(summary?.settlements_count ?? settlements?.length ?? 0) > 0
+          || toNumber(summary?.order_count || 0) > 0
+          || toNumber(summary?.total_revenue || 0) !== 0
+          || toNumber(summary?.total_fees || 0) !== 0
+          || toNumber(summary?.total_refunds || 0) !== 0
+          || toNumber(summary?.pending_money || 0) !== 0;
+        const channelLabel = selectedChannelGroup?.name || selectedChannel?.name || '';
+        const slug = String(selectedChannelGroup?.slug || selectedChannel?.slug || channelLabel || '').toLowerCase();
+        const isAmazon = slug.includes('amazon') || channelLabel.includes('أمازون') || channelLabel.toLowerCase().includes('amazon');
+        const isJumia = slug.includes('jumia') || channelLabel.includes('جوميا');
+        const isNoon = slug.includes('noon') || channelLabel.includes('نون');
+        const platformFeesLabel = isAmazon
+          ? (isAr ? 'رسوم أمازون' : 'Amazon Fees')
+          : isJumia
+            ? (isAr ? 'رسوم جوميا' : 'Jumia Fees')
+            : isNoon
+              ? (isAr ? 'رسوم نون' : 'Noon Fees')
+              : (isAr ? 'رسوم المنصة' : 'Platform Fees');
+        const shippingHint = isAmazon
+          ? (isAr ? 'HB/Chargeback ورسوم الشحن' : 'Shipping HB/chargeback and shipping costs')
+          : isJumia
+            ? (isAr ? 'FBJ ورسوم الشحن' : 'FBJ and shipping costs')
+            : (isAr ? 'رسوم الشحن والمرتجعات اللوجستية' : 'Shipping and logistics fees');
+        const platformFeesValue = toNumber(summary?.platform_fees ?? summary?.amazon_fees ?? 0);
+
+        return (
+      <>
+      {!hasSettlementData && selectedChannelIds.length > 0 && (
+        <p className="text-sm text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3">
+          {isAr
+            ? 'لا شيتات دفع مرفوعة لهذه القناة بعد — الأرقام صفر لأنه لا توجد بيانات، وليس عطل حساب.'
+            : 'No payment sheets for this channel yet — zeros mean no data, not a calculation error.'}
+        </p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
         <Card className="border-border bg-card">
           <CardContent className="pt-6">
@@ -536,8 +573,8 @@ export default function Reconciliation() {
           <CardContent className="pt-6">
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'رسوم أمازون' : 'Amazon Fees'}</p>
-                <p className="text-2xl font-bold text-red-600 mt-1">{formatCurrency(toNumber(summary?.amazon_fees || 0))}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{platformFeesLabel}</p>
+                <p className="text-2xl font-bold text-red-600 mt-1">{formatCurrency(platformFeesValue)}</p>
                 <p className="text-xs text-muted-foreground mt-1">{isAr ? 'عمولات وخصومات المنصة' : 'Commission, FBA, and platform charges'}</p>
               </div>
               <div className="p-2 bg-red-500/10 rounded-lg">
@@ -553,7 +590,7 @@ export default function Reconciliation() {
               <div>
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{isAr ? 'رسوم الشحن' : 'Shipping Fees'}</p>
                 <p className="text-2xl font-bold text-amber-600 mt-1">{formatCurrency(toNumber(summary?.shipping_fees || 0))}</p>
-                <p className="text-xs text-muted-foreground mt-1">{isAr ? 'HB/Chargeback ورسوم الشحن' : 'Shipping HB/chargeback and shipping costs'}</p>
+                <p className="text-xs text-muted-foreground mt-1">{shippingHint}</p>
               </div>
               <div className="p-2 bg-amber-500/10 rounded-lg">
                 <Truck size={20} className="text-amber-500" />
@@ -597,6 +634,9 @@ export default function Reconciliation() {
           </CardContent>
         </Card>
       </div>
+      </>
+        );
+      })()}
 
       <div className="flex items-center gap-4">
         <div className="relative flex-1">
@@ -675,7 +715,13 @@ export default function Reconciliation() {
                           }`}
                       >
                         {s.status === 'reconciled' ? <CheckCircle size={14} /> : <Clock size={14} />}
-                        {s.status.charAt(0).toUpperCase() + s.status.slice(1)}
+                        {s.status === 'reconciled'
+                          ? (isAr ? 'مُسوّى' : 'Reconciled')
+                          : s.status === 'processing'
+                            ? (isAr ? 'قيد المعالجة' : 'Processing')
+                            : s.status === 'draft'
+                              ? (isAr ? 'مسودة' : 'Draft')
+                              : (isAr ? String(s.status) : String(s.status).charAt(0).toUpperCase() + String(s.status).slice(1))}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right pr-6">
@@ -868,6 +914,11 @@ export default function Reconciliation() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-6 py-6">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {isAr
+                ? 'بعد الرفع يُنشأ إيصال خزينة تلقائي بمبلغ الشيت (تحصيل قناة) — هذا ليس صافي ربح الشركة.'
+                : 'Upload creates an automatic treasury receipt for the sheet total (channel collection) — not company net profit.'}
+            </p>
             {selectedChannelGroup?.channels?.length > 1 && (
               <div className="space-y-2">
                 <p className="text-sm font-medium text-foreground">

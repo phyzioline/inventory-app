@@ -3,16 +3,21 @@
 namespace App\Presentation\Console\Commands;
 
 use App\Application\Services\PurchaseImportService;
+use App\Application\Services\PurchaseReceiveLedgerBaseline;
 use App\Application\Support\TenantContext;
 use App\Domain\Models\Wms\PurchaseBatch;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 
 /**
- * Classify received-purchase ledger drift (dry-run only — never auto-fills shortfalls).
+ * Classify received-purchase ledger drift (dry-run — never auto-fills shortfalls).
+ *
+ * Historical shortfalls can be frozen once; nightly audit then only fails on
+ * NEW / WORSE shortfalls or any orphan/excess.
  *
  * php artisan inventory:audit-purchase-receive-ledger
- * php artisan inventory:audit-purchase-receive-ledger --csv=storage/logs/purchase-ledger-audit.csv
+ * php artisan inventory:audit-purchase-receive-ledger --freeze-baseline
+ * php artisan inventory:audit-purchase-receive-ledger --fail-on-regression
  */
 class AuditPurchaseReceiveLedgerCommand extends Command
 {
@@ -21,17 +26,23 @@ class AuditPurchaseReceiveLedgerCommand extends Command
                             {--batch= : Limit to one purchase_batches.id}
                             {--limit=0 : Max batches to scan (0 = all)}
                             {--csv= : Optional CSV output path}
-                            {--top=30 : Print top N rows per category in the console}';
+                            {--top=30 : Print top N rows per category in the console}
+                            {--freeze-baseline : Freeze current baselinable shortfalls as accepted historical debt}
+                            {--fail-on-regression : Exit 1 when new/worse shortfalls or any orphan appear vs baseline}';
 
-    protected $description = 'Classify received PO line qty vs PurchaseBatch ledger (orphans/shortfalls/legacy) — no stock writes';
+    protected $description = 'Classify received PO line qty vs PurchaseBatch ledger; optional baseline freeze / regression gate';
 
-    public function handle(PurchaseImportService $importService): int
-    {
+    public function handle(
+        PurchaseImportService $importService,
+        PurchaseReceiveLedgerBaseline $baseline
+    ): int {
         $userFilter = (int) ($this->option('user') ?: 0);
         $batchFilter = (int) ($this->option('batch') ?: 0);
         $limit = (int) ($this->option('limit') ?: 0);
         $top = max(5, (int) ($this->option('top') ?: 30));
         $csvPath = $this->option('csv') ? (string) $this->option('csv') : null;
+        $freeze = (bool) $this->option('freeze-baseline');
+        $failOnRegression = (bool) $this->option('fail-on-regression');
 
         $query = PurchaseBatch::query()
             ->with(['items.sku', 'location'])
@@ -167,7 +178,53 @@ class AuditPurchaseReceiveLedgerCommand extends Command
             $this->info("CSV written: {$csvPath} (".count($rows).' rows)');
         }
 
-        // Also append a compact summary for nightly cron logs.
+        $baselinePath = null;
+        if ($freeze) {
+            $baselinePath = $baseline->freeze($rows, [
+                'batches_scanned' => $batches->count(),
+                'batches_with_drift' => $batchHits,
+                'counts' => $counts,
+                'row_count' => count($rows),
+            ]);
+            $this->info("Baseline frozen: {$baselinePath}");
+        }
+
+        $compare = $baseline->compare($rows);
+        $this->newLine();
+        if (! $compare['has_baseline']) {
+            $this->warn('No baseline file yet. Run with --freeze-baseline once to cap historical shortfalls.');
+        } else {
+            $this->info('Baseline gate');
+            $this->table(
+                ['Metric', 'Value'],
+                [
+                    ['baseline_count', $compare['baseline_count']],
+                    ['still_present', $compare['still_present']],
+                    ['resolved', $compare['resolved']],
+                    ['new_shortfalls', count($compare['new_shortfalls'])],
+                    ['worse_shortfalls', count($compare['worse_shortfalls'])],
+                    ['open_orphans', count($compare['open_orphans'])],
+                    ['regression_count', $compare['regression_count']],
+                ]
+            );
+
+            if ($compare['new_shortfalls'] !== []) {
+                $this->warn('NEW shortfalls vs baseline (open debt growth):');
+                $this->printRegressionSample($compare['new_shortfalls'], $top);
+            }
+            if ($compare['worse_shortfalls'] !== []) {
+                $this->warn('WORSE shortfalls vs baseline:');
+                $this->printRegressionSample($compare['worse_shortfalls'], $top);
+            }
+            if ($compare['open_orphans'] !== []) {
+                $this->error('OPEN orphans / over-posted (never baselined):');
+                $this->printRegressionSample($compare['open_orphans'], $top);
+            }
+            if ($compare['regression_count'] === 0) {
+                $this->info('No regressions vs baseline — historical shortfalls capped.');
+            }
+        }
+
         $summaryPath = storage_path('logs/purchase-receive-ledger-audit-latest.json');
         File::put($summaryPath, json_encode([
             'scanned_at' => now()->toIso8601String(),
@@ -176,9 +233,52 @@ class AuditPurchaseReceiveLedgerCommand extends Command
             'counts' => $counts,
             'units' => $units,
             'row_count' => count($rows),
+            'baseline_path' => $baselinePath ?? $baseline->path(),
+            'baseline' => [
+                'has_baseline' => $compare['has_baseline'],
+                'baseline_count' => $compare['baseline_count'],
+                'still_present' => $compare['still_present'],
+                'resolved' => $compare['resolved'],
+                'new_shortfalls' => count($compare['new_shortfalls']),
+                'worse_shortfalls' => count($compare['worse_shortfalls']),
+                'open_orphans' => count($compare['open_orphans']),
+                'regression_count' => $compare['regression_count'],
+            ],
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         $this->line("Summary JSON: {$summaryPath}");
 
+        if ($failOnRegression && $compare['has_baseline'] && $compare['regression_count'] > 0) {
+            $this->error("Failing: {$compare['regression_count']} regression(s) vs baseline.");
+
+            return self::FAILURE;
+        }
+
+        // Without a baseline, fail-on-regression still blocks any orphan growth (zero-tolerance).
+        if ($failOnRegression && ! $compare['has_baseline'] && count($compare['open_orphans']) > 0) {
+            $this->error('Failing: orphan/excess present and no baseline to compare shortfalls.');
+
+            return self::FAILURE;
+        }
+
         return self::SUCCESS;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function printRegressionSample(array $rows, int $top): void
+    {
+        $sample = array_slice($rows, 0, $top);
+        $this->table(
+            ['Batch', 'SKU', 'Category', 'Expected', 'Posted', 'Delta'],
+            collect($sample)->map(fn ($r) => [
+                $r['batch_number'] ?? $r['batch_id'] ?? '',
+                $r['sku_code'] ?? $r['sku_id'] ?? '',
+                $r['category'] ?? '',
+                $r['expected'] ?? 0,
+                $r['posted'] ?? 0,
+                $r['delta'] ?? 0,
+            ])->all()
+        );
     }
 }

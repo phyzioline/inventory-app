@@ -147,7 +147,9 @@ undefined.
 | Command | Purpose |
 |---|---|
 | `inventory:repair-received-purchase-sku-remap` | Dry-run / `--apply` orphan stock after SKU remap on received POs |
-| `inventory:audit-purchase-receive-ledger` | Classify receive ledger drift (orphans, shortfalls, legacy morph) — no auto-fill |
+| `inventory:audit-purchase-receive-ledger` | Classify receive ledger drift — no auto-fill |
+| `… --freeze-baseline` | Cap historical shortfalls in `storage/app/purchase-receive-ledger-baseline.json` |
+| `… --fail-on-regression` | Exit 1 on NEW/WORSE shortfall or any orphan (nightly cron) |
 
 ---
 

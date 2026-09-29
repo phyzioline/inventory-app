@@ -21,6 +21,13 @@ class SettlementService
 
     private const STATUS_REVERSED = 'reversed';
 
+    /** @var array<int, array<string, true>> */
+    private array $seenLineFingerprintsBySettlement = [];
+
+    public function __construct(
+        private readonly SettlementLineClassifier $lineClassifier
+    ) {}
+
     /**
      * Import Amazon settlement (XML/TXT/CSV) and store lines.
      */
@@ -123,10 +130,15 @@ class SettlementService
                     $raw = is_array($line['raw_data'] ?? null) ? $line['raw_data'] : [];
                     $raw['import_line_seq'] = $lineSeq;
                     $line['raw_data'] = $raw;
+                    $line = $this->withSettlementItemDefaults($line);
 
                     $decision = $this->resolveDeduplicationDecision($settlement, $line);
                     if (($decision['action'] ?? 'create') === 'skip_duplicate') {
                         $stats['skipped_duplicates'] = (int) ($stats['skipped_duplicates'] ?? 0) + 1;
+                        $fp = (string) ($line['line_fingerprint'] ?? '');
+                        if ($fp !== '') {
+                            $this->seenLineFingerprintsBySettlement[(int) $settlement->id][$fp] = true;
+                        }
 
                         continue;
                     }
@@ -140,6 +152,7 @@ class SettlementService
                             'quantity' => $line['quantity'] ?? $existing->quantity,
                             'sku' => $line['sku'] ?? $existing->sku,
                             'description' => $line['description'] ?? $existing->description,
+                            'transaction_type' => $line['transaction_type'] ?? $existing->transaction_type,
                             'transaction_status' => $line['transaction_status'] ?? $existing->transaction_status,
                             'transaction_date' => $line['transaction_date'] ?? $existing->transaction_date,
                             'merchant_identifier' => $line['merchant_identifier'] ?? $existing->merchant_identifier,
@@ -147,19 +160,31 @@ class SettlementService
                             'marketplace_name' => $line['marketplace_name'] ?? $existing->marketplace_name,
                             'currency' => $line['currency'] ?? $existing->currency,
                             'raw_data' => $line['raw_data'] ?? $existing->raw_data,
+                            'line_kind' => $line['line_kind'] ?? $existing->line_kind,
+                            'line_fingerprint' => $line['line_fingerprint'] ?? $existing->line_fingerprint,
                         ]);
                         $stats['updated_lines'] = (int) ($stats['updated_lines'] ?? 0) + 1;
                     } else {
-                        SettlementItem::create($this->withSettlementItemDefaults(array_merge([
+                        SettlementItem::create(array_merge([
                             'settlement_id' => $settlement->id,
                             'raw_data' => $line['raw_data'] ?? [],
-                        ], $line)));
+                        ], $line));
                         $stats['new_lines'] = (int) ($stats['new_lines'] ?? 0) + 1;
+                    }
+
+                    $fp = (string) ($line['line_fingerprint'] ?? '');
+                    if ($fp !== '') {
+                        $this->seenLineFingerprintsBySettlement[(int) $settlement->id][$fp] = true;
                     }
 
                     $amount = (float) ($line['amount'] ?? 0);
                     $stats['amount'] += $amount;
-                    $bucket = $this->bucketByTransactionType((string) ($line['transaction_type'] ?? ''), $amount);
+                    $bucket = $this->bucketByTransactionType(
+                        (string) ($line['transaction_type'] ?? ''),
+                        $amount,
+                        (string) ($line['description'] ?? ''),
+                        (string) ($line['line_kind'] ?? '')
+                    );
                     if ($bucket === 'order') {
                         $stats['orders']++;
                     } elseif ($bucket === 'refund') {
@@ -175,6 +200,7 @@ class SettlementService
                     'total_amount' => $stats['amount'],
                     'status' => 'draft',
                 ]);
+                $this->pruneUnseenSettlementLines((int) $settlement->id);
             }
 
             DB::commit();
@@ -223,7 +249,7 @@ class SettlementService
                     'status' => 'processing',
                     'merchant_identifier' => $merchantIdentifier ?: $settlement->merchant_identifier,
                 ]);
-                SettlementItem::where('settlement_id', $settlement->id)->delete();
+                // Do not wipe lines — upsert by fingerprint keeps InventoryReturn metadata stable.
             } else {
                 $settlement = Settlement::create([
                     'channel_id' => $channelId,
@@ -264,6 +290,7 @@ class SettlementService
                 'total_amount' => $headerTotal !== 0.0 ? $headerTotal : $stats['amount'],
                 'status' => 'draft',
             ]);
+            $this->pruneUnseenSettlementLines((int) $settlement->id);
 
             DB::commit();
 
@@ -509,7 +536,25 @@ class SettlementService
 
     private function createSettlementLine(Settlement $settlement, array $payload, array &$stats, string $bucket): void
     {
-        SettlementItem::create($this->withSettlementItemDefaults(array_merge(['settlement_id' => $settlement->id], $payload)));
+        $payload = $this->withSettlementItemDefaults(array_merge(['settlement_id' => $settlement->id], $payload));
+        $fp = (string) ($payload['line_fingerprint'] ?? '');
+        $existing = $fp !== ''
+            ? SettlementItem::query()
+                ->where('settlement_id', $settlement->id)
+                ->where('line_fingerprint', $fp)
+                ->first()
+            : null;
+
+        if ($existing) {
+            $existing->update($payload);
+        } else {
+            SettlementItem::create($payload);
+        }
+
+        if ($fp !== '') {
+            $this->seenLineFingerprintsBySettlement[(int) $settlement->id][$fp] = true;
+        }
+
         $stats['total_rows']++;
         $stats['amount'] += (float) ($payload['amount'] ?? 0);
 
@@ -616,19 +661,11 @@ class SettlementService
                         ->whereRaw("{$oidNormSql} IN ({$placeholders})", $normalizedCandidates);
 
                     if (! empty($preferredChannelIds)) {
-                        // Try preferred channels first, but do not block matching completely if the order
-                        // was imported under the wrong channel (common after migrations / channel remaps).
+                        // Prefer settlement channel family only — never match another marketplace's order id.
                         $order = (clone $normQuery)
                             ->whereIn('channel_id', $preferredChannelIds)
                             ->orderByRaw('CASE WHEN channel_id = ? THEN 0 ELSE 1 END', [$preferredChannelIds[0]])
                             ->first();
-                        if ($order) {
-                            // Found under preferred channel; skip the wide lookup below.
-                            // (Keeps deterministic channel preference behavior.)
-                            // no-op
-                        } else {
-                            $order = $normQuery->first();
-                        }
                     } else {
                         $order = $normQuery->first();
                     }
@@ -636,10 +673,7 @@ class SettlementService
             }
 
             if (! $order) {
-                // Last fallback: same order id on any channel for this user.
-                if (! empty($orderIdCandidates)) {
-                    $order = InventoryOrder::whereIn('platform_order_id', $orderIdCandidates)->first();
-                }
+                // No cross-channel fallback: same platform order id on Amazon must not match Jumia/Noon.
             }
 
             if ($order) {
@@ -1963,6 +1997,10 @@ class SettlementService
             // Noon: same stable key as sales export (inventory_orders.platform_order_id)
             'item_nr', 'item nr', 'item-nr',
             'noon order id', 'noon_order_id',
+            // Jumia
+            'purchase item id', 'purchase-item-id', 'purchase_item_id',
+            'order item id', 'order-item-id', 'order_item_id',
+            'jumia order id', 'jumia_order_id', 'package id', 'package-id',
         ]);
         $orderId = $orderId !== null ? $this->normalizeImportedPlatformOrderId($orderId) : null;
 
@@ -1970,7 +2008,11 @@ class SettlementService
         $amount = $money['amount'];
         $feeAmount = $money['fee_amount'];
 
-        $rawTypeValue = (string) ($this->pickValue($data, ['transaction-type', 'transaction type', 'type', 'نوع المعاملة']) ?? '');
+        $rawTypeValue = (string) ($this->pickValue($data, [
+            'transaction-type', 'transaction type', 'type', 'نوع المعاملة',
+            'transaction type name', 'payment type', 'payment-type',
+            'jumia transaction type',
+        ]) ?? '');
         $typeRaw = strtolower($rawTypeValue);
         $transactionStatus = $this->normalizeTransactionStatus(
             $this->pickValue($data, ['transaction-status', 'transaction status', 'status', 'حالة المعاملة'])
@@ -1979,11 +2021,13 @@ class SettlementService
             'amount-type', 'amount type', 'price-type', 'price type', 'amount type',
         ]) ?? ''));
 
-        $description = trim((string) $this->pickValue($data, [
+        $description = trim((string) ($this->pickValue($data, [
             'description', 'title', 'amount-description', 'amount-description', 'amount type', 'amount-type', 'details',
-        ]));
+            'transaction comment', 'comment', 'remarks',
+        ]) ?? ''));
 
         $descLower = strtolower($description);
+        // Never treat amount sign alone as refund — negative commission/shipping is still a fee.
         $isRefund = str_contains($typeRaw, 'refund')
             || str_contains($typeRaw, 'return')
             || str_contains($typeRaw, 'استرداد')
@@ -1992,8 +2036,24 @@ class SettlementService
             || str_contains($descLower, 'return')
             || str_contains($description, 'استرداد')
             || str_contains($description, 'مرتجع')
-            || $amount < 0;
-        $type = $isRefund ? 'Refund' : (str_contains($typeRaw, 'order') || $amount > 0 ? 'Order' : 'OtherTransaction');
+            || str_contains($typeRaw, 'customer return')
+            || str_contains($typeRaw, 'failed delivery');
+
+        $isFeeHint = str_contains($typeRaw, 'commission')
+            || str_contains($typeRaw, 'fee')
+            || str_contains($typeRaw, 'shipping')
+            || str_contains($descLower, 'commission')
+            || str_contains($descLower, 'fee');
+
+        if ($isRefund) {
+            $type = 'Refund';
+        } elseif ($isFeeHint) {
+            $type = $rawTypeValue !== '' ? $rawTypeValue : 'OtherTransaction';
+        } elseif (str_contains($typeRaw, 'order') || $amount > 0) {
+            $type = 'Order';
+        } else {
+            $type = $rawTypeValue !== '' ? $rawTypeValue : 'OtherTransaction';
+        }
 
         if ($orderId === null && $amount === 0.0) {
             return null;
@@ -2010,7 +2070,10 @@ class SettlementService
             'platform_order_id' => $orderId,
             'transaction_type' => $this->normalizeTransactionType($rawTypeValue !== '' ? $rawTypeValue : $type),
             'transaction_status' => $transactionStatus,
-            'sku' => $this->pickValue($data, ['sku', 'skus', 'partner skus', 'partner-skus', 'merchant-sku', 'merchant sku', 'msku', 'رقم تخزين سلعة التاجر msku']),
+            'sku' => $this->pickValue($data, [
+                'sku', 'skus', 'partner skus', 'partner-skus', 'merchant-sku', 'merchant sku', 'msku',
+                'رقم تخزين سلعة التاجر msku', 'seller sku', 'seller-sku', 'shop sku',
+            ]),
             'description' => $normalizedDescription,
             'amount' => $amount,
             'fee_amount' => $feeAmount,
@@ -2037,7 +2100,60 @@ class SettlementService
             $payload['transaction_status'] = 'released';
         }
 
+        if (empty($payload['line_kind'])) {
+            $payload['line_kind'] = $this->lineClassifier->classify($payload);
+        }
+
+        if (empty($payload['line_fingerprint'])) {
+            $payload['line_fingerprint'] = $this->buildLineFingerprint($payload);
+        }
+
         return $payload;
+    }
+
+    /**
+     * Stable identity for a settlement line across re-imports of the same report.
+     */
+    private function buildLineFingerprint(array $payload): string
+    {
+        $date = $payload['transaction_date'] ?? null;
+        if ($date instanceof \DateTimeInterface) {
+            $dateStr = $date->format('Y-m-d H:i:s');
+        } elseif (is_string($date) && $date !== '') {
+            $dateStr = $date;
+        } else {
+            $dateStr = '';
+        }
+
+        return hash('sha256', implode('|', [
+            strtolower(trim((string) ($payload['platform_order_id'] ?? ''))),
+            strtolower(trim((string) ($payload['transaction_type'] ?? ''))),
+            strtolower(trim((string) ($payload['description'] ?? ''))),
+            strtolower(trim((string) ($payload['sku'] ?? ''))),
+            number_format((float) ($payload['amount'] ?? 0), 4, '.', ''),
+            number_format((float) ($payload['fee_amount'] ?? 0), 4, '.', ''),
+            (string) (int) ($payload['quantity'] ?? 0),
+            $dateStr,
+            strtolower(trim((string) ($payload['transaction_status'] ?? self::STATUS_RELEASED))),
+        ]));
+    }
+
+    private function pruneUnseenSettlementLines(int $settlementId): void
+    {
+        $seen = $this->seenLineFingerprintsBySettlement[$settlementId] ?? [];
+        if ($seen === []) {
+            return;
+        }
+
+        SettlementItem::query()
+            ->where('settlement_id', $settlementId)
+            ->where(function ($q) use ($seen) {
+                $q->whereNull('line_fingerprint')
+                    ->orWhereNotIn('line_fingerprint', array_keys($seen));
+            })
+            ->delete();
+
+        unset($this->seenLineFingerprintsBySettlement[$settlementId]);
     }
 
     private function pickValue(array $row, array $keys): ?string
@@ -2177,6 +2293,20 @@ class SettlementService
 
     private function resolveDeduplicationDecision(Settlement $settlement, array $line): array
     {
+        $fingerprint = (string) ($line['line_fingerprint'] ?? '');
+        if ($fingerprint === '') {
+            $fingerprint = $this->buildLineFingerprint($line);
+        }
+        if ($fingerprint !== '') {
+            $byFp = SettlementItem::query()
+                ->where('settlement_id', $settlement->id)
+                ->where('line_fingerprint', $fingerprint)
+                ->first();
+            if ($byFp) {
+                return ['action' => 'update_existing', 'item' => $byFp];
+            }
+        }
+
         $orderId = trim((string) ($line['platform_order_id'] ?? ''));
         $transactionType = strtolower(trim((string) ($line['transaction_type'] ?? '')));
         $incomingDate = $this->parseDate((string) ($line['transaction_date'] ?? null));
@@ -2215,17 +2345,36 @@ class SettlementService
             ->first();
 
         if ($exactDuplicate) {
-            return ['action' => 'skip_duplicate', 'item' => $exactDuplicate];
+            // Prefer update so fingerprint/line_kind get backfilled on legacy rows.
+            return ['action' => 'update_existing', 'item' => $exactDuplicate];
         }
 
         // Always create a new row if it isn't an exact duplicate.
         return ['action' => 'create', 'item' => null];
     }
 
-    private function bucketByTransactionType(string $type, float $amount): string
+    private function bucketByTransactionType(string $type, float $amount, ?string $description = null, ?string $lineKind = null): string
     {
+        if ($lineKind) {
+            $bucket = $this->lineClassifier->summaryBucket($lineKind);
+            if (in_array($bucket, ['refund'], true)) {
+                return 'refund';
+            }
+            if (in_array($bucket, ['revenue'], true)) {
+                return 'order';
+            }
+
+            return 'fee';
+        }
+
         $t = strtolower($type);
-        if (str_contains($t, 'refund') || str_contains($t, 'return') || $amount < 0) {
+        $d = strtolower((string) $description);
+        if (
+            str_contains($t, 'refund')
+            || str_contains($t, 'return')
+            || str_contains($d, 'refund')
+            || str_contains($d, 'return')
+        ) {
             return 'refund';
         }
         if (str_contains($t, 'order') || $amount > 0) {
@@ -2251,7 +2400,7 @@ class SettlementService
                 'status' => 'processing',
                 'merchant_identifier' => $merchantIdentifier ?: $settlement->merchant_identifier,
             ]);
-            SettlementItem::where('settlement_id', $settlement->id)->delete();
+            // Keep existing lines; upsert by fingerprint then prune unseen.
 
             return $settlement;
         }

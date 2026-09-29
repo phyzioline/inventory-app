@@ -36,7 +36,27 @@ For `status=received` batches with mapped `sku_id`:
 | Command | Writes stock? | Purpose |
 |---------|---------------|---------|
 | `inventory:audit-purchase-receive-ledger` | No | Classify drift |
+| `… --freeze-baseline` | No (writes baseline JSON) | Cap historical shortfalls |
+| `… --fail-on-regression` | No | Exit 1 on NEW/WORSE shortfall or any orphan |
 | `inventory:repair-received-purchase-sku-remap` | Orphans only | Remove excess |
+
+### Baseline gate (cap on the “لا”)
+
+Historical shortfalls are **frozen**, not filled:
+
+```bash
+php artisan inventory:audit-purchase-receive-ledger --freeze-baseline
+```
+
+File: `storage/app/purchase-receive-ledger-baseline.json`
+
+| What | Treated as |
+|------|------------|
+| `shortfall_*` / `legacy_morph_candidate` present at freeze | Accepted historical debt (still listed, not open growth) |
+| NEW or WORSE shortfall after freeze | Regression — nightly fails |
+| Any `orphan_excess` / `over_posted` / `multi_sku_batch` | Always open — never baselined |
+
+Nightly cron runs with `--fail-on-regression`. Re-freeze only after intentional manual closure of debt (or accepted new inventory count), never to hide a live bug.
 
 ### Categories
 
@@ -45,9 +65,9 @@ For `status=received` batches with mapped `sku_id`:
 | `orphan_excess` | Posted > 0 but lines claim 0 (remap leftover) | Yes via remap repair |
 | `over_posted` | Posted > expected on current SKU | Remap repair (negative delta) |
 | `multi_sku_batch` | Orphan in multi-SKU batch | Remap repair |
-| `shortfall_zero_posted` | Line qty > 0, ledger 0 | **Never** auto-fill |
-| `shortfall_partial` | Line qty > posted > 0 | Manual review |
-| `legacy_morph_candidate` | Shortfall + old Modules reference_type | Normalize morph first |
+| `shortfall_zero_posted` | Line qty > 0, ledger 0 | **Never** auto-fill — baseline |
+| `shortfall_partial` | Line qty > posted > 0 | Manual review — baseline |
+| `legacy_morph_candidate` | Shortfall + old Modules reference_type | Normalize morph first — baseline |
 
 ### Runtime gates
 
@@ -87,9 +107,15 @@ For `status=received` batches with mapped `sku_id`:
 | Return analytics net | Client estimate | Product estimate — not official |
 
 Canonical formula:  
-`revenue (settlement net if any) − unit COGS − order refunds − period expenses`.
+`revenue (settlement net if any) − unit COGS − non-settlement order refunds − period expenses`.
+
+**Settlement vs returns (Amazon N / N+1):** Product refunds deducted on a later payment sheet are already inside `SUM(settlement_items.amount)`. InventoryReturn rows with `external_status=refund_from_payment_sheet` (or `metadata.settlement_item_id`) are operational claims only — **not** subtracted again from official P&L when settlement net exists.
 
 Purchases (`purchase_batches.grand_total`) = inventory investment only.
+
+Settlement sheet line taxonomy (`settlement_items.line_kind`): order_principal, platform_fee, shipping_fee, refund_principal, advertising, disbursal, withholding, … — summary KPIs bucket by kind; amount sign alone never means refund.
+
+Re-import uses `line_fingerprint` upsert (IDs stable) instead of wipe-and-recreate.
 
 ---
 
@@ -114,9 +140,9 @@ Purchases (`purchase_batches.grand_total`) = inventory investment only.
 | Control | Schedule |
 |---------|----------|
 | `inventory:ensure-queue-healthy` | Every minute |
-| `inventory:audit-purchase-receive-ledger` | Daily 02:40 UTC → `storage/logs/purchase-receive-ledger-audit.log` + `…-latest.json` |
+| `inventory:audit-purchase-receive-ledger --fail-on-regression` | Daily 02:40 UTC → `storage/logs/purchase-receive-ledger-audit.log` + `…-latest.json` |
 
-Pest: receive ledger assert + classify categories (test DB only).
+Pest: receive ledger assert + classify categories + baseline compare (test DB only).
 
 ---
 
@@ -126,3 +152,4 @@ Pest: receive ledger assert + classify categories (test DB only).
 2. Do **not** run inventory artisan from phyzioline.com.
 3. Do **not** `migrate:fresh` / production wipe.
 4. Official “صافي الربح” only from Profit Engine accrual APIs.
+5. Cap historical shortfalls with `--freeze-baseline`; never invent IN txs to clear them.

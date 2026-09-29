@@ -201,3 +201,155 @@ it('keeps ROI net_profit identical to profit-summary and ignores purchase invoic
     $broken = $roi['revenue'] - $roi['total_purchases'] - $roi['total_expenses'];
     expect($roi['net_profit'])->not->toBe(round($broken, 2));
 });
+
+it('counts Amazon later-sheet refund once via settlement net and ignores payment-sheet InventoryReturn', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    $channel = Channel::query()->create([
+        'name' => 'Amazon PnL',
+        'slug' => 'amazon-pnl-'.uniqid(),
+        'type' => 'marketplace',
+        'is_active' => true,
+    ]);
+    $channel->update(['user_id' => $user->id]);
+
+    $master = MasterProduct::query()->create([
+        'internal_name' => 'Yoga Roll',
+        'is_active' => true,
+        'last_purchase_price' => 50,
+    ]);
+    $master->update(['user_id' => $user->id]);
+
+    $offer = InventoryOffer::query()->create([
+        'master_product_id' => $master->id,
+        'name' => 'Yoga Roll',
+        'type' => 'single',
+    ]);
+    $offer->update(['user_id' => $user->id]);
+
+    $sku = Sku::query()->create([
+        'offer_id' => $offer->id,
+        'sku' => 'YR-'.uniqid(),
+        'channel_id' => $channel->id,
+        'cost_price' => 50,
+        'selling_price' => 200,
+        'is_active' => true,
+    ]);
+    $sku->update(['user_id' => $user->id]);
+
+    $platformOrderId = '402-SETTLE-REFUND-1';
+    $order = InventoryOrder::query()->create([
+        'channel_id' => $channel->id,
+        'platform_order_id' => $platformOrderId,
+        'status' => 'completed',
+        'order_date' => '2026-09-05',
+        'total_amount' => 200,
+        'user_id' => $user->id,
+    ]);
+
+    InventoryOrderItem::query()->create([
+        'inventory_order_id' => $order->id,
+        'sku_id' => $sku->id,
+        'sku_code' => $sku->sku,
+        'product_name' => 'Yoga Roll',
+        'quantity' => 1,
+        'unit_price' => 200,
+        'total_price' => 200,
+        'user_id' => $user->id,
+    ]);
+
+    $settlementPay = Settlement::query()->create([
+        'channel_id' => $channel->id,
+        'report_id' => 'RPT-PAY-'.uniqid(),
+        'start_date' => '2026-09-01',
+        'end_date' => '2026-09-15',
+        'total_amount' => 170,
+        'status' => 'reconciled',
+        'user_id' => $user->id,
+    ]);
+
+    // Sheet N: principal + commission
+    \App\Domain\Models\Wms\SettlementItem::query()->create([
+        'settlement_id' => $settlementPay->id,
+        'platform_order_id' => $platformOrderId,
+        'inventory_order_id' => $order->id,
+        'transaction_type' => 'Order',
+        'transaction_status' => 'released',
+        'line_kind' => 'order_principal',
+        'description' => 'ItemPrice: Principal',
+        'amount' => 200,
+        'fee_amount' => 0,
+        'quantity' => 1,
+        'transaction_date' => '2026-09-10 12:00:00',
+        'reconciliation_status' => 'matched',
+    ]);
+    \App\Domain\Models\Wms\SettlementItem::query()->create([
+        'settlement_id' => $settlementPay->id,
+        'platform_order_id' => $platformOrderId,
+        'inventory_order_id' => $order->id,
+        'transaction_type' => 'Order',
+        'transaction_status' => 'released',
+        'line_kind' => 'platform_fee',
+        'description' => 'ItemFee: Commission',
+        'amount' => -30,
+        'fee_amount' => 0,
+        'quantity' => 1,
+        'transaction_date' => '2026-09-10 12:00:00',
+        'reconciliation_status' => 'matched',
+    ]);
+
+    $settlementRefund = Settlement::query()->create([
+        'channel_id' => $channel->id,
+        'report_id' => 'RPT-REF-'.uniqid(),
+        'start_date' => '2026-09-16',
+        'end_date' => '2026-09-30',
+        'total_amount' => -200,
+        'status' => 'reconciled',
+        'user_id' => $user->id,
+    ]);
+
+    $refundItem = \App\Domain\Models\Wms\SettlementItem::query()->create([
+        'settlement_id' => $settlementRefund->id,
+        'platform_order_id' => $platformOrderId,
+        'inventory_order_id' => $order->id,
+        'transaction_type' => 'Refund',
+        'transaction_status' => 'released',
+        'line_kind' => 'refund_principal',
+        'description' => 'RefundPrice: Principal',
+        'amount' => -200,
+        'fee_amount' => 0,
+        'quantity' => 1,
+        'transaction_date' => '2026-09-20 12:00:00',
+        'reconciliation_status' => 'matched',
+    ]);
+
+    // Claim return created from payment sheet — must NOT double-subtract.
+    \App\Domain\Models\Wms\InventoryReturn::query()->create(
+        \App\Domain\Models\Wms\InventoryReturn::mergeCreateDefaults([
+            'inventory_order_id' => $order->id,
+            'platform_return_id' => 'STL-TEST-'.$refundItem->id,
+            'sku_code' => $sku->sku,
+            'return_quantity' => 1,
+            'return_date' => '2026-09-20',
+            'external_status' => 'refund_from_payment_sheet',
+            'refund_amount' => 200,
+            'status' => 'pending',
+            'user_id' => $user->id,
+            'metadata' => [
+                'settlement_item_id' => $refundItem->id,
+                'claim_marker' => true,
+            ],
+        ])
+    );
+
+    $svc = app(ProfitEngineService::class);
+    $summary = $svc->getProfitSummary('2026-09-01', '2026-09-30');
+
+    // Net across sheets: 200 - 30 - 200 = -30; profit = -30 - COGS(50) = -80
+    // Old bug: also subtracted InventoryReturn 200 → -280
+    expect($summary['revenue'])->toBe(-30.0)
+        ->and($summary['refunds'])->toBe(0.0)
+        ->and($summary['cogs'])->toBe(50.0)
+        ->and($summary['net_profit'])->toBe(-80.0);
+});

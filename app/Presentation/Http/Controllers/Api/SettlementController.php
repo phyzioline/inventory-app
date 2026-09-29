@@ -79,107 +79,93 @@ class SettlementController extends Controller
 
         $items = SettlementItem::query()
             ->whereIn('settlement_id', $settlementQuery)
-            ->get(['transaction_type', 'transaction_status', 'description', 'amount', 'fee_amount', 'raw_data']);
+            ->get(['transaction_type', 'transaction_status', 'description', 'amount', 'fee_amount', 'raw_data', 'line_kind']);
 
         $summary = [
             'total_revenue' => 0.0,
             'total_fees' => 0.0,
             'amazon_fees' => 0.0,
+            'platform_fees' => 0.0,
             'shipping_fees' => 0.0,
+            'advertising_fees' => 0.0,
             'total_refunds' => 0.0,
             'pending_money' => 0.0,
             'net_profit' => 0.0,
             'order_count' => 0,
             'refund_count' => 0,
             'fee_count' => 0,
+            'settlements_count' => (clone $settlementQuery)->count(),
         ];
+
+        $classifier = app(\App\Application\Services\SettlementLineClassifier::class);
 
         foreach ($items as $item) {
             $amount = (float) ($item->amount ?? 0);
             $feeAmount = (float) ($item->fee_amount ?? 0);
-            $type = strtolower((string) ($item->transaction_type ?? ''));
-            $normalizedStatus = $this->service->normalizeTransactionStatus((string) ($item->transaction_status ?? ''));
-            $description = strtolower((string) ($item->description ?? ''));
-            $isReleased = ! in_array($normalizedStatus, ['deferred', 'pending', 'reversed'], true);
+            $lineKind = (string) ($item->line_kind ?? '');
+            if ($lineKind === '') {
+                $lineKind = $classifier->classify([
+                    'transaction_type' => $item->transaction_type,
+                    'description' => $item->description,
+                    'transaction_status' => $item->transaction_status,
+                    'amount' => $amount,
+                    'fee_amount' => $feeAmount,
+                    'raw_data' => $item->raw_data,
+                ]);
+            }
 
-            if (! $isReleased) {
+            $bucket = $classifier->summaryBucket($lineKind);
+            $value = abs($feeAmount !== 0.0 && in_array($bucket, ['shipping_fee', 'platform_fee', 'advertising'], true)
+                ? $feeAmount
+                : $amount);
+
+            if ($bucket === 'pending') {
                 $summary['pending_money'] += abs($amount);
 
                 continue;
             }
 
-            $rawData = is_array($item->raw_data) ? $item->raw_data : [];
-            $shippingFromRaw = abs($this->extractNumericFromRaw($rawData, [
-                'shipping-fee', 'shipping fee', 'shipping_amount', 'shipping amount',
-                'shipping', 'shipping-price', 'shipping price',
-                'رسوم الشحن', 'سعر الشحن', 'أخرى', 'اخرى',
-            ]));
-            $amazonFeesFromRaw = abs($this->extractNumericFromRaw($rawData, [
-                'amazon-fee', 'amazon fee', 'fees', 'fee-amount', 'fee amount',
-                'رسوم أمازون', 'رسوم امازون', 'إجمالي رسوم المنتج', 'اجمالي رسوم المنتج',
-            ]));
-
-            // Refund detection should rely on semantic type/description, not amount sign alone.
-            // Many valid fee lines are negative (commission/fba/shipping chargeback).
-            $isRefund = str_contains($type, 'refund')
-                || str_contains($type, 'return')
-                || str_contains($description, 'refundprice')
-                || str_contains($description, 'refund price')
-                || str_contains($description, 'refund principal')
-                || str_contains($description, 'refund')
-                || str_contains($description, 'return');
-
-            $isShippingFee = str_contains($description, 'itemfee: shipping')
-                || str_contains($description, 'shippinghb')
-                || str_contains($description, 'shippingchargeback')
-                || str_contains($description, 'shipping fee')
-                || str_contains($description, 'shipment');
-
-            $isFee = str_contains($description, 'itemfee:')
-                || str_contains($description, 'fee')
-                || str_contains($description, 'commission')
-                || str_contains($description, 'fba')
-                || str_contains($description, 'chargeback')
-                || str_contains($description, 'codfee')
-                || str_contains($type, 'othertransaction')
-                || str_contains($type, 'advertising')
-                || str_contains($description, 'advertising:');
-
-            $isOrder = str_contains($type, 'order')
-                || (! $isRefund && ! $isFee && $amount > 0);
-
-            if ($isOrder) {
+            if ($bucket === 'revenue') {
                 $summary['total_revenue'] += abs($amount);
                 $summary['order_count']++;
 
                 continue;
             }
 
-            if ($isRefund) {
+            if ($bucket === 'refund') {
                 $summary['total_refunds'] += abs($amount);
                 $summary['refund_count']++;
 
                 continue;
             }
 
-            if ($isShippingFee) {
-                $shippingValue = $shippingFromRaw > 0 ? $shippingFromRaw : abs($feeAmount !== 0.0 ? $feeAmount : $amount);
-                $summary['shipping_fees'] += $shippingValue;
-                $summary['total_fees'] += $shippingValue;
+            if ($bucket === 'shipping_fee') {
+                $summary['shipping_fees'] += $value;
+                $summary['total_fees'] += $value;
                 $summary['fee_count']++;
 
                 continue;
             }
 
-            if ($shippingFromRaw > 0) {
-                $summary['shipping_fees'] += $shippingFromRaw;
+            if ($bucket === 'advertising') {
+                $summary['advertising_fees'] += $value;
+                $summary['total_fees'] += $value;
+                $summary['platform_fees'] += $value;
+                $summary['amazon_fees'] += $value;
+                $summary['fee_count']++;
+
+                continue;
             }
 
-            $genericFee = abs($feeAmount !== 0.0 ? $feeAmount : $amount);
-            $amazonLikeFee = $amazonFeesFromRaw > 0 ? $amazonFeesFromRaw : $genericFee;
+            if ($bucket === 'disbursal') {
+                // Bank payout rows are cash movement, not product revenue/fees.
+                continue;
+            }
 
-            $summary['total_fees'] += $genericFee;
-            $summary['amazon_fees'] += $amazonLikeFee;
+            // platform_fee / other
+            $summary['platform_fees'] += $value;
+            $summary['amazon_fees'] += $value; // legacy alias for older SPA clients
+            $summary['total_fees'] += $value;
             $summary['fee_count']++;
         }
 
