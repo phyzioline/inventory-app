@@ -401,6 +401,9 @@ class FbaShipmentTransferController extends Controller
      * otherwise the UI shows only the numeric id (e.g. 6210) because that SKU isn't present in the shop warehouse list.
      * When the source location has a channel_id, also restrict to that channel (no merchant/FBA listings).
      *
+     * Linked catalog shop SKUs often have no sku_inventory row yet (zero stock after linking). Those must still
+     * resolve as matched with available=0 — not as "unlinked" — so the user sees shortage, not a false unlink.
+     *
      * @param  list<string>  $candidateCodes
      * @return array{sku: ?Sku, matched_by: ?string}
      */
@@ -442,7 +445,7 @@ class FbaShipmentTransferController extends Controller
             }
         }
 
-        // Alias fallback: but prefer the SKU that exists in the source location (+ channel) if possible.
+        // Alias fallback: prefer inventory at source location, then any source-channel sibling (even at qty 0).
         foreach ($candidateCodes as $code) {
             $lower = mb_strtolower($code);
             $alias = ProductAlias::with('masterProduct')
@@ -452,14 +455,19 @@ class FbaShipmentTransferController extends Controller
                 continue;
             }
 
-            $skusQ = $alias->masterProduct->skus()->with(['offer.masterProduct', 'channel']);
-            if ($sourceLocationId) {
-                $skusQ->whereHas('inventory', fn ($q) => $q->where('location_id', $sourceLocationId));
-            }
+            $base = $alias->masterProduct->skus()->with(['offer.masterProduct', 'channel']);
             if ($sourceChannelId) {
-                $skusQ->where('channel_id', $sourceChannelId);
+                $base->where('channel_id', $sourceChannelId);
             }
-            $sku = $skusQ->first();
+
+            $withInv = (clone $base);
+            if ($sourceLocationId) {
+                $withInv->whereHas('inventory', fn ($q) => $q->where('location_id', $sourceLocationId));
+            }
+            $sku = $withInv->orderBy('id')->first();
+            if (! $sku) {
+                $sku = $base->orderBy('id')->first();
+            }
             if ($sku) {
                 return ['sku' => $sku, 'matched_by' => "alias: {$code}"];
             }
@@ -470,8 +478,13 @@ class FbaShipmentTransferController extends Controller
 
     private function resolveShopSkuFromMatchedSku(?Sku $sku, ?int $sourceLocationId, ?int $sourceChannelId = null): ?Sku
     {
-        if (! $sku || ! $sourceLocationId) {
+        if (! $sku) {
             return null;
+        }
+
+        // No source warehouse selected — keep the matched listing as-is.
+        if (! $sourceLocationId) {
+            return $sku;
         }
 
         $inLocation = SkuInventory::query()
@@ -485,17 +498,32 @@ class FbaShipmentTransferController extends Controller
             return $sku;
         }
 
-        $masterId = $sku->offer?->masterProduct?->id ?? null;
+        $offer = $sku->relationLoaded('offer') ? $sku->offer : $sku->offer()->with('masterProduct')->first();
+        $masterId = $offer?->masterProduct?->id ?? $offer?->master_product_id ?? null;
         if (! $masterId) {
-            return null;
+            // Linked FBA listing with no master yet cannot map to a shop source.
+            return $channelOk ? $sku : null;
         }
 
-        // Find a SKU for the same master product that exists in the chosen shop location (+ channel).
+        $offerId = (int) ($sku->offer_id ?? $offer?->id ?? 0);
+
+        // Same master (+ preferred same offer), same source channel. Prefer a row that already
+        // has inventory at the chosen warehouse, but accept a freshly linked shop SKU with no
+        // sku_inventory row yet (available will be 0 / insufficient — not "unlinked").
         $shopSku = Sku::query()
             ->with(['offer.masterProduct', 'channel'])
             ->whereHas('offer', fn ($q) => $q->where('master_product_id', $masterId))
-            ->whereHas('inventory', fn ($q) => $q->where('location_id', $sourceLocationId))
             ->when($sourceChannelId, fn ($q) => $q->where('channel_id', $sourceChannelId))
+            ->when($offerId > 0, function ($q) use ($offerId) {
+                $q->orderByRaw('CASE WHEN offer_id = ? THEN 0 ELSE 1 END', [$offerId]);
+            })
+            ->orderByRaw(
+                'CASE WHEN EXISTS (
+                    SELECT 1 FROM sku_inventory si
+                    WHERE si.sku_id = skus.id AND si.location_id = ?
+                ) THEN 0 ELSE 1 END',
+                [$sourceLocationId]
+            )
             ->orderBy('id')
             ->first();
 

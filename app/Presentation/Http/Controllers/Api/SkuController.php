@@ -705,20 +705,26 @@ class SkuController extends Controller
             $storeSku->update(['user_id' => $userId]);
         }
 
-        // If the channel SKU has any inventory rows under MAIN STORE locations (created by prior incorrect deductions),
-        // move them to the store SKU so the shop balance reflects reality and the channel SKU stops showing negatives.
-        $storeLocationIds = InventoryLocation::query()
-            ->where('channel_id', $storeChannelId)
-            ->pluck('id')
-            ->map(fn ($v) => (int) $v)
-            ->filter()
-            ->values()
-            ->all();
+        // Physical "المحل" warehouses often have null channel_id — include name/type matches,
+        // not only locations tagged with the store channel id.
+        $storeLocationIds = $this->resolveMainStoreLocationIds($storeChannelId);
+
+        // Always seed a zero-qty inventory row at the primary shop warehouse so FBA transfer /
+        // warehouse pickers can resolve the linked shop SKU (available=0 is fine; missing row is not).
+        $primaryStoreLocationId = $this->resolvePrimaryMainStoreLocationId($storeChannelId, $storeLocationIds);
+        if ($primaryStoreLocationId > 0) {
+            SkuInventory::query()->firstOrCreate(
+                ['sku_id' => (int) $storeSku->id, 'location_id' => $primaryStoreLocationId],
+                ['quantity' => 0, 'reserved' => 0, 'user_id' => $userId]
+            );
+        }
 
         if (empty($storeLocationIds)) {
             return;
         }
 
+        // If the channel SKU has any inventory rows under MAIN STORE locations (created by prior incorrect deductions),
+        // move them to the store SKU so the shop balance reflects reality and the channel SKU stops showing negatives.
         $badRows = SkuInventory::query()
             ->where('sku_id', $linkedChannelSku->id)
             ->whereIn('location_id', $storeLocationIds)
@@ -736,6 +742,65 @@ class SkuController extends Controller
             }
             $row->delete();
         }
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function resolveMainStoreLocationIds(int $storeChannelId): array
+    {
+        $ids = InventoryLocation::query()
+            ->where('channel_id', $storeChannelId)
+            ->pluck('id')
+            ->map(fn ($v) => (int) $v)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+
+        $legacy = InventoryLocation::query()
+            ->where(function ($q) {
+                $q->whereNull('channel_id')->orWhere('channel_id', 0);
+            })
+            ->where(function ($q) {
+                $q->whereRaw('LOWER(COALESCE(name, \'\')) LIKE ?', ['%محل%'])
+                    ->orWhereRaw('LOWER(COALESCE(name, \'\')) LIKE ?', ['%store%'])
+                    ->orWhereRaw('LOWER(COALESCE(name, \'\')) LIKE ?', ['%shop%'])
+                    ->orWhereRaw('LOWER(COALESCE(type, \'\')) IN (?, ?)', ['physical', 'store']);
+            })
+            ->pluck('id')
+            ->map(fn ($v) => (int) $v)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+
+        return array_values(array_unique(array_merge($ids, $legacy)));
+    }
+
+    /**
+     * Pick the shop warehouse that already holds stock when duplicates exist (e.g. empty loc 5 vs full loc 16).
+     *
+     * @param  list<int>  $storeLocationIds
+     */
+    private function resolvePrimaryMainStoreLocationId(int $storeChannelId, array $storeLocationIds): int
+    {
+        if ($storeLocationIds !== []) {
+            $best = SkuInventory::query()
+                ->selectRaw('location_id, COUNT(*) as row_count, COALESCE(SUM(quantity), 0) as qty_sum')
+                ->whereIn('location_id', $storeLocationIds)
+                ->groupBy('location_id')
+                ->orderByDesc('row_count')
+                ->orderByDesc('qty_sum')
+                ->orderBy('location_id')
+                ->first();
+
+            if ($best && (int) $best->location_id > 0) {
+                return (int) $best->location_id;
+            }
+
+            return (int) $storeLocationIds[0];
+        }
+
+        return (int) (ChannelStockResolver::resolveFirstLocationIdForChannel($storeChannelId) ?? 0);
     }
 
     private function resolveMainStoreChannelId(): int

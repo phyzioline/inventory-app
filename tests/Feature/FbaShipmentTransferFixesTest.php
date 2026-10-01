@@ -259,4 +259,29 @@ describe('FBA shipment transfer fixes', function () {
         expect($out->notes)->toMatch('/SheetQty\s*:\s*7/i');
         expect((int) $out->quantity)->toBe(2);
     });
+
+    it('matches linked FBA MSKU to shop sibling even when shop SKU has no inventory row yet', function () {
+        $fx = seedFbaTransferFixture();
+        $shipmentId = 'FBA'.strtoupper(substr(uniqid(), -8));
+
+        // Simulate "just linked" store SKU: catalog link exists, but no sku_inventory row.
+        SkuInventory::query()->where('sku_id', $fx['shopSku']->id)->delete();
+
+        $response = $this->post('/api/inventory/transfers/fba-shipment/upload', [
+            'file' => makeShipmentTsv($shipmentId, $fx['msku'], 5),
+            'source_location_id' => $fx['shopLoc']->id,
+            'destination_location_id' => $fx['fbaLoc']->id,
+        ]);
+
+        $response->assertOk();
+        expect($response->json('summary.unmatched'))->toBe(0);
+        expect($response->json('unmatched_items'))->toHaveCount(0);
+
+        $matched = $response->json('matched_items');
+        expect($matched)->toHaveCount(1);
+        expect((int) $matched[0]['sku_id'])->toBe((int) $fx['shopSku']->id);
+        expect($matched[0]['system_sku'])->toBe($fx['shopSku']->sku);
+        expect((int) $matched[0]['source_available'])->toBe(0);
+        expect($matched[0]['stock_status'])->toBe('insufficient');
+    });
 });
