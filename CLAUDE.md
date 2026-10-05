@@ -2,18 +2,18 @@
 
 ## Project identity — READ FIRST
 
-**This is `inventory-app`**, not `laravel-phyzio`. Two separate projects live on this
-machine and are easy to confuse in a chat session:
+**This is `inventory-app`**, not `laravel-phyzio` and not `marketplace-app`. Three
+separate projects live on this same machine and are easy to confuse in a chat session:
 
-| | This project | The other project |
-|---|---|---|
-| Name | `phyzioline/inventory` | `laravel/laravel` (phyzioline.com main site) |
-| Purpose | Standalone warehouse, purchasing, sales and treasury management app — extracted from the Phyzioline monolith's Inventory module | Phyzioline's main e-commerce / healthcare SaaS |
-| Path | `/home/phyzioline-inventory/htdocs/inventory.phyzioline.com` | `/home/phyzioline/htdocs/phyzioline.com` |
-| Git remote | `github.com/phyzioline/inventory-app.git` | `github.com/phyzioline/laravel-phyzio.git` |
-| APP_URL | `https://inventory.phyzioline.com` | `https://phyzioline.com` |
-| Production DB | `phyzioline_inventory` | `phyzioline` |
-| Test DB | `phyzioline_inventory_test` | `phyzioline_test` |
+| | This project | Core (monolith) | Marketplace |
+|---|---|---|---|
+| Name | `phyzioline/inventory` | `laravel/laravel` (phyzioline.com) | `phyzioline/marketplace` |
+| Purpose | Standalone warehouse, purchasing, sales and treasury — extracted from the monolith Inventory module | Main healthcare / e-commerce SaaS | Stage B extract of the store (`Modules/Ecommerce`) — no production traffic until B6 cutover |
+| Path | `/home/phyzioline-inventory/htdocs/inventory.phyzioline.com` | `/home/phyzioline/htdocs/phyzioline.com` | `/home/phyzioline-marketplace/htdocs/marketplace.phyzioline.com` |
+| Git remote | `github.com/phyzioline/inventory-app.git` | `github.com/phyzioline/laravel-phyzio.git` | `github.com/phyzioline/marketplace-app.git` |
+| APP_URL | `https://inventory.phyzioline.com` | `https://phyzioline.com` | `https://marketplace.phyzioline.com` |
+| Production DB | `phyzioline_inventory` | `phyzioline` | `phyzioline_marketplace` |
+| Test DB | `phyzioline_inventory_test` | `phyzioline_test` | `phyzioline_marketplace_test` |
 
 Before `git commit` / `git push`, or claims about "Modules/Ecommerce", clinics, or
 `Modules/...` — confirm with `pwd` and `git remote -v`. This app has **no** `Modules/`
