@@ -154,7 +154,7 @@ class SupplierAccountService
             $outstanding = (float) ($supplier->balance ?? 0);
         }
 
-        $invoiceRows = $this->allocateOldestFirst($invoiceRows, $alloc, $returnCredit);
+        $invoiceRows = $this->allocateOldestFirst($invoiceRows, $alloc, $this->returnCreditByBatch($returns, $refunds), $returnCredit);
 
         $ledgerRows = collect();
         foreach ($invoiceRows as $inv) {
@@ -276,34 +276,74 @@ class SupplierAccountService
     }
 
     /**
-     * Fill each invoice's open amount (after what was entered on it and payments linked to it) from the
-     * on-account pool — unlinked payments plus return credit — oldest invoice first.
+     * Credit each return still gives (its total minus cash the supplier refunded for it), grouped by
+     * the invoice it was made against.
+     *
+     * @return array<int, float> purchase batch id => credit
+     */
+    private function returnCreditByBatch(Collection $returns, Collection $refunds): array
+    {
+        $refundedByReturn = [];
+        foreach ($refunds as $refund) {
+            $rid = (int) $refund->reference_id;
+            $refundedByReturn[$rid] = ($refundedByReturn[$rid] ?? 0.0) + (float) $refund->amount;
+        }
+
+        $byBatch = [];
+        foreach ($returns as $return) {
+            $credit = max(0.0, (float) ($return->grand_total ?? 0) - ($refundedByReturn[(int) $return->id] ?? 0.0));
+            $bid = (int) ($return->purchase_batch_id ?? 0);
+            $byBatch[$bid] = ($byBatch[$bid] ?? 0.0) + $credit;
+        }
+
+        return $byBatch;
+    }
+
+    /**
+     * Per-invoice view: a return first reduces the invoice it was made against (shown as `returned`);
+     * then on-account payments and any return credit left over fill the open invoices oldest first.
      *
      * @param  array{paid_by_batch: array<int, float>, orphan_total: float}  $alloc
+     * @param  array<int, float>  $returnByBatch  from {@see returnCreditByBatch()}
      */
-    private function allocateOldestFirst(Collection $invoiceRows, array $alloc, float $returnCredit): Collection
+    private function allocateOldestFirst(Collection $invoiceRows, array $alloc, array $returnByBatch, float $returnCredit): Collection
     {
-        $pool = round(max(0.0, (float) $alloc['orphan_total']) + max(0.0, $returnCredit), 2);
         $linked = $alloc['paid_by_batch'];
+        $byId = $invoiceRows->keyBy('id');
+
+        // Return credit against its own invoice; what does not fit there joins the pool.
+        $returnedOnInvoice = [];
+        $returnsApplied = 0.0;
+        foreach ($byId as $id => $inv) {
+            $own = (float) ($returnByBatch[(int) $id] ?? 0.0);
+            if ($own <= 0.0) {
+                continue;
+            }
+            $open = max(0.0, (float) $inv['remaining'] - (float) ($linked[(int) $id] ?? 0.0));
+            $returnedOnInvoice[(int) $id] = round(min($own, $open), 2);
+            $returnsApplied += $returnedOnInvoice[(int) $id];
+        }
+        $pool = round(max(0.0, (float) $alloc['orphan_total']) + max(0.0, $returnCredit - $returnsApplied), 2);
 
         $order = $invoiceRows
             ->sortBy(fn ($inv) => sprintf('%s-%012d', $inv['date'] ?? '0000-00-00', (int) $inv['id']))
             ->pluck('id')
             ->all();
-        $byId = $invoiceRows->keyBy('id');
 
         foreach ($order as $id) {
             $inv = $byId[$id];
             $total = (float) $inv['total'];
+            $returned = (float) ($returnedOnInvoice[(int) $id] ?? 0.0);
             // Same rule as computeOutstandingFromInvoiceLines(): linked payments reduce what the notes leave open.
-            $open = max(0.0, round((float) $inv['remaining'] - (float) ($linked[(int) $id] ?? 0.0), 2));
-            $paid = round($total - $open, 2);
+            $open = max(0.0, round((float) $inv['remaining'] - (float) ($linked[(int) $id] ?? 0.0) - $returned, 2));
+            $paid = round($total - $returned - $open, 2);
             $take = min($open, $pool);
             $pool = round($pool - $take, 2);
             $paid = round($paid + $take, 2);
-            $remaining = round(max(0.0, $total - $paid), 2);
+            $remaining = round(max(0.0, $total - $returned - $paid), 2);
 
             $inv['allocated'] = round($take, 2);
+            $inv['returned'] = round($returned, 2);
             $inv['paid'] = $paid;
             $inv['remaining'] = $remaining;
             $inv['status'] = PurchaseImportService::resolvePaymentMetaStatus((string) $inv['batch_status'], $paid, $remaining, null);

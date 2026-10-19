@@ -643,7 +643,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
               <div className="min-h-0 flex-1 overflow-auto rounded-md border">
                 <TabsContent value="invoices" className="m-0">
                   <Table>
-                    <TableHeader><TableRow><TableHead>#</TableHead><TableHead>{isAr ? 'التاريخ' : 'Date'}</TableHead><TableHead className="text-right">{isAr ? 'الإجمالي' : 'Total'}</TableHead><TableHead className="text-right">{isAr ? 'المتبقي' : 'Remaining'}</TableHead><TableHead>{isAr ? 'الحالة' : 'Status'}</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>#</TableHead><TableHead>{isAr ? 'التاريخ' : 'Date'}</TableHead><TableHead className="text-right">{isAr ? 'الإجمالي' : 'Total'}</TableHead><TableHead className="text-right">{isAr ? 'المرتجع' : 'Returned'}</TableHead><TableHead className="text-right">{isAr ? 'المدفوع' : 'Paid'}</TableHead><TableHead className="text-right">{isAr ? 'المتبقي' : 'Remaining'}</TableHead><TableHead>{isAr ? 'الحالة' : 'Status'}</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {selectedAccount.invoices.map((inv: any) => (
                         <TableRow key={inv.id}>
@@ -659,6 +659,8 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                           </TableCell>
                           <TableCell>{inv.date}</TableCell>
                           <TableCell className="text-right">{Number(inv.total).toLocaleString()}</TableCell>
+                          <TableCell className="text-right text-amber-600">{Number(inv.returned || 0) > 0 ? Number(inv.returned).toLocaleString() : '—'}</TableCell>
+                          <TableCell className="text-right">{Number(inv.paid || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">{Number(inv.remaining).toLocaleString()}</TableCell>
                           <TableCell>{purchaseBatchStatusLabel(inv.status)}</TableCell>
                         </TableRow>

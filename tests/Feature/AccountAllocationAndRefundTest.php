@@ -184,3 +184,33 @@ it('cancels a customer refund payment that no longer applies instead of deleting
     expect(Payment::query()->find($payment->id)?->status)->toBe('cancelled')
         ->and(InventoryAuditLog::query()->where('action', 'returns.refund_payment_cancelled')->count())->toBe(1);
 });
+
+it('shows a credit-note return on the invoice it was made against before filling the oldest invoices', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+    [$vendor, $supplier] = seedAllocSupplier($user, 'مورد مرتجع فاتورة');
+
+    $old = seedAllocInvoice($user, $vendor, '2026-01-10', 1000);
+    $new = seedAllocInvoice($user, $vendor, '2026-02-10', 1000);
+    PurchaseReturn::query()->create([
+        'user_id' => $user->id, 'purchase_batch_id' => $new->id, 'vendor_id' => $vendor->id,
+        'return_number' => 'PR-AL-3', 'return_date' => '2026-02-15', 'refund_method' => 'credit_note',
+        'subtotal' => 300, 'tax_amount' => 0, 'grand_total' => 300, 'currency' => 'EGP',
+    ]);
+    Payment::query()->create([
+        'payment_number' => 'PAY-AL-3', 'payee_type' => Supplier::class, 'payee_id' => $supplier->id,
+        'payee_name' => $supplier->name, 'amount' => 1200, 'payment_method' => 'cash',
+        'payment_date' => '2026-02-20', 'status' => 'completed', 'user_id' => $user->id,
+    ]);
+
+    $res = $this->getJson('/api/inventory/suppliers/'.$supplier->id.'/account-summary')->assertOk()->json();
+    $byId = collect($res['invoices'])->keyBy('id');
+
+    // 2000 − 300 return − 1200 paid = 500, all of it on the newer invoice, which also shows its return.
+    expect((float) $res['summary']['outstanding'])->toBe(500.0)
+        ->and((float) $byId[$old->id]['remaining'])->toBe(0.0)
+        ->and((float) $byId[$old->id]['returned'])->toBe(0.0)
+        ->and((float) $byId[$new->id]['returned'])->toBe(300.0)
+        ->and((float) $byId[$new->id]['paid'])->toBe(200.0)
+        ->and((float) $byId[$new->id]['remaining'])->toBe(500.0);
+});
