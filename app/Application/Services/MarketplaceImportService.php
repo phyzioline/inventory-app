@@ -21,8 +21,10 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class MarketplaceImportService
 {
-    public function __construct(private AmazonRemovalIntakeService $removalIntake)
-    {
+    public function __construct(
+        private AmazonRemovalIntakeService $removalIntake,
+        private JumiaOrderSheetMapper $jumiaSheet,
+    ) {
     }
 
     /** Persists the last sheet import batch per user (survives cache flush; enables rollback without re-importing). */
@@ -73,6 +75,9 @@ class MarketplaceImportService
 
     /** Pending Amazon removal rows created from S02- All Orders lines in the current import. */
     private int $importBatchRemovalsCreated = 0;
+
+    /** @var array<int, \Illuminate\Support\Carbon|null> channel id → stock tracking start (per run; service is a singleton) */
+    private array $channelStockStartCache = [];
 
     /**
      * Large Amazon/Noon order sheets can exceed the default 60s PHP limit on shared hosting.
@@ -139,10 +144,11 @@ class MarketplaceImportService
         $this->importBatchStockOutTransactionIds = [];
         $this->importStockShortages = [];
         $this->importBatchRemovalsCreated = 0;
-        $channelId = $this->resolveImportChannelId($channelId, $lockChannel);
-        ['platform' => $platform, 'channels' => $channels, 'defaultChannel' => $defaultChannel] = $this->buildImportContext($channelId);
-
+        $this->channelStockStartCache = [];
         $data = $this->parseFile($file);
+        $channelId = $this->resolveChannelForSheetFormat($data, $this->resolveImportChannelId($channelId, $lockChannel));
+        ['platform' => $platform, 'channels' => $channels, 'defaultChannel' => $defaultChannel] = $this->buildImportContext($channelId);
+        $data = $this->prepareRowsForPlatform($data, $platform);
 
         // Record the import session before gate check so partial failures are always traceable.
         $sessionId = $this->openImportSession($uid, $channelId, $file, count($data));
@@ -892,9 +898,118 @@ class MarketplaceImportService
     {
         $this->extendImportRuntime();
         $data = $this->parseFile($file);
-        $channelId = $this->resolveImportChannelId($channelId, $lockChannel);
+        $channelId = $this->resolveChannelForSheetFormat($data, $this->resolveImportChannelId($channelId, $lockChannel));
 
         return $this->buildImportAnalysis($data, $channelId, $lockChannel, true);
+    }
+
+    /**
+     * The sheet's own format decides the platform — never the channel the user happened to pick.
+     * A Jumia orders export uploaded from an Amazon (or no) channel is routed to the Jumia channels;
+     * otherwise its seller SKUs (same codes as Amazon) would create Amazon orders and deduct Amazon stock.
+     *
+     * @param  list<array<string, mixed>>  $data
+     */
+    private function resolveChannelForSheetFormat(array $data, int $channelId): int
+    {
+        $isJumiaChannel = JumiaOrderSheetMapper::isJumiaChannel(Channel::query()->find($channelId));
+
+        if ($this->jumiaSheet->looksLikeStatement($data)) {
+            throw ValidationException::withMessages([
+                'file' => ['هذا كشف حساب جوميا (المدفوعات) وليس شيت طلبات — ارفعه من شاشة التسويات/المدفوعات.'],
+            ]);
+        }
+
+        if ($this->jumiaSheet->looksLikeOrdersSheet($data)) {
+            if ($isJumiaChannel) {
+                return $channelId;
+            }
+            $jumia = $this->jumiaSheet->defaultChannel(Channel::all());
+            if (! $jumia) {
+                throw ValidationException::withMessages([
+                    'file' => ['هذا شيت طلبات جوميا لكن لا توجد قناة جوميا في النظام — أضف قناة جوميا أولاً.'],
+                ]);
+            }
+
+            return (int) $jumia->id;
+        }
+
+        if ($isJumiaChannel) {
+            throw ValidationException::withMessages([
+                'file' => ['القناة المختارة جوميا لكن الملف ليس تصدير طلبات جوميا (يجب أن يحتوي على عمود Jumia Sku).'],
+            ]);
+        }
+
+        return $channelId;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $data
+     * @return list<array<string, mixed>>
+     */
+    private function prepareRowsForPlatform(array $data, string $platform): array
+    {
+        return $platform === 'jumia' ? $this->jumiaSheet->collapseRows($data) : $data;
+    }
+
+    /**
+     * Channel for a sheet row when the order does not exist yet. 0 = no valid channel (Jumia lane missing).
+     *
+     * @param  array<string, mixed>  $orderData
+     */
+    private function resolveNewOrderChannelId(array $orderData, string $platform, int $defaultChannelId, ?Channel $defaultChannel, $channels, bool $lockChannel): int
+    {
+        if ($platform === 'jumia') {
+            return (int) ($this->jumiaSheet->resolveLaneChannel(
+                $channels,
+                $orderData['fulfillment_hint'] ?? null,
+                $defaultChannel
+            )?->id ?? 0);
+        }
+
+        return $lockChannel
+            ? $defaultChannelId
+            : $this->resolveChannelIdFromRow(
+                $orderData['channel_hint'] ?? null,
+                $orderData['fulfillment_hint'] ?? null,
+                $orderData['sku_hint'] ?? null,
+                $channels,
+                $defaultChannelId,
+                $defaultChannel
+            );
+    }
+
+    /**
+     * Jumia lines resolve by Jumia SKU on the Jumia channel only (no cross-channel fallback).
+     *
+     * @param  array<string, mixed>  $itemData
+     * @return array{sku: ?Sku, auto_linked: bool}
+     */
+    private function resolveImportItemSku(array $itemData, int $channelId, string $platform, bool $persistLink): array
+    {
+        if ($platform === 'jumia') {
+            return $this->jumiaSheet->resolveListing(
+                $channelId,
+                (string) ($itemData['sku_code'] ?? ''),
+                (string) ($itemData['seller_sku'] ?? ''),
+                $persistLink
+            );
+        }
+
+        return ['sku' => $this->resolveSkuForOrderItem((string) ($itemData['sku_code'] ?? ''), $channelId), 'auto_linked' => false];
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function jumiaChannelIds(): array
+    {
+        return Channel::all()
+            ->filter(fn (Channel $c) => JumiaOrderSheetMapper::isJumiaChannel($c))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
     }
 
     /**
@@ -912,6 +1027,8 @@ class MarketplaceImportService
     private function buildImportAnalysis(array $data, int $channelId, bool $lockChannel, bool $includeRowSamples): array
     {
         ['platform' => $platform, 'channels' => $channels, 'defaultChannel' => $defaultChannel] = $this->buildImportContext($channelId);
+        $data = $this->prepareRowsForPlatform($data, $platform);
+        $this->channelStockStartCache = [];
 
         $rows = [];
         $stockShortages = [];
@@ -1178,16 +1295,10 @@ class MarketplaceImportService
             }
 
             if (! $order) {
-                $channelId = $lockChannel
-                    ? $defaultChannelId
-                    : $this->resolveChannelIdFromRow(
-                        $orderData['channel_hint'] ?? null,
-                        $orderData['fulfillment_hint'] ?? null,
-                        $orderData['sku_hint'] ?? null,
-                        $channels,
-                        $defaultChannelId,
-                        $defaultChannel
-                    );
+                $channelId = $this->resolveNewOrderChannelId($orderData, $platform, $defaultChannelId, $defaultChannel, $channels, $lockChannel);
+                if ($channelId <= 0) {
+                    throw new Exception('No Jumia channel for fulfilment «'.($orderData['fulfillment_hint'] ?? '').'» (order '.$platformOrderKey.')');
+                }
 
                 $isCancelled = ! empty($orderData['is_cancelled']);
                 $orderPayload = $this->buildImportOrderHeaderPayload($orderData, $channelId, $isCancelled);
@@ -1219,7 +1330,7 @@ class MarketplaceImportService
             foreach ($orderData['items'] as $itemData) {
                 $externalSkuCode = (string) ($itemData['sku_code'] ?? '');
                 // Find SKU (map merchant/FBA SKU to store SKU for inventory deduction when needed)
-                $sku = $this->resolveSkuForOrderItem($externalSkuCode, (int) $order->channel_id);
+                $sku = $this->resolveImportItemSku($itemData, (int) $order->channel_id, $platform, true)['sku'];
 
                 if (! $sku) {
                     Log::warning('Order import: SKU not found in catalog: '.$externalSkuCode.' - order ID: '.$order->platform_order_id);
@@ -1238,7 +1349,7 @@ class MarketplaceImportService
                 if ($isOrderCancelled || $lineQty <= 0) {
                     if ($existingItem) {
                         $oldQty = (int) $existingItem->quantity;
-                        if ($oldQty > 0 && $this->shouldDeductInventoryForChannel((int) $order->channel_id)) {
+                        if ($oldQty > 0) {
                             $this->restockInventoryForImportedOrder($order, $sku, $oldQty);
                         }
                         $existingItem->update($this->filterOrderItemColumns([
@@ -1272,7 +1383,7 @@ class MarketplaceImportService
                         // Backfill: if this line exists but stock was never deducted (historical bug / prior imports),
                         // deduct once for this order+SKU when eligible.
                         if (
-                            $this->shouldDeductInventoryForChannel((int) $order->channel_id)
+                            $this->shouldDeductInventoryForOrder($order)
                             && ! $this->hasPriorImportedOrderDeduction((int) $order->id, $itemSkuId, $externalSkuCode)
                             && isset($this->importBatchNewOrderIds[(int) $order->id]) === false
                         ) {
@@ -1334,7 +1445,7 @@ class MarketplaceImportService
                 $deductionStatus = 'not_applicable';
                 $shortageReason = null;
                 if (
-                    $this->shouldDeductInventoryForChannel((int) $order->channel_id)
+                    $this->shouldDeductInventoryForOrder($order)
                     && (
                         isset($this->importBatchNewOrderIds[(int) $order->id])
                         || ! $this->hasPriorImportedOrderDeduction((int) $order->id, (int) $sku->id, $externalSkuCode)
@@ -1567,7 +1678,7 @@ class MarketplaceImportService
             || str_contains($name, 'noon')
             || str_contains((string) ($channel->name ?? ''), 'نون');
 
-        $platform = $isNoon ? 'noon' : 'amazon';
+        $platform = JumiaOrderSheetMapper::isJumiaChannel($channel) ? 'jumia' : ($isNoon ? 'noon' : 'amazon');
         $channels = Channel::all();
         $defaultChannel = $channels->firstWhere('id', $channelId);
 
@@ -1605,16 +1716,7 @@ class MarketplaceImportService
             return $this->analyzeAmazonRemovalSheetRow($orderData, $uploadedOrderId, $uploadedSku, $uploadedQty, $uploadedUnitPrice);
         }
 
-        $resolvedChannelId = $lockChannel
-            ? $defaultChannelId
-            : $this->resolveChannelIdFromRow(
-                $orderData['channel_hint'] ?? null,
-                $orderData['fulfillment_hint'] ?? null,
-                $orderData['sku_hint'] ?? null,
-                $channels,
-                $defaultChannelId,
-                $defaultChannel
-            );
+        $resolvedChannelId = $this->resolveNewOrderChannelId($orderData, $platform, $defaultChannelId, $defaultChannel, $channels, $lockChannel);
         $resolvedChannelName = optional($channels->firstWhere('id', $resolvedChannelId))->name;
 
         $fulfillmentRaw = strtolower(trim((string) ($orderData['fulfillment_hint'] ?? '')));
@@ -1636,6 +1738,32 @@ class MarketplaceImportService
         $order = $this->findInventoryOrderForImport($row, $platform, $orderData);
         $matchedOrderId = $order ? (string) $order->platform_order_id : null;
 
+        if ($platform === 'jumia' && ! $order && $resolvedChannelId <= 0) {
+            $lane = $this->jumiaSheet->laneFromShipmentType($orderData['fulfillment_hint'] ?? null);
+
+            return [
+                'status' => 'error',
+                'reason' => '',
+                'catalog_issue' => $lane === JumiaOrderSheetMapper::LANE_DROPSHIPPING
+                    ? [
+                        'ar' => 'طلب دروبشيبينج من جوميا لكن لا توجد قناة «جوميا تاجر/دروبشيبينج» — أضفها (تخصم من المحل) ثم أعد الرفع.',
+                        'en' => 'Jumia dropshipping order but no Jumia merchant/dropshipping channel exists.',
+                    ]
+                    : [
+                        'ar' => 'نوع الشحن «'.($orderData['fulfillment_hint'] ?? '').'» غير معروف أو لا توجد قناة جوميا FBJ مطابقة.',
+                        'en' => 'Unknown Jumia shipment type or no matching Jumia FBJ channel.',
+                    ],
+                'uploaded_data' => [
+                    'order_number' => $uploadedOrderId,
+                    'sku' => $uploadedSku ?: null,
+                    'quantity' => $uploadedQty,
+                    'unit_price' => $uploadedUnitPrice,
+                    'channel' => null,
+                ],
+                'existing_data' => null,
+            ];
+        }
+
         // Existing orders deduct using their saved channel, not the channel re-detected from the sheet row.
         $stockChannelId = $order ? (int) $order->channel_id : (int) $resolvedChannelId;
 
@@ -1643,6 +1771,8 @@ class MarketplaceImportService
         $existingSameItem = false;
         $sameSkuDifferentQty = false;
         $missingSkuCodes = [];
+        $autoLinkedCodes = [];
+        $voidedLineToRestore = false;
         $isCancelledRow = ! empty($orderData['is_cancelled']);
         if ($isCancelledRow && $uploadedOrderId !== '') {
             $validItemFound = true;
@@ -1655,15 +1785,35 @@ class MarketplaceImportService
                 continue;
             }
 
-            $sku = $this->resolveSkuForOrderItem($skuCode, $stockChannelId);
-            if (! $sku) {
-                $missingSkuCodes[] = $skuCode;
+            $resolved = $this->resolveImportItemSku($itemData, $stockChannelId, $platform, false);
+            $sku = $resolved['sku'];
+            if (! $sku && $platform === 'jumia' && (int) ($itemData['quantity'] ?? 0) <= 0) {
+                // Cancelled / failed-delivery unit: no stock movement, so an unlinked listing must not block the sheet.
+                $validItemFound = true;
 
                 continue;
             }
+            if (! $sku) {
+                $missingSkuCodes[] = $platform === 'jumia' && trim((string) ($itemData['seller_sku'] ?? '')) !== ''
+                    ? $skuCode.' (seller '.trim((string) $itemData['seller_sku']).')'
+                    : $skuCode;
+
+                continue;
+            }
+            if ($resolved['auto_linked']) {
+                $autoLinkedCodes[] = $skuCode.' → '.$sku->sku;
+            }
 
             $validItemFound = true;
-            if ($order) {
+            if ($order && $platform === 'jumia' && ! $isCancelledRow && (int) ($itemData['quantity'] ?? 0) <= 0) {
+                // Unit(s) failed / cancelled on Jumia while the rest of the order stands.
+                $existingOi = $this->findExistingOrderItem((int) $order->id, (int) $sku->id, $skuCode);
+                if ($existingOi && (int) $existingOi->quantity > 0) {
+                    $voidedLineToRestore = true;
+                } else {
+                    $existingSameItem = true;
+                }
+            } elseif ($order) {
                 // Duplicate when order + SKU (tolerates sku_id drift) + quantity all match — mirrors {@see processOrderRow()}.
                 $itemQty = (int) ($itemData['quantity'] ?? 1);
                 $existingOi = $this->findExistingOrderItem((int) $order->id, (int) $sku->id, $skuCode);
@@ -1713,6 +1863,9 @@ class MarketplaceImportService
                     $status = 'update';
                     $reason = 'Existing order will be marked cancelled / line cleared from sheet';
                 }
+            } elseif ($voidedLineToRestore) {
+                $status = 'update';
+                $reason = 'Line failed/cancelled on Jumia — sold qty cleared and stock returned';
             } elseif ($existingSameItem) {
                 $status = 'duplicate';
                 $reason = 'Order item already exists (duplicate row)';
@@ -1723,12 +1876,15 @@ class MarketplaceImportService
                 $status = 'update';
                 $reason = 'Existing order will be updated with new item(s)';
             }
-        } elseif ($uploadedOrderId !== '' && $matchedOrderId === null) {
+        } elseif ($uploadedOrderId !== '' && $matchedOrderId === null && $platform !== 'jumia') {
             $reason = 'Will be inserted as new order | No matching order in system for sheet id «'.$uploadedOrderId.'» (check amazon-order-id vs merchant-order-id)';
         }
 
         if ($detectedFulfillment !== null) {
             $reason .= ($reason !== '' ? ' | ' : '').'Fulfillment: '.strtoupper($detectedFulfillment);
+        }
+        if ($autoLinkedCodes !== [] && $status !== 'error') {
+            $reason .= ($reason !== '' ? ' | ' : '').'Jumia SKU will be linked: '.implode(', ', $autoLinkedCodes);
         }
         if ($fulfillmentMismatch) {
             $reason .= ($reason !== '' ? ' | ' : '').'⚠️ Fulfillment mismatch vs detected channel';
@@ -1744,7 +1900,7 @@ class MarketplaceImportService
         $uploadedUnitPriceForStock = (float) ($firstItem['unit_price'] ?? 0);
         $resolvedSku = null;
         if ($sheetSkuCode !== '' && strtoupper($sheetSkuCode) !== 'UNKNOWN') {
-            $resolvedSku = $this->resolveSkuForOrderItem($sheetSkuCode, $stockChannelId);
+            $resolvedSku = $this->resolveImportItemSku($firstItem, $stockChannelId, $platform, false)['sku'];
         }
 
         $wouldRequireStockDeduction = $this->sheetRowWillDeductStock(
@@ -1755,8 +1911,19 @@ class MarketplaceImportService
             $uploadedUnitPriceForStock,
             $isCancelledRow,
             $stockChannelId,
-            $sheetSkuCode   // pass external code so hasPriorImportedOrderDeduction survives SKU re-mappings
+            $sheetSkuCode,   // pass external code so hasPriorImportedOrderDeduction survives SKU re-mappings
+            $order ? $order->order_date : ($orderData['order_date'] ?? null)
         );
+
+        if (
+            $status !== 'error'
+            && ! $isCancelledRow
+            && $qty > 0
+            && ! $this->channelTracksStockAt($stockChannelId, $order ? $order->order_date : ($orderData['order_date'] ?? null))
+        ) {
+            $reason .= ($reason !== '' && $reason !== '—' ? ' | ' : '')
+                .'Before channel stock tracking start — recorded without stock movement';
+        }
 
         if ($wouldRequireStockDeduction && $status === 'duplicate') {
             $reason .= ($reason !== '' && $reason !== '—' ? ' | ' : '')
@@ -1911,6 +2078,18 @@ class MarketplaceImportService
      */
     private function mapRowToOrderData(array $row, string $platform): ?array
     {
+        if ($platform === 'jumia') {
+            $mapped = $this->jumiaSheet->mapRow($row, fn (string $raw) => $this->parseMarketplaceDateTime($raw));
+            if ($mapped === null) {
+                return null;
+            }
+            $mapped['platform_order_id'] = $this->normalizeMarketplaceOrderId(
+                $this->normalizeImportSheetScalar((string) $mapped['platform_order_id'])
+            );
+
+            return $mapped['platform_order_id'] !== '' ? $mapped : null;
+        }
+
         if ($platform === 'amazon') {
             $orderId = $this->pick($row, [
                 'amazon-order-id',
@@ -2450,9 +2629,13 @@ class MarketplaceImportService
             return null;
         }
 
+        // Jumia order numbers are only matched against Jumia orders (never Amazon/Noon/shop ids).
+        $channelScope = $platform === 'jumia' ? $this->jumiaChannelIds() : null;
+
         $order = InventoryOrder::query()
             ->whereIn('platform_order_id', $candidates)
             ->where('user_id', auth()->id())
+            ->when($channelScope !== null, fn ($q) => $q->whereIn('channel_id', $channelScope))
             ->with(['channel', 'items'])
             ->orderByDesc('id')
             ->first();
@@ -2464,6 +2647,7 @@ class MarketplaceImportService
         return InventoryOrder::withoutGlobalScope('user_isolation')
             ->whereIn('platform_order_id', $candidates)
             ->whereNull('user_id')
+            ->when($channelScope !== null, fn ($q) => $q->whereIn('channel_id', $channelScope))
             ->with(['channel', 'items'])
             ->orderByDesc('id')
             ->first();
@@ -2594,6 +2778,11 @@ class MarketplaceImportService
 
     private function resolveImportOrderStatus(array $orderData, bool $isCancelled): string
     {
+        // Jumia: per-unit statuses already folded into one order status (failed delivery → rejected).
+        if (($orderData['import_platform'] ?? '') === 'jumia') {
+            return (string) ($orderData['jumia_status'] ?? ($isCancelled ? 'cancelled' : 'processing'));
+        }
+
         if ($isCancelled) {
             return 'cancelled';
         }
@@ -2732,13 +2921,15 @@ class MarketplaceImportService
         float $unitPrice,
         bool $isCancelledRow,
         int $channelIdForStock,
-        string $externalSkuCode = ''
+        string $externalSkuCode = '',
+        mixed $orderDate = null
     ): bool {
         if ($rowStatus === 'error' || $isCancelledRow || $quantity <= 0 || ! $sku) {
             return false;
         }
 
-        if (! $this->shouldDeductInventoryForChannel($channelIdForStock)) {
+        if (! $this->shouldDeductInventoryForChannel($channelIdForStock)
+            || ! $this->channelTracksStockAt($channelIdForStock, $orderDate)) {
             return false;
         }
 
@@ -3287,41 +3478,70 @@ class MarketplaceImportService
     /**
      * Reverse a prior import deduction when a line is cancelled in a newer orders report.
      */
+    /**
+     * Reverse the import's own stock OUT for this order line — same SKU row and location it was taken
+     * from (merchant/dropshipping lines were deducted from the store SKU in المحل). Nothing is restocked
+     * when nothing was deducted (e.g. orders older than the channel's stock tracking start date).
+     */
     private function restockInventoryForImportedOrder(InventoryOrder $order, Sku $sku, int $quantity): void
     {
         if ($quantity <= 0) {
             return;
         }
 
-        $locationId = ChannelStockResolver::resolveDeductionLocationIdForChannel((int) $order->channel_id);
-        if (! $locationId) {
-            Log::warning('Order import inventory restock skipped: no location', [
+        $skuIds = array_values(array_unique(array_filter([
+            (int) $sku->id,
+            (int) (ChannelStockResolver::resolveStoreSkuIdForListingSku($sku) ?? 0),
+        ])));
+
+        $netOut = InventoryTransaction::query()
+            ->where('reference_type', 'ImportedOrder')
+            ->where('reference_id', (string) $order->id)
+            ->whereIn('sku_id', $skuIds)
+            ->selectRaw("sku_id, location_id, SUM(CASE WHEN type = 'OUT' THEN quantity WHEN type = 'IN' THEN -quantity ELSE 0 END) AS net_out")
+            ->groupBy('sku_id', 'location_id')
+            ->get()
+            ->filter(fn ($row) => (float) $row->net_out > 0);
+
+        if ($netOut->isEmpty()) {
+            Log::info('Order import restock skipped: no prior import deduction for this line', [
                 'order_id' => $order->id,
                 'platform_order_id' => $order->platform_order_id,
-                'channel_id' => $order->channel_id,
                 'sku_id' => $sku->id,
             ]);
 
             return;
         }
 
-        $inventory = SkuInventory::firstOrCreate(
-            ['sku_id' => $sku->id, 'location_id' => $locationId],
-            ['quantity' => 0, 'reserved' => 0, 'user_id' => Auth::id()]
-        );
+        $remaining = $quantity;
+        foreach ($netOut as $row) {
+            $take = (int) min($remaining, (float) $row->net_out);
+            if ($take <= 0) {
+                continue;
+            }
 
-        $inventory->increment('quantity', $quantity);
+            $inventory = SkuInventory::firstOrCreate(
+                ['sku_id' => (int) $row->sku_id, 'location_id' => (int) $row->location_id],
+                ['quantity' => 0, 'reserved' => 0, 'user_id' => Auth::id()]
+            );
+            $inventory->increment('quantity', $take);
 
-        InventoryTransaction::create($this->filterTransactionColumns([
-            'sku_id' => $sku->id,
-            'location_id' => $locationId,
-            'type' => 'IN',
-            'quantity' => $quantity,
-            'reference_type' => 'ImportedOrder',
-            'reference_id' => (string) $order->id,
-            'user_id' => Auth::id(),
-            'notes' => 'Marketplace order import restock (cancelled line)',
-        ]));
+            InventoryTransaction::create($this->filterTransactionColumns([
+                'sku_id' => (int) $row->sku_id,
+                'location_id' => (int) $row->location_id,
+                'type' => 'IN',
+                'quantity' => $take,
+                'reference_type' => 'ImportedOrder',
+                'reference_id' => (string) $order->id,
+                'user_id' => Auth::id(),
+                'notes' => 'Marketplace order import restock (cancelled line)',
+            ]));
+
+            $remaining -= $take;
+            if ($remaining <= 0) {
+                break;
+            }
+        }
     }
 
     /**
@@ -3334,7 +3554,7 @@ class MarketplaceImportService
 
         if ($isCancelled) {
             $order->fill($this->filterOrderColumns([
-                'status' => 'cancelled',
+                'status' => $sheetStatus,
                 'financial_status' => 'cancelled',
                 'settlement_status' => 'cancelled',
                 'total_amount' => 0,
@@ -3350,15 +3570,47 @@ class MarketplaceImportService
             'order_date' => $orderData['order_date'] ?? $order->order_date,
         ];
 
-        if ($order->status === 'cancelled' && ($order->financial_status ?? '') === 'cancelled') {
+        if (in_array($order->status, ['cancelled', 'rejected'], true) && ($order->financial_status ?? '') === 'cancelled') {
             $updates['financial_status'] = 'pending';
             $updates['settlement_status'] = 'pending';
+        }
+
+        // Jumia rows carry the whole order's total (every unit of every SKU), so keep it in sync —
+        // a unit that later fails delivery must drop out of revenue / receivable.
+        if (($orderData['import_platform'] ?? '') === 'jumia') {
+            $total = (float) ($orderData['total_amount'] ?? 0);
+            $updates['total_amount'] = $total;
+            $updates['remaining_amount'] = max(0.0, $total - (float) ($order->paid_amount ?? 0));
         }
 
         $order->fill($this->filterOrderColumns($updates));
         $order->save();
 
         return $order->wasChanged();
+    }
+
+    /**
+     * Orders dated before the channel's stock tracking start (`channels.stock_tracking_starts_at`) are
+     * history: recorded for money/settlement matching only — their units left before current stock was counted.
+     */
+    private function channelTracksStockAt(int $channelId, mixed $orderDate): bool
+    {
+        if ($channelId <= 0 || $orderDate === null || $orderDate === '') {
+            return true;
+        }
+        if (! array_key_exists($channelId, $this->channelStockStartCache)) {
+            $raw = Channel::query()->find($channelId)?->stock_tracking_starts_at;
+            $this->channelStockStartCache[$channelId] = $raw ? \Illuminate\Support\Carbon::parse($raw) : null;
+        }
+        $start = $this->channelStockStartCache[$channelId];
+
+        return $start === null || \Illuminate\Support\Carbon::parse($orderDate)->greaterThanOrEqualTo($start);
+    }
+
+    private function shouldDeductInventoryForOrder(InventoryOrder $order): bool
+    {
+        return $this->shouldDeductInventoryForChannel((int) $order->channel_id)
+            && $this->channelTracksStockAt((int) $order->channel_id, $order->order_date);
     }
 
     private function shouldDeductInventoryForChannel(int $channelId): bool

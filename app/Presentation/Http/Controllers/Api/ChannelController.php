@@ -105,6 +105,7 @@ class ChannelController extends Controller
             'type' => 'nullable|string',
             'merchant_identifier' => 'nullable|string|max:100',
             'account_label' => 'nullable|string|max:100',
+            'stock_tracking_starts_at' => 'nullable|date',
         ]);
 
         $user = $request->user();
@@ -146,6 +147,7 @@ class ChannelController extends Controller
             'type' => 'nullable|string',
             'merchant_identifier' => 'nullable|string|max:100',
             'account_label' => 'nullable|string|max:100',
+            'stock_tracking_starts_at' => 'nullable|date',
             'is_active' => 'nullable|boolean',
         ]);
         DB::transaction(function () use ($channel, $validated) {

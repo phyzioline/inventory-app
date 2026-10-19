@@ -13,6 +13,7 @@ class Channel extends Model
 
     protected $fillable = [
         'name', 'type', 'slug', 'is_active', 'credentials', 'merchant_identifier', 'account_label',
+        'stock_tracking_starts_at',
     ];
 
     protected static function newFactory(): ChannelFactory
@@ -23,6 +24,7 @@ class Channel extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'credentials' => 'array',
+        'stock_tracking_starts_at' => 'datetime',
     ];
 
     public function locations()

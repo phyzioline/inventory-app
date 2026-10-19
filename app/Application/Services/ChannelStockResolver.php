@@ -70,7 +70,8 @@ class ChannelStockResolver
             if (str_contains($explicitType, 'merchant')) {
                 return true;
             }
-            if (in_array($explicitType, ['fbm', 'mfn', 'merchant_fulfilled', 'amazon_fbm', 'amazon_mfn'], true)) {
+            if (str_contains($explicitType, 'dropship')
+                || in_array($explicitType, ['fbm', 'mfn', 'merchant_fulfilled', 'amazon_fbm', 'amazon_mfn'], true)) {
                 return true;
             }
         }
@@ -81,6 +82,9 @@ class ChannelStockResolver
             || str_contains($name, 'mfn')
             || str_contains($name, 'fbm')
             || str_contains($name, 'تاجر')
+            || str_contains($name, 'dropship')
+            || str_contains($name, 'دروب')
+            || str_contains($slug, 'dropship')
             || str_contains($slug, 'merchant')
             || str_contains($slug, 'mfn')
             || str_contains($slug, 'fbm');

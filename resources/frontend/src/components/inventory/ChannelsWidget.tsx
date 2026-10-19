@@ -93,8 +93,8 @@ const resolveChannelTypeLabel = (rawType: any, isAr: boolean): string => {
         amazon_fba: { ar: 'أمازون FBA', en: 'Amazon FBA' },
         noon_merchant: { ar: 'نون تاجر', en: 'Noon Merchant' },
         noon_fbn: { ar: 'نون FBN', en: 'Noon FBN' },
-        jumia_merchant: { ar: 'جوميا تاجر', en: 'Jumia Merchant' },
-        jumia_fbn: { ar: 'جوميا FBN', en: 'Jumia FBN' },
+        jumia_merchant: { ar: 'جوميا تاجر (دروبشيبينج)', en: 'Jumia Dropshipping' },
+        jumia_fbn: { ar: 'جوميا FBJ (مخزن جوميا)', en: 'Jumia FBJ' },
         website: { ar: 'موقع إلكتروني', en: 'Website' },
         pos: { ar: 'متجر فعلي (POS)', en: 'POS' },
         custom: { ar: 'مخصص', en: 'Custom' },
@@ -129,7 +129,7 @@ export function ChannelsWidget() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [formData, setFormData] = useState({ name: "", slug: "", type: "amazon_merchant", merchant_identifier: "", account_label: "" });
     const [editingChannel, setEditingChannel] = useState<any | null>(null);
-    const [editData, setEditData] = useState({ merchant_identifier: "", account_label: "" });
+    const [editData, setEditData] = useState({ merchant_identifier: "", account_label: "", stock_tracking_starts_at: "" });
 
     const { data: rawChannels = [], isLoading: channelsLoading } = useQuery({
         queryKey: ['channels'],
@@ -382,8 +382,8 @@ export function ChannelsWidget() {
                                             <SelectItem value="amazon_fba">{isAr ? "أمازون FBA" : "Amazon FBA"}</SelectItem>
                                             <SelectItem value="noon_merchant">{isAr ? "نون تاجر" : "Noon Merchant"}</SelectItem>
                                             <SelectItem value="noon_fbn">{isAr ? "نون FBN" : "Noon FBN"}</SelectItem>
-                                            <SelectItem value="jumia_merchant">{isAr ? "جوميا تاجر" : "Jumia Merchant"}</SelectItem>
-                                            <SelectItem value="jumia_fbn">{isAr ? "جوميا FBN" : "Jumia FBN"}</SelectItem>
+                                            <SelectItem value="jumia_merchant">{isAr ? "جوميا تاجر (دروبشيبينج)" : "Jumia Dropshipping"}</SelectItem>
+                                            <SelectItem value="jumia_fbn">{isAr ? "جوميا FBJ (مخزن جوميا)" : "Jumia FBJ"}</SelectItem>
                                             <SelectItem value="website">{isAr ? "موقع إلكتروني" : "Website (E-commerce)"}</SelectItem>
                                             <SelectItem value="pos">{isAr ? "متجر فعلي (POS)" : "Physical Store (POS)"}</SelectItem>
                                             <SelectItem value="custom">{isAr ? "مخصص" : "Custom"}</SelectItem>
@@ -460,7 +460,7 @@ export function ChannelsWidget() {
                                                     type="button"
                                                     className="text-muted-foreground hover:text-foreground"
                                                     title={isAr ? "تعديل" : "Edit"}
-                                                    onClick={() => { setEditingChannel(card); setEditData({ merchant_identifier: card.merchant_identifier || "", account_label: card.account_label || "" }); }}
+                                                    onClick={() => { setEditingChannel(card); setEditData({ merchant_identifier: card.merchant_identifier || "", account_label: card.account_label || "", stock_tracking_starts_at: card.stock_tracking_starts_at ? String(card.stock_tracking_starts_at).slice(0, 10) : "" }); }}
                                                 >
                                                     <Pencil className="w-3 h-3" />
                                                 </button>
@@ -571,7 +571,16 @@ export function ChannelsWidget() {
                             <Label className="text-sm">{isAr ? "اسم الحساب" : "Account Label"}</Label>
                             <Input value={editData.account_label} onChange={(e) => setEditData((p) => ({ ...p, account_label: e.target.value }))} placeholder="Amazon Seller" />
                         </div>
-                        <Button className="w-full mt-2" size="sm" disabled={updateMutation.isPending || !editingChannel} onClick={() => editingChannel && updateMutation.mutate({ id: String(editingChannel.id), payload: { merchant_identifier: editData.merchant_identifier || null, account_label: editData.account_label || null } })}>
+                        <div className="space-y-1.5">
+                            <Label className="text-sm">{isAr ? "بداية تتبع المخزون" : "Stock tracking starts"}</Label>
+                            <Input type="date" value={editData.stock_tracking_starts_at} onChange={(e) => setEditData((p) => ({ ...p, stock_tracking_starts_at: e.target.value }))} />
+                            <p className="text-[11px] text-muted-foreground leading-snug">
+                                {isAr
+                                    ? "الطلبات المستوردة قبل التاريخ ده تتسجل كتاريخ ومبيعات بس — من غير خصم من المخزون (لأن المخزون اتعدّ بعدها)."
+                                    : "Imported orders dated before this are recorded for sales/settlement only — no stock deduction."}
+                            </p>
+                        </div>
+                        <Button className="w-full mt-2" size="sm" disabled={updateMutation.isPending || !editingChannel} onClick={() => editingChannel && updateMutation.mutate({ id: String(editingChannel.id), payload: { merchant_identifier: editData.merchant_identifier || null, account_label: editData.account_label || null, stock_tracking_starts_at: editData.stock_tracking_starts_at || null } })}>
                             {updateMutation.isPending ? (isAr ? "حفظ..." : "Saving...") : (isAr ? "حفظ" : "Save")}
                         </Button>
                     </div>

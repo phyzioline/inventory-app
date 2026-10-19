@@ -185,12 +185,12 @@ export default function AddSKUDialog({ open, onOpenChange, offerId, skuId, initi
                     </div>
 
                     <div>
-                        <Label htmlFor="marketplace_id">Marketplace ID (ASIN/Product ID)</Label>
+                        <Label htmlFor="marketplace_id">Marketplace ID (ASIN / Jumia SKU)</Label>
                         <Input
                             id="marketplace_id"
                             value={formData.marketplace_id}
                             onChange={(e) => setFormData({ ...formData, marketplace_id: e.target.value })}
-                            placeholder="e.g., B08XYZ123 (for Amazon)"
+                            placeholder="e.g., B08XYZ123 (Amazon) or GE810SE36MSGDNAFAMZ-214870994 (Jumia)"
                         />
                     </div>
 
