@@ -129,6 +129,7 @@ class AppServiceProvider extends ServiceProvider
                 ReconcileSettlementsCommand::class,
                 ReconcileSettlementReturnsCommand::class,
                 \App\Presentation\Console\Commands\DedupeSettlementLinesCommand::class,
+                \App\Presentation\Console\Commands\ReverseExcessReturnStockCommand::class,
                 RollbackMarketplaceImportStockCommand::class,
                 \App\Presentation\Console\Commands\RetryImportStockDeductionsCommand::class,
                 SyncSkuCostsFromMasterProductsCommand::class,

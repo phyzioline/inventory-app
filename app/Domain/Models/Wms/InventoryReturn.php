@@ -13,6 +13,9 @@ class InventoryReturn extends Model
 {
     use IsIsolatedByUser;
 
+    /** inventory_transactions.reference_type of the OUT that cancels a restock beyond the sold quantity. */
+    public const EXCESS_RESTOCK_REVERSAL = 'ReturnExcessReversal';
+
     protected $attributes = [
         'financial_deduction' => 0,
         'extra_shipping_fee' => 0,
@@ -78,6 +81,31 @@ class InventoryReturn extends Model
         return $this->return_date ?: ($this->last_update_date ?: now());
     }
 
+    /**
+     * Net units already put back in stock by this order's returns (ledger IN minus correction OUT).
+     */
+    public static function restockedUnitsForOrder(int $orderId, int $exceptReturnId = 0): int
+    {
+        $returnIds = self::query()
+            ->where('inventory_order_id', $orderId)
+            ->when($exceptReturnId > 0, fn ($q) => $q->where('id', '<>', $exceptReturnId))
+            ->pluck('id')
+            ->map(fn ($id) => (string) $id)
+            ->all();
+        if ($returnIds === []) {
+            return 0;
+        }
+
+        $in = (int) InventoryTransaction::query()
+            ->where('reference_type', 'Return')->where('type', 'IN')
+            ->whereIn('reference_id', $returnIds)->sum('quantity');
+        $reversed = (int) InventoryTransaction::query()
+            ->where('reference_type', self::EXCESS_RESTOCK_REVERSAL)->where('type', 'OUT')
+            ->whereIn('reference_id', $returnIds)->sum('quantity');
+
+        return max(0, $in - $reversed);
+    }
+
     public function processReturn(): bool
     {
         DB::beginTransaction();
@@ -96,6 +124,25 @@ class InventoryReturn extends Model
                 $defaultLocationId = 1;
             }
             $remainingQty = max(1, (int) ($this->return_quantity ?? 1));
+
+            // A sale can only come back once. Payment sheets carry several refund lines per order
+            // (principal, shipping, COD, fees); Apr–Jun 2026 each one restocked a unit and ~1,300 phantom
+            // units entered stock. Never restock (or credit) beyond what the order sold.
+            $returnable = max(0, (int) $order->items->sum('quantity') - self::restockedUnitsForOrder((int) $order->id, (int) $this->id));
+            if ($returnable <= 0) {
+                $this->update([
+                    'status' => 'void',
+                    'metadata' => array_merge((array) ($this->metadata ?? []), [
+                        'void_reason' => 'exceeds_sold_quantity',
+                        'voided_at' => now()->toIso8601String(),
+                    ]),
+                ]);
+                DB::commit();
+
+                return false;
+            }
+            $remainingQty = min($remainingQty, $returnable);
+
             $candidateItems = $order->items;
             if (! empty($this->sku_code)) {
                 $candidateItems = $candidateItems->filter(function ($item) {

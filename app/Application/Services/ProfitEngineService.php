@@ -1156,6 +1156,8 @@ class ProfitEngineService
                     ->where('t.type', 'IN');
             })
             ->whereIn('r.inventory_order_id', $orderIds)
+            // Voided returns (e.g. restocked beyond the sold quantity, then reversed) never came back.
+            ->where(fn ($q) => $q->whereNull('r.status')->orWhere('r.status', '<>', 'void'))
             ->where(function ($q) {
                 // refund_amount is auto-filled as a credit note when a return is restocked, so it only proves
                 // a refund for orders no platform settles (shop). Platform orders need the refund on the sheet.
