@@ -434,6 +434,13 @@ class PurchaseReturnController extends Controller
         }
 
         if ($existing) {
+            // Receipts carry no status: keep the original row in the audit log before removing it.
+            app(\App\Application\Services\InventoryAuditLogService::class)->record(
+                'purchase_returns.refund_receipt_removed',
+                Receipt::class,
+                (int) $existing->id,
+                ['reason' => 'refund_method_now_'.$method, 'purchase_return_id' => (int) $return->id, 'original' => $existing->toArray()]
+            );
             $existing->delete();
         }
     }

@@ -121,7 +121,7 @@ class InventoryReturnMutationService
         $wantsCashPayment = in_array($method, ['cash', 'bank_transfer'], true) && $amount > 0.00001;
 
         if (! $wantsCashPayment) {
-            $existingPayment?->delete();
+            $this->voidRefundPayment($existingPayment, 'refund_method_not_cash');
 
             return;
         }
@@ -136,7 +136,7 @@ class InventoryReturnMutationService
                 'treasury_payment_blocked' => true,
                 'treasury_payment_blocked_reason' => 'no_customer_linked',
             ]);
-            $existingPayment?->delete();
+            $this->voidRefundPayment($existingPayment, 'no_customer_linked');
 
             return;
         }
@@ -157,7 +157,7 @@ class InventoryReturnMutationService
                 'treasury_payment_blocked_reason' => 'insufficient_treasury_balance',
                 'treasury_payment_blocked_amount' => $amount,
             ]);
-            $existingPayment?->delete();
+            $this->voidRefundPayment($existingPayment, 'insufficient_treasury_balance');
 
             return;
         }
@@ -179,6 +179,24 @@ class InventoryReturnMutationService
                 ]
             );
         });
+    }
+
+    /**
+     * A refund payment that no longer applies is cancelled, never deleted: treasury and the customer
+     * statement stop counting it, the row stays, and the audit log keeps what it was.
+     */
+    private function voidRefundPayment(?Payment $payment, string $reason): void
+    {
+        if (! $payment || $payment->status === 'cancelled') {
+            return;
+        }
+
+        $original = $payment->only(['id', 'payment_number', 'payee_type', 'payee_id', 'payee_name', 'amount', 'payment_method', 'payment_date', 'status', 'notes']);
+        $payment->update(['status' => 'cancelled']);
+        app(InventoryAuditLogService::class)->record('returns.refund_payment_cancelled', Payment::class, (int) $payment->id, [
+            'reason' => $reason,
+            'original' => $original,
+        ]);
     }
 
     private function flagMetadata(InventoryReturn $return, array $flags): void

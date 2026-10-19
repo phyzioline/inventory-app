@@ -2,6 +2,7 @@
 
 namespace App\Application\Services;
 
+use App\Domain\Models\Wms\InventoryReturn;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -201,10 +202,20 @@ class CustomerReceivablesQueryService
                       {$orderDateClause}
                 ) resolved
                 LEFT JOIN (
-                    SELECT inventory_order_id, SUM(refund_amount) AS return_total
-                    FROM inventory_returns
-                    WHERE status = 'completed'
-                    GROUP BY inventory_order_id
+                    -- Credit the customer still holds from returns: credited value minus cash/bank
+                    -- already refunded to them for that return (the refund uses the credit up).
+                    SELECT r.inventory_order_id,
+                           SUM(r.refund_amount) - COALESCE(SUM(rp.refunded), 0) AS return_total
+                    FROM inventory_returns r
+                    LEFT JOIN (
+                        SELECT reference_id, SUM(amount) AS refunded
+                        FROM inv_payments
+                        WHERE reference_type = ?
+                          AND status = 'completed'
+                        GROUP BY reference_id
+                    ) rp ON rp.reference_id = r.id
+                    WHERE r.status = 'completed'
+                    GROUP BY r.inventory_order_id
                 ) ret ON ret.inventory_order_id = resolved.order_id
                 GROUP BY resolved.customer_id
             ) ord ON ord.customer_id = c.id
@@ -230,6 +241,7 @@ class CustomerReceivablesQueryService
         $bindings = [
             $userId, ...$range,         // orders by customer_id
             $userId, ...$range,         // orders by name fallback
+            InventoryReturn::class,     // cash refunds paid against returns
             $userId, ...$receiptRange,  // receipts
             $userId,                    // customers filter
         ];

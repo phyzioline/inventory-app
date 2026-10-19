@@ -724,7 +724,10 @@ export default function PurchaseInvoicesPage() {
     const selectedInvoicePaymentStatus = useMemo(() => {
         if (!selectedInvoice) return null;
         const total = Number(selectedInvoice?.grand_total || selectedInvoice?.subtotal || 0);
-        const { paid, remaining } = resolvePaidRemainingFromBatchNotes(selectedInvoice?.notes, total);
+        const hasAllocation = selectedInvoice?.allocated_paid !== null && selectedInvoice?.allocated_paid !== undefined;
+        const { paid, remaining } = hasAllocation
+            ? { paid: Number(selectedInvoice.allocated_paid), remaining: Number(selectedInvoice.allocated_remaining) }
+            : resolvePaidRemainingFromBatchNotes(selectedInvoice?.notes, total);
         return resolvePurchasePaymentDisplayStatus(selectedInvoice?.status, paid, remaining);
     }, [selectedInvoice]);
 

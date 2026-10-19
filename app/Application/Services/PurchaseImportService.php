@@ -1512,14 +1512,25 @@ class PurchaseImportService
             return;
         }
 
+        $this->postCashPurchasePayment($batch, $vendor, $paid);
+    }
+
+    /**
+     * Post one completed AUTO_PURCHASE_BATCH treasury payment of $amount for $batch, dated on the
+     * invoice date. Callers decide the amount; the treasury spend guard still applies.
+     */
+    public function postCashPurchasePayment(PurchaseBatch $batch, Vendor $vendor, float $amount, string $noteSuffix = ''): Payment
+    {
         $paymentDate = $batch->invoice_date
             ? $batch->invoice_date->toDateString()
             : ($batch->created_at?->toDateString() ?? now()->toDateString());
 
-        $amount = round($paid, 2);
+        $amount = round($amount, 2);
         app(TreasurySpendGuard::class)->assertPaymentAllowedForUser((int) $batch->user_id, $amount);
 
-        Payment::query()->create([
+        $tag = 'AUTO_PURCHASE_BATCH:'.$batch->id;
+
+        return Payment::query()->create([
             'payment_number' => $this->generateNextPurchaseCashPaymentNumber(),
             'payee_type' => Vendor::class,
             'payee_id' => (int) $vendor->id,
@@ -1531,7 +1542,7 @@ class PurchaseImportService
             'reference_type' => PurchaseBatch::class,
             'reference_id' => (int) $batch->id,
             'status' => 'completed',
-            'notes' => trim($tag.' '.($batch->invoice_number ?: $batch->batch_number ?: '')),
+            'notes' => trim($tag.' '.($batch->invoice_number ?: $batch->batch_number ?: '').' '.$noteSuffix),
             'user_id' => $batch->user_id,
         ]);
     }

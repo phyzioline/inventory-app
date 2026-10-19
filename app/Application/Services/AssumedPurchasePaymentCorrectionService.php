@@ -7,6 +7,7 @@ namespace App\Application\Services;
 use App\Domain\Models\Wms\InventoryAuditLog;
 use App\Domain\Models\Wms\Payment;
 use App\Domain\Models\Wms\PurchaseBatch;
+use App\Domain\Models\Wms\Vendor;
 use App\Domain\ValueObjects\PurchasePaymentMeta;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -223,6 +224,144 @@ class AssumedPurchasePaymentCorrectionService
         $result['excess_removed'] = round($result['excess_removed'], 2);
 
         return $result;
+    }
+
+    /**
+     * Received cash invoices of the named suppliers whose treasury payments add up to less than the
+     * invoice total (often nothing was ever posted). Used only for owner-confirmed suppliers: the
+     * shortfall is real cash that left on the invoice date and treasury must show it.
+     *
+     * @param  array<int, string>  $payees  supplier (vendor) names; required — empty returns nothing
+     * @return Collection<int, array{batch_id: int, invoice: string, payee: string, date: ?string, total: float, entered_paid: float, posted: float, shortfall: float}>
+     */
+    public function findUnpostedPaidInFull(int $userId, array $payees): Collection
+    {
+        $payees = array_values(array_filter(array_map(fn ($name) => trim((string) $name), $payees), fn ($name) => $name !== ''));
+        if ($payees === []) {
+            return collect();
+        }
+
+        $vendors = Vendor::withoutGlobalScopes()
+            ->where('user_id', $userId)
+            ->get(['id', 'name'])
+            ->filter(fn (Vendor $v) => in_array(trim((string) $v->name), $payees, true))
+            ->keyBy('id');
+        if ($vendors->isEmpty()) {
+            return collect();
+        }
+
+        return PurchaseBatch::withoutGlobalScopes()
+            ->where('user_id', $userId)
+            ->whereIn('vendor_id', $vendors->keys()->all())
+            ->where('status', 'received')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (PurchaseBatch $batch) => PurchasePaymentMeta::fromNotes($batch->notes)->type === 'cash')
+            ->map(function (PurchaseBatch $batch) use ($userId, $vendors) {
+                $total = (float) ($batch->grand_total ?? $batch->subtotal ?? 0);
+                $posted = $this->postedForBatch($userId, (int) $batch->id);
+
+                return [
+                    'batch_id' => (int) $batch->id,
+                    'invoice' => (string) ($batch->invoice_number ?: $batch->batch_number),
+                    'payee' => trim((string) $vendors->get($batch->vendor_id)?->name),
+                    'date' => $batch->invoice_date?->toDateString(),
+                    'total' => round($total, 2),
+                    'entered_paid' => round(PurchasePaymentMeta::fromNotes($batch->notes)->paidAgainst($total), 2),
+                    'posted' => $posted,
+                    'shortfall' => round($total - $posted, 2),
+                ];
+            })
+            // Only invoices still open on the supplier account. One already entered as paid but missing
+            // from treasury is a different question (paid some other way?) and is never posted here.
+            ->filter(fn (array $row) => $row['total'] > 0.009
+                && $row['shortfall'] > 0.009
+                && $row['entered_paid'] < $row['total'] - 0.009)
+            ->values();
+    }
+
+    /**
+     * Owner confirmed these cash invoices were paid in full: post the missing treasury payment
+     * (total − already posted) dated on the invoice date and set paid = invoice total on the invoice.
+     * Existing payments are never touched. Each invoice gets an audit entry; re-running finds nothing.
+     *
+     * @param  Collection<int, array<string, mixed>>  $rows  from {@see findUnpostedPaidInFull()}
+     * @return array{batches: int, amount_posted: float, payment_ids: array<int, int>}
+     */
+    public function postMissingPaidInFull(int $userId, Collection $rows): array
+    {
+        $result = ['batches' => 0, 'amount_posted' => 0.0, 'payment_ids' => []];
+        $purchases = app(PurchaseImportService::class);
+
+        foreach ($rows as $row) {
+            DB::transaction(function () use ($userId, $row, $purchases, &$result) {
+                $batch = PurchaseBatch::withoutGlobalScopes()
+                    ->where('user_id', $userId)
+                    ->whereKey($row['batch_id'])
+                    ->lockForUpdate()
+                    ->first();
+                if (! $batch || (string) $batch->status !== 'received') {
+                    return;
+                }
+                $meta = PurchasePaymentMeta::fromNotes($batch->notes);
+                $vendor = Vendor::withoutGlobalScopes()->find((int) $batch->vendor_id);
+                if ($meta->type !== 'cash' || ! $vendor) {
+                    return;
+                }
+
+                $total = (float) ($batch->grand_total ?? $batch->subtotal ?? 0);
+                $postedBefore = $this->postedForBatch($userId, (int) $batch->id);
+                $shortfall = round($total - $postedBefore, 2);
+                if ($total <= 0.009 || $shortfall <= 0.009) {
+                    return;
+                }
+
+                $originalNotes = (string) ($batch->notes ?? '');
+                $status = PurchaseImportService::resolvePaymentMetaStatus((string) $batch->status, $total, 0.0, 'cash');
+                $batch->update([
+                    'notes' => PurchasePaymentMeta::writeToNotes($originalNotes, 'cash', $total, 0.0, $status),
+                ]);
+                $payment = $purchases->postCashPurchasePayment($batch, $vendor, $shortfall, '(owner confirmed paid in full)');
+
+                app(InventoryAuditLogService::class)->record(self::AUDIT_ACTION_PAID_IN_FULL, PurchaseBatch::class, (int) $batch->id, [
+                    'invoice_total' => round($total, 2),
+                    'previous_entered_paid' => round($meta->paidAgainst($total), 2),
+                    'posted_before' => $postedBefore,
+                    'posted_payment_id' => (int) $payment->id,
+                    'posted_amount' => $shortfall,
+                    'payment_date' => $payment->payment_date?->toDateString() ?? (string) $payment->payment_date,
+                    'original_notes' => $originalNotes,
+                    'new_notes' => $batch->notes,
+                ]);
+
+                $result['batches']++;
+                $result['amount_posted'] += $shortfall;
+                $result['payment_ids'][] = (int) $payment->id;
+            });
+        }
+
+        $result['amount_posted'] = round($result['amount_posted'], 2);
+
+        return $result;
+    }
+
+    /**
+     * Completed treasury payments for one purchase invoice: its AUTO_PURCHASE_BATCH rows plus any
+     * payment that references the batch directly.
+     */
+    private function postedForBatch(int $userId, int $batchId): float
+    {
+        return round((float) Payment::withoutGlobalScopes()
+            ->where('user_id', $userId)
+            ->where('status', 'completed')
+            ->where(function ($q) use ($batchId) {
+                $q->where('notes', 'like', '%AUTO_PURCHASE_BATCH:'.$batchId.'%')
+                    ->orWhere(fn ($q2) => $q2->where('reference_type', PurchaseBatch::class)->where('reference_id', $batchId));
+            })
+            ->get()
+            ->filter(fn (Payment $p) => $this->batchIdOf($p) === $batchId
+                || ((string) $p->reference_type === PurchaseBatch::class && (int) $p->reference_id === $batchId))
+            ->sum('amount'), 2);
     }
 
     private function batchIdOf(Payment $payment): int

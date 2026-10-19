@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use App\Application\Services\PurchaseImportService;
+use App\Application\Services\SupplierAccountService;
 use App\Application\Services\TreasurySpendGuard;
 use App\Presentation\Http\Requests\StorePurchaseBatchRequest;
 use App\Domain\Models\Wms\InventoryLocation;
@@ -350,8 +351,23 @@ class PurchaseImportController extends Controller
         }
 
         $perPage = min(500, max(1, (int) $request->input('per_page', 50)));
+        $page = $query->paginate($perPage);
 
-        return response()->json($query->paginate($perPage));
+        // Paid per invoice from the supplier account: entered + linked payments, then on-account
+        // payments and credits fill the oldest invoices first (same figures as the supplier statement).
+        $allocated = app(SupplierAccountService::class)->allocatedInvoicePayments(
+            $page->getCollection()->pluck('vendor_id')->filter()->unique()->values()->all()
+        );
+        $page->getCollection()->transform(function (PurchaseBatch $batch) use ($allocated) {
+            $row = $allocated[(int) $batch->id] ?? null;
+            $batch->setAttribute('allocated_paid', $row['paid'] ?? null);
+            $batch->setAttribute('allocated_remaining', $row['remaining'] ?? null);
+            $batch->setAttribute('allocated_status', $row['status'] ?? null);
+
+            return $batch;
+        });
+
+        return response()->json($page);
     }
 
     /**
@@ -599,6 +615,13 @@ class PurchaseImportController extends Controller
             'upload',
             'location',
         ])->findOrFail($id);
+
+        $row = $batch->vendor_id
+            ? (app(SupplierAccountService::class)->allocatedInvoicePayments([(int) $batch->vendor_id])[(int) $batch->id] ?? null)
+            : null;
+        $batch->setAttribute('allocated_paid', $row['paid'] ?? null);
+        $batch->setAttribute('allocated_remaining', $row['remaining'] ?? null);
+        $batch->setAttribute('allocated_status', $row['status'] ?? null);
 
         return response()->json($batch);
     }

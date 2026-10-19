@@ -14,6 +14,7 @@ use App\Application\Services\ReceiptApplicationService;
 use App\Domain\Models\Wms\Customer;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\InventoryReturn;
+use App\Domain\Models\Wms\Payment;
 use App\Domain\Models\Wms\Receipt;
 use App\Infrastructure\External\MonolithCrmWebhookClient;
 
@@ -419,6 +420,15 @@ class CustomerController extends Controller
             ->orderBy('return_date')
             ->get();
 
+        // Cash/bank actually paid back to the customer for a return uses up that return's credit.
+        $refundPayments = $returns->isEmpty()
+            ? collect()
+            : Payment::query()
+                ->where('reference_type', InventoryReturn::class)
+                ->whereIn('reference_id', $returns->pluck('id')->all())
+                ->where('status', 'completed')
+                ->get();
+
         $receiptRows = $receipts->map(function ($receipt) {
             return [
                 'id' => $receipt->id,
@@ -435,7 +445,7 @@ class CustomerController extends Controller
         // Base outstanding/collected reflect order paid_amount (e.g. cash sales).
         // Negative means the customer overpaid or returned goods worth more than
         // what's left owed — a credit balance owed back to them, not zero.
-        $outstanding = round((float) $invoiceRows->sum('remaining'), 2);
+        $outstanding = round((float) $invoiceRows->sum('remaining') + (float) $refundPayments->sum('amount'), 2);
 
         // Extra customer receipts (not linked to an inventory order) should reduce outstanding.
         // This is the "on-account" collection the UI records from the customer list.
@@ -500,6 +510,18 @@ class CustomerController extends Controller
                 'source' => 'receipt',
                 'source_id' => $rcp['id'],
                 '_sort' => ($rcp['date'] ?? '0000-00-00').'-C-'.$rcp['id'],
+            ]);
+        }
+        foreach ($refundPayments as $refund) {
+            $refundDate = optional($refund->payment_date)->toDateString();
+            $ledgerRows->push([
+                'date' => $refundDate,
+                'description' => 'رد نقدي للعميل - Refund #'.($refund->payment_number ?: $refund->id),
+                'debit' => (float) $refund->amount,
+                'credit' => 0.0,
+                'source' => 'refund',
+                'source_id' => $refund->id,
+                '_sort' => ($refundDate ?? '0000-00-00').'-E-'.$refund->id,
             ]);
         }
         foreach ($returns as $return) {

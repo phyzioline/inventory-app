@@ -340,6 +340,67 @@ it('records owner-confirmed cash invoices as paid in full for the named supplier
         ->and($service->findExcess($user->id)->pluck('batch_id')->all())->toBe([(int) $otherBatch->id]);
 });
 
+it('posts the treasury payment missing from owner-confirmed cash invoices on the invoice date, once', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+    Receipt::query()->create([
+        'receipt_number' => 'RCPT-NAP-2',
+        'type' => 'capital',
+        'amount' => 100000,
+        'receipt_date' => now()->toDateString(),
+        'user_id' => $user->id,
+    ]);
+    [$vendor] = seedNoAssumedPaymentVendor($user);
+    $other = Vendor::query()->create(['name' => 'مورد آخر', 'is_active' => true, 'current_balance' => 0, 'user_id' => $user->id]);
+
+    $never = seedNoAssumedPaymentBatch($user, $vendor, 1000, '[PAYMENT] type=cash; paid=0.00; remaining=1000.00; status=pending');
+    $never->update(['invoice_date' => '2026-04-12']);
+    $token = seedNoAssumedPaymentBatch($user, $vendor, 600, '[PAYMENT] type=cash; paid=0.00; remaining=600.00; status=pending');
+    $credit = seedNoAssumedPaymentBatch($user, $vendor, 700, '[PAYMENT] type=credit; paid=0.00; remaining=700.00; status=pending');
+    $enteredPaid = seedNoAssumedPaymentBatch($user, $vendor, 500, '[PAYMENT] type=cash; paid=500.00; remaining=0.00; status=paid');
+    $otherBatch = seedNoAssumedPaymentBatch($user, $other, 400, '[PAYMENT] type=cash; paid=0.00; remaining=400.00; status=pending');
+    Payment::query()->create([
+        'payment_number' => 'PAY-NAP-T'.$token->id,
+        'payee_type' => Vendor::class,
+        'payee_id' => $vendor->id,
+        'payee_name' => $vendor->name,
+        'amount' => 1,
+        'payment_method' => 'Cash',
+        'payment_date' => now()->toDateString(),
+        'reference_type' => PurchaseBatch::class,
+        'reference_id' => $token->id,
+        'status' => 'completed',
+        'notes' => 'AUTO_PURCHASE_BATCH:'.$token->id.' '.$token->invoice_number,
+        'user_id' => $user->id,
+    ]);
+
+    $args = ['--user' => $user->id, '--supplier' => [$vendor->name], '--paid-in-full' => true];
+    $this->artisan('inventory:void-assumed-purchase-payments', $args)->assertSuccessful();
+    expect(Payment::query()->count())->toBe(1);
+
+    $this->artisan('inventory:void-assumed-purchase-payments', $args + ['--apply' => true])->assertSuccessful();
+
+    $postedFor = fn (PurchaseBatch $b) => (float) Payment::query()->where('status', 'completed')
+        ->where('notes', 'like', '%AUTO_PURCHASE_BATCH:'.$b->id.' %')->sum('amount');
+    expect($postedFor($never))->toBe(1000.0)
+        ->and(Payment::query()->where('notes', 'like', '%AUTO_PURCHASE_BATCH:'.$never->id.' %')->first()->payment_date->toDateString())->toBe('2026-04-12')
+        ->and($postedFor($token))->toBe(600.0)
+        ->and($postedFor($credit))->toBe(0.0)
+        ->and($postedFor($enteredPaid))->toBe(0.0)
+        ->and($postedFor($otherBatch))->toBe(0.0)
+        ->and(noAssumedPaymentNotesPaid($never->refresh()))->toBe(1000.0)
+        ->and(noAssumedPaymentNotesPaid($token->refresh()))->toBe(600.0)
+        ->and(noAssumedPaymentNotesPaid($credit->refresh()))->toBe(0.0)
+        ->and(Payment::query()->where('status', 'cancelled')->count())->toBe(0)
+        ->and(\App\Domain\Models\Wms\InventoryAuditLog::query()
+            ->where('action', \App\Application\Services\AssumedPurchasePaymentCorrectionService::AUDIT_ACTION_PAID_IN_FULL)->count())->toBe(2);
+
+    $this->artisan('inventory:void-assumed-purchase-payments', $args + ['--apply' => true])
+        ->expectsOutput('Nothing to confirm: every cash invoice of these suppliers is paid in full and posted.')
+        ->assertSuccessful();
+    expect(Payment::query()->count())->toBe(3);
+});
+
 function noAssumedPaymentNotesPaid(PurchaseBatch $batch): float
 {
     return \App\Domain\ValueObjects\PurchasePaymentMeta::fromNotes($batch->notes)

@@ -671,8 +671,13 @@ export const purchaseInvoiceService = {
             }
             const mapped = batches.map((b: any) => {
                 const totalAmount = Number(b.grand_total || b.subtotal || b.total_cost || b.total_amount || 0);
-                const { paid: resolvedPaid, remaining: resolvedRemaining, type: resolvedType } =
-                    resolvePaidRemainingFromBatchNotes(b.notes, totalAmount);
+                const fromNotes = resolvePaidRemainingFromBatchNotes(b.notes, totalAmount);
+                // Server figure from the supplier account (payments fill the oldest invoices first);
+                // notes only when the invoice has no supplier account.
+                const hasAllocation = b.allocated_paid !== null && b.allocated_paid !== undefined;
+                const resolvedPaid = hasAllocation ? Number(b.allocated_paid) : fromNotes.paid;
+                const resolvedRemaining = hasAllocation ? Number(b.allocated_remaining) : fromNotes.remaining;
+                const resolvedType = fromNotes.type;
                 const backendStatus = String(b.status || '').toLowerCase();
                 const finalStatus = resolvePurchasePaymentDisplayStatus(
                     backendStatus,

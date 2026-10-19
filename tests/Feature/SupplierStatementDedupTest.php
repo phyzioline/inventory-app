@@ -107,3 +107,90 @@ it('omits bogus AUTO cash-mirrors on credit invoices from the supplier statement
     $ledgerCredits = collect($response->json('ledger'))->sum(fn ($row) => (float) ($row['credit'] ?? 0));
     expect((float) $ledgerCredits)->toBe(8000.0);
 });
+
+it('does not count a payment to another vendor that shares the supplier id', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    $ownVendor = Vendor::query()->create(['name' => 'جرجس', 'is_active' => true, 'current_balance' => 0, 'user_id' => $user->id]);
+    $supplier = Supplier::query()->create(['name' => 'جرجس', 'balance' => 0, 'user_id' => $user->id]);
+    // Force the id collision seen in production: vendor #N is another company than supplier #N.
+    $otherVendor = Vendor::query()->create(['name' => 'مرتجعات', 'is_active' => true, 'current_balance' => 0, 'user_id' => $user->id]);
+    \Illuminate\Support\Facades\DB::table($otherVendor->getTable())->where('id', $otherVendor->id)->update(['id' => $supplier->id + 100000]);
+    \Illuminate\Support\Facades\DB::table($supplier->getTable())->where('id', $supplier->id)->update(['id' => $supplier->id + 100000]);
+    $supplier = Supplier::query()->findOrFail($supplier->id + 100000);
+    $otherVendorId = $supplier->id;
+
+    PurchaseBatch::query()->create([
+        'batch_number' => 'PB-COLL-'.uniqid(),
+        'user_id' => $user->id,
+        'vendor_id' => $ownVendor->id,
+        'supplier_name_raw' => 'جرجس',
+        'invoice_number' => 'PUR-COLL',
+        'invoice_date' => now()->toDateString(),
+        'grand_total' => 10000,
+        'subtotal' => 10000,
+        'status' => 'received',
+        'notes' => '[PAYMENT] type=credit; paid=0.00; remaining=10000.00; status=confirmed',
+    ]);
+    foreach ([[Vendor::class, $otherVendorId, 'مرتجعات', 4000], [Supplier::class, $supplier->id, 'جرجس', 1000]] as [$type, $id, $name, $amount]) {
+        Payment::query()->create([
+            'payment_number' => 'PAY-COLL-'.uniqid(),
+            'payee_type' => $type,
+            'payee_id' => $id,
+            'payee_name' => $name,
+            'amount' => $amount,
+            'payment_method' => 'cash',
+            'payment_date' => now()->toDateString(),
+            'status' => 'completed',
+            'user_id' => $user->id,
+        ]);
+    }
+
+    $response = $this->getJson('/api/inventory/suppliers/'.$supplier->id.'/account-summary')->assertOk();
+
+    expect((float) $response->json('summary.total_paid'))->toBe(1000.0)
+        ->and((float) $response->json('summary.outstanding'))->toBe(9000.0);
+});
+
+it('does not count a legacy supplier payment to another name whose id equals the linked vendor id', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    $vendor = Vendor::query()->create(['name' => 'بي تي هوم', 'is_active' => true, 'current_balance' => 0, 'user_id' => $user->id]);
+    $supplier = Supplier::query()->create(['name' => 'بي تي هوم', 'balance' => 0, 'user_id' => $user->id]);
+    // Supplier and vendor ids must differ, as in production (supplier #115 ↔ vendor #49).
+    \Illuminate\Support\Facades\DB::table($supplier->getTable())->where('id', $supplier->id)->update(['id' => $vendor->id + 200000]);
+    $supplier = Supplier::query()->findOrFail($vendor->id + 200000);
+
+    PurchaseBatch::query()->create([
+        'batch_number' => 'PB-LEG-'.uniqid(),
+        'user_id' => $user->id,
+        'vendor_id' => $vendor->id,
+        'supplier_name_raw' => 'بي تي هوم',
+        'invoice_number' => 'PUR-LEG',
+        'invoice_date' => now()->toDateString(),
+        'grand_total' => 5000,
+        'subtotal' => 5000,
+        'status' => 'received',
+        'notes' => '[PAYMENT] type=credit; paid=0.00; remaining=5000.00; status=confirmed',
+    ]);
+    foreach ([['جوميا', 2660], ['بي تي هوم', 1000]] as [$name, $amount]) {
+        Payment::query()->create([
+            'payment_number' => 'PAY-LEG-'.uniqid(),
+            'payee_type' => 'App\\Models\\Inventory\\Supplier',
+            'payee_id' => $vendor->id,
+            'payee_name' => $name,
+            'amount' => $amount,
+            'payment_method' => 'bank_transfer',
+            'payment_date' => now()->toDateString(),
+            'status' => 'completed',
+            'user_id' => $user->id,
+        ]);
+    }
+
+    $response = $this->getJson('/api/inventory/suppliers/'.$supplier->id.'/account-summary')->assertOk();
+
+    expect((float) $response->json('summary.total_paid'))->toBe(1000.0)
+        ->and((float) $response->json('summary.outstanding'))->toBe(4000.0);
+});

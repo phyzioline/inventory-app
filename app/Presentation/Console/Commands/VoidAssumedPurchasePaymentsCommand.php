@@ -14,7 +14,7 @@ class VoidAssumedPurchasePaymentsCommand extends Command
     protected $signature = 'inventory:void-assumed-purchase-payments
                             {--user= : Inventory user_id (tenant) — required}
                             {--supplier=* : Only these supplier names, exactly as the table shows them (repeatable)}
-                            {--paid-in-full : Owner confirmed these cash invoices were paid in full: set paid = invoice total, void nothing}
+                            {--paid-in-full : Owner confirmed these cash invoices were paid in full: set paid = invoice total, void nothing, post any amount missing from treasury on the invoice date}
                             {--apply : Write the correction (default is a dry run)}';
 
     protected $description = 'Void automatic treasury payments posted for more than the amount entered as paid on cash purchase invoices.';
@@ -35,6 +35,19 @@ class VoidAssumedPurchasePaymentsCommand extends Command
         }
 
         $rows = $service->findExcess($userId, $suppliers);
+        if ($paidInFull) {
+            $unposted = $service->findUnpostedPaidInFull($userId, $suppliers);
+            $unpostedIds = $unposted->pluck('batch_id')->all();
+            $rows = $rows->reject(fn (array $row) => in_array($row['batch_id'], $unpostedIds, true))->values();
+            if ($rows->isEmpty() && $unposted->isEmpty()) {
+                $this->info('Nothing to confirm: every cash invoice of these suppliers is paid in full and posted.');
+
+                return self::SUCCESS;
+            }
+
+            return $this->confirmPaidInFull($service, $userId, $rows, $unposted);
+        }
+
         if ($rows->isEmpty()) {
             $this->info('No automatic purchase payments above the entered paid amount.');
 
@@ -60,10 +73,6 @@ class VoidAssumedPurchasePaymentsCommand extends Command
             number_format($rows->sum('excess'), 2)
         ));
 
-        if ($paidInFull) {
-            return $this->confirmPaidInFull($service, $userId, $rows);
-        }
-
         if (! $this->option('apply')) {
             $this->warn('Dry run — take a backup (backup_inventory_pgsql.sh), then re-run with --apply.');
 
@@ -84,7 +93,7 @@ class VoidAssumedPurchasePaymentsCommand extends Command
         return self::SUCCESS;
     }
 
-    private function confirmPaidInFull(AssumedPurchasePaymentCorrectionService $service, int $userId, Collection $rows): int
+    private function confirmPaidInFull(AssumedPurchasePaymentCorrectionService $service, int $userId, Collection $rows, Collection $unposted): int
     {
         $notesChange = $rows->filter(fn (array $row) => $row['entered_paid'] < $row['total'] - 0.009);
         $aboveTotal = $rows->filter(fn (array $row) => $row['auto_paid'] > $row['total'] + 0.009);
@@ -108,6 +117,25 @@ class VoidAssumedPurchasePaymentsCommand extends Command
                 ])->values()->all()
             );
         }
+        if ($unposted->isNotEmpty()) {
+            $this->warn(sprintf(
+                '%d cash invoices have less in treasury than their total: %s EGP will be posted as cash paid on each invoice date.',
+                $unposted->count(),
+                number_format($unposted->sum('shortfall'), 2)
+            ));
+            $this->table(
+                ['Supplier', 'Batch', 'Invoice', 'Date', 'Invoice total', 'In treasury', 'To post'],
+                $unposted->map(fn (array $row) => [
+                    $row['payee'],
+                    $row['batch_id'],
+                    $row['invoice'],
+                    $row['date'] ?? '—',
+                    number_format($row['total'], 2),
+                    number_format($row['posted'], 2),
+                    number_format($row['shortfall'], 2),
+                ])->values()->all()
+            );
+        }
 
         if (! $this->option('apply')) {
             $this->warn('Dry run — take a backup (backup_inventory_pgsql.sh), then re-run with --apply.');
@@ -122,6 +150,15 @@ class VoidAssumedPurchasePaymentsCommand extends Command
             number_format($result['amount_confirmed'], 2),
             AssumedPurchasePaymentCorrectionService::AUDIT_ACTION_PAID_IN_FULL
         ));
+        if ($unposted->isNotEmpty()) {
+            $posted = $service->postMissingPaidInFull($userId, $unposted);
+            $this->info(sprintf(
+                'Posted %d treasury payments on their invoice dates (%s EGP, payments #%s).',
+                $posted['batches'],
+                number_format($posted['amount_posted'], 2),
+                implode(', #', $posted['payment_ids'])
+            ));
+        }
 
         return self::SUCCESS;
     }
