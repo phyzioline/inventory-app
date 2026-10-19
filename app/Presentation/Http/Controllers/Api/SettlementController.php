@@ -383,17 +383,6 @@ class SettlementController extends Controller
         });
     }
 
-    /**
-     * Match platform_order_id values from DB/XML to order keys used in the API and profit UI.
-     */
-    private function normalizeSettlementPlatformOrderId(?string $raw): string
-    {
-        $s = trim((string) ($raw ?? ''));
-        $s = trim($s, "'\"");
-
-        return (string) preg_replace('/\s+/u', '', $s);
-    }
-
     private function parseChannelIdsFromRequest(Request $request): array
     {
         if (! $request->filled('channel_ids')) {
@@ -601,64 +590,16 @@ class SettlementController extends Controller
 
     /**
      * Sum settlement line amounts (Amazon "الإجمالي" equivalents) per marketplace order id.
-     * Includes all rows for the same order across sheets/dates (e.g. shipping fee + order amount).
+     * Includes all rows for the same order across sheets/dates (e.g. shipping fee + order amount + later refund).
      * Excludes deferred/pending/reversed lines so totals match cash received when issued.
+     * With start/end dates: orders placed in that period (order cohort), same rules as the profit engine.
      */
     public function orderNetTotals(Request $request)
     {
-        $settlementIdsSub = Settlement::query()->select('id');
+        $filters = $this->profitSettlementFiltersFromRequest($request);
 
-        $channelIds = $this->parseChannelIdsFromRequest($request);
-        if (! empty($channelIds)) {
-            $settlementIdsSub->whereIn('channel_id', $channelIds);
-        } elseif ($request->filled('channel_id')) {
-            $settlementIdsSub->where('channel_id', (int) $request->input('channel_id'));
-        }
-
-        // Group by normalized order id so keys match inventory orders after XML import
-        // (trim, strip quotes, remove whitespace — same idea as the profit UI).
-        $charFn = $this->sqlCharFn();
-        $oidNormSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(platform_order_id,'')), {$charFn}(34), ''), {$charFn}(39), ''), ' ', ''), {$charFn}(9), ''), {$charFn}(13), '')";
-
-        $netQuery = SettlementItem::query()
-            ->whereIn('settlement_id', $settlementIdsSub)
-            ->whereNotNull('platform_order_id')
-            ->where('platform_order_id', '!=', '');
-
-        if ($request->filled('start_date') && $request->filled('end_date')) {
-            $startAt = \Carbon\Carbon::parse((string) $request->input('start_date'))->startOfDay();
-            $endAt = \Carbon\Carbon::parse((string) $request->input('end_date'))->endOfDay();
-            $netQuery->whereBetween('transaction_date', [$startAt, $endAt]);
-        }
-
-        $netQuery->where(function ($q) {
-            $q->whereNull('transaction_status')
-                ->orWhereRaw("TRIM(transaction_status) = ''")
-                ->orWhere(function ($q2) {
-                    $q2->whereRaw("LOWER(TRIM(COALESCE(transaction_status, ''))) NOT IN ('deferred', 'pending', 'reversed')")
-                        ->whereRaw("COALESCE(transaction_status, '') NOT LIKE '%تأجيل%'")
-                        ->where(function ($q3) {
-                            $q3->whereRaw("LOWER(COALESCE(transaction_status, '')) NOT LIKE '%defer%'")
-                                ->orWhereRaw("LOWER(COALESCE(transaction_status, '')) LIKE '%secure%'")
-                                ->orWhereRaw("LOWER(COALESCE(transaction_status, '')) LIKE '%reserved%'")
-                                ->orWhereRaw("COALESCE(transaction_status, '') LIKE '%تأمين%'");
-                        });
-                });
-        });
-
-        $rows = $netQuery
-            ->selectRaw("{$oidNormSql} as oid_key, SUM(CAST(amount AS DECIMAL(18,4))) as net_total")
-            ->groupBy(DB::raw($oidNormSql))
-            ->get();
-
-        $byOrderId = [];
-        foreach ($rows as $row) {
-            $key = $this->normalizeSettlementPlatformOrderId((string) ($row->oid_key ?? ''));
-            if ($key === '') {
-                continue;
-            }
-            $byOrderId[$key] = (float) ($row->net_total ?? 0);
-        }
+        $byOrderId = app(\App\Application\Services\ProfitEngineService::class)
+            ->settlementPlatformOrderNetMap($filters);
 
         return response()->json(['by_order_id' => $byOrderId]);
     }

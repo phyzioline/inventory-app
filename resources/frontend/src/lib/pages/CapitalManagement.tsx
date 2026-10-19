@@ -53,8 +53,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { purchaseInvoiceService } from '@/lib/supabase-services';
-import { useCustomerAccountSummaries } from '@/hooks/useCustomerAccountSummaries';
-import { useCustomers } from '@/hooks/useCustomers';
+import { useCustomerReceivablesTotals } from '@/hooks/useCustomerReceivablesTotals';
+import { useTreasuryCashFlowStats } from '@/hooks/useTreasuryCashFlowStats';
 import { useSupplierAccountSummaries } from '@/hooks/useSupplierAccountSummaries';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { getSupplierOutstanding } from '@/lib/supplierOutstanding';
@@ -73,23 +73,6 @@ const roundMoney = (n: number) => {
   if (!Number.isFinite(x)) return 0;
   return Math.round(x * 100) / 100;
 };
-
-/** Prefer lightweight /stats; fall back to full overview if route not deployed yet (same stats shape). */
-async function fetchTreasuryCashFlowStats(): Promise<{ stats: TreasuryStatsSlice }> {
-  try {
-    return await api.get<{ stats: TreasuryStatsSlice }>('finance/cash-flow-stats');
-  } catch (primary) {
-    try {
-      const overview = await api.get<{ stats: TreasuryStatsSlice }>('finance/cash-flow-overview');
-      if (!overview?.stats || typeof overview.stats !== 'object') {
-        throw primary;
-      }
-      return { stats: overview.stats };
-    } catch {
-      throw primary;
-    }
-  }
-}
 
 const pickFirstPositive = (...values: unknown[]) => {
   for (const value of values) {
@@ -219,12 +202,7 @@ export default function CapitalManagement() {
     refetch: refetchCashFlow,
     isPending: cashFlowStatsPending,
     isError: cashFlowStatsError,
-  } = useQuery({
-    queryKey: ['finance-cash-flow-stats'],
-    queryFn: fetchTreasuryCashFlowStats,
-    staleTime: 30_000,
-    retry: 1,
-  });
+  } = useTreasuryCashFlowStats();
 
   const { data: treasuryPanels, isPending: treasuryPanelsPending } = useQuery({
     queryKey: ['treasury-panels'],
@@ -267,11 +245,9 @@ export default function CapitalManagement() {
   );
 
   const { data: suppliers = [], isPending: suppliersCapitalPending } = useSuppliers();
-  const { data: customers = [], isPending: customersCapitalPending } = useCustomers();
+  const { data: customerTotals, isPending: customersCapitalPending } = useCustomerReceivablesTotals();
 
   const { summaryMap, summariesReady } = useSupplierAccountSummaries(suppliers);
-  const { summaryMap: customerSummaryMap, summariesReady: customerSummariesReady } =
-    useCustomerAccountSummaries(customers);
 
   const financialSnapshotPending =
     ordersCapitalPending ||
@@ -286,15 +262,9 @@ export default function CapitalManagement() {
     inventoryCostPending;
 
   const supplierSummariesPending = suppliers.length > 0 && !summariesReady;
-  const customerSummariesPending = customers.length > 0 && !customerSummariesReady;
 
-  /** Customers page «المستحق» — sum of account-summary outstanding (invoice remaining). */
-  const customersOutstandingTotal = useMemo(() => {
-    return (Array.isArray(customers) ? customers : []).reduce((sum: number, c: any) => {
-      const summary = customerSummaryMap[String(c.id)];
-      return sum + Math.max(0, toNum(summary?.outstanding));
-    }, 0);
-  }, [customers, customerSummaryMap]);
+  /** Customers page «المستحق» — server aggregate of positive customer balances (Guests excluded). */
+  const customersOutstandingTotal = toNum(customerTotals?.receivable);
 
   /** Cash not yet collected: customer ledger (shop) + marketplace orders pending settlement/payment. */
   const externalReceivables = useMemo(() => {

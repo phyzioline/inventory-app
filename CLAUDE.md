@@ -108,6 +108,38 @@ profit/COGS, subscriptions/Paymob. See `.cursor/rules/inventory-critical-paths.m
 
 ---
 
+## Financial integrity — build it like a bank (MANDATORY mindset)
+
+Treat this app as a core-banking ledger plus a tier-1 WMS. The owner makes decisions on these
+numbers, so a wrong figure that looks right does more harm than a figure that is missing.
+Every number on screen must trace back to ledger rows (orders, settlement lines, receipts,
+payments, expenses, stock transactions) and reconcile with the other screens.
+
+1. **One source of truth, on the server.** The server computes money KPIs (ProfitEngineService,
+   CashFlowSummaryController, CustomerReceivablesQueryService). The frontend never sums
+   paginated lists or re-derives a balance.
+2. **Treasury = receipts − (payments + expenses).** A capital source creates its own receipt
+   (CapitalReceiptWriter), so never add capital on top of receipts. That was a 430k double count.
+3. **P&L is order-cohort.** Orders are selected by `order_date`. Every settlement line of those
+   orders (sale, fees, later refund) belongs to them, whatever its `transaction_date`. Never
+   filter settlement lines by date when pricing orders.
+4. **State follows evidence, not imports.** A released product-revenue line means the order
+   shipped (`pending` → `shipped`). COGS is reversed only for units with a stock-ledger IN for
+   the return **and** a refund. Platform orders need the refund on the payment sheet, and
+   auto-filled `refund_amount` credit notes don't count.
+5. **Missing is not zero.** A line with no purchase cost is reported as `uncosted_revenue`,
+   never as 100% margin. Missing expenses make every profit figure optimistic, so say so.
+6. **Post once.** Imports are idempotent: the same line never posts twice, whether in the same
+   sheet or in overlapping sheets of the same channel (SettlementService dedupe +
+   `inventory:dedupe-settlement-lines`).
+7. **Corrections are explicit and audited.** Never silently edit or delete money or stock rows.
+   Use a command with a dry run by default, write an InventoryAuditLog entry with the original
+   rows, and take a fresh backup (`backup_inventory_pgsql.sh`) before any `--apply` on production.
+8. **Reconcile, don't hide.** If P&L, settlements, treasury and stock valuation disagree, show
+   the gap and its cause. Never force totals to match.
+
+---
+
 ## Queue worker (MANDATORY for async marketplace import)
 
 Incident 2026-08-03: async sheet import hung for hours because jobs sat in Redis

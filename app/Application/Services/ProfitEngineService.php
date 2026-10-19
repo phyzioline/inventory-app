@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Application\Support\ChannelQuery;
+use App\Application\Support\TenantContext;
 use App\Domain\Models\Wms\CapitalSource;
 use App\Domain\Models\Wms\Expense;
 use App\Domain\Models\Wms\InventoryAdjustment;
@@ -297,7 +298,7 @@ class ProfitEngineService
             ->where('sku', '!=', '');
 
         $this->applyReleasedSettlementItemScope($query);
-        $this->applySettlementTransactionDateFilter($query, $filters);
+        $this->applyOrderCohortSettlementFilter($query, $filters);
 
         $rows = $query
             ->selectRaw("{$oidNormSql} as oid_key, {$skuNormSql} as sku_key")
@@ -344,15 +345,34 @@ class ProfitEngineService
     }
 
     /**
+     * Order-cohort scope for settlement lines: every line of an order placed in the period, whatever
+     * date the platform booked it. P&L selects orders by order_date, so the lines must follow the order —
+     * refunds and late payouts post weeks after the sale, and filtering them by transaction_date dropped
+     * them from both months (~300k EGP/month of lines landed outside their order's month).
+     *
      * @param  \Illuminate\Database\Eloquent\Builder<SettlementItem>  $query
      */
-    private function applySettlementTransactionDateFilter($query, array $filters): void
+    private function applyOrderCohortSettlementFilter($query, array $filters): void
     {
         if (empty($filters['start_date']) || empty($filters['end_date'])) {
             return;
         }
         [$startAt, $endAt] = $this->normalizeRange((string) $filters['start_date'], (string) $filters['end_date']);
-        $query->whereBetween('transaction_date', [$startAt, $endAt]);
+
+        $cohortKeys = InventoryOrder::query()
+            ->whereBetween('order_date', [$startAt, $endAt])
+            ->whereNotNull('platform_order_id')
+            ->selectRaw($this->compactPlatformOrderIdSql('platform_order_id').' as k');
+
+        $query->whereIn(DB::raw($this->compactPlatformOrderIdSql('platform_order_id')), $cohortKeys);
+    }
+
+    /** Platform order id with quotes, whitespace and dashes removed — join key between orders and sheets. */
+    private function compactPlatformOrderIdSql(string $column): string
+    {
+        $c = static fn (int $n) => \App\Infrastructure\Support\DatabaseSql::asciiChar($n);
+
+        return "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE({$column},'')), {$c(34)}, ''), {$c(39)}, ''), ' ', ''), {$c(9)}, ''), {$c(13)}, ''), '-', '')";
     }
 
     /**
@@ -494,7 +514,7 @@ class ProfitEngineService
      *
      * @return array<string, float> normalized platform_order_id => net sum
      */
-    private function settlementPlatformOrderNetMap(array $filters): array
+    public function settlementPlatformOrderNetMap(array $filters): array
     {
         $c = static fn (int $n) => \App\Infrastructure\Support\DatabaseSql::asciiChar($n);
         $oidNormSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(platform_order_id,'')), {$c(34)}, ''), {$c(39)}, ''), ' ', ''), {$c(9)}, ''), {$c(13)}, '')";
@@ -505,7 +525,7 @@ class ProfitEngineService
             ->where('platform_order_id', '!=', '');
 
         $this->applyReleasedSettlementItemScope($netQuery);
-        $this->applySettlementTransactionDateFilter($netQuery, $filters);
+        $this->applyOrderCohortSettlementFilter($netQuery, $filters);
 
         $rows = $netQuery
             ->selectRaw("{$oidNormSql} as oid_key, SUM(CAST(amount AS DECIMAL(18,4))) as net_total")
@@ -725,7 +745,14 @@ class ProfitEngineService
             ->get()
             ->keyBy('id');
 
-        $masterIdsForBatch = $skuModels->pluck('offer.masterProduct.id')->filter()->unique()->values()->all();
+        // Lines imported before their SKU existed: cost them through the SKU owning the same code.
+        $costingSkusByCode = $this->costingSkusByCode(
+            $lineSales->filter(fn ($l) => empty($l->sku_id))->pluck('sku_code')->all()
+        );
+
+        $masterIdsForBatch = $skuModels->pluck('offer.masterProduct.id')
+            ->merge(collect($costingSkusByCode)->map(fn ($sku) => $sku->offer?->masterProduct?->id))
+            ->filter()->unique()->values()->all();
         $batchCostsForSkuReport = $this->averagePurchaseUnitCostByMasterProductIds($masterIdsForBatch);
 
         $skuMetaMap = $skuModels->mapWithKeys(function ($sku) use ($batchCostsForSkuReport) {
@@ -740,6 +767,8 @@ class ProfitEngineService
         });
 
         $aggregated = [];
+
+        $restockedUnitsByOrder = $this->refundedRestockedUnitsByOrder($orderIds->all());
 
         $inventoryOrders = InventoryOrder::whereIn('id', $orderIds)->get(['id', 'platform_order_id'])->keyBy('id');
         $platformNetMap = $this->settlementPlatformOrderNetMap($filters);
@@ -759,7 +788,18 @@ class ProfitEngineService
             $orderCosts = (float) ($settlementCostMap[$line->order_id] ?? 0);
             $lineRevenueList = (float) $line->revenue;
             $lineQty = (float) $line->quantity_sold;
-            $skuMeta = $skuMetaMap[$line->sku_id] ?? null;
+            $lineSkuModel = $line->sku_id
+                ? ($skuModels[$line->sku_id] ?? null)
+                : ($costingSkusByCode[trim((string) $line->sku_code)] ?? null);
+            $skuMeta = $line->sku_id ? ($skuMetaMap[$line->sku_id] ?? null) : null;
+            if ($skuMeta === null && $lineSkuModel) {
+                $costingMaster = $lineSkuModel->offer?->masterProduct;
+                $skuMeta = [
+                    'unit_cost' => $this->resolveEffectiveUnitCost($costingMaster, $lineSkuModel, $batchCostsForSkuReport),
+                    'master_product_id' => $costingMaster?->id,
+                    'master_product_name' => $costingMaster?->internal_name,
+                ];
+            }
             $unitCost = (float) data_get($skuMeta, 'unit_cost', 0);
             $lineCogs = $lineQty * $unitCost;
             $orderKey = $invOrder ? $this->normalizePlatformOrderKey($invOrder->platform_order_id) : '';
@@ -779,7 +819,7 @@ class ProfitEngineService
                     $unitCost,
                     $orderItems,
                     $orderSkuMap,
-                    $skuModels[$line->sku_id] ?? null
+                    $lineSkuModel
                 );
                 $lineRevenueEffective = $skuEconomics['revenue'];
                 $lineCogs = $skuEconomics['cogs'];
@@ -792,6 +832,15 @@ class ProfitEngineService
             } else {
                 $lineRevenueEffective = $lineRevenueList;
                 $allocatedCosts = $orderRevenue > 0 ? ($lineRevenueList / $orderRevenue) * $orderCosts : 0.0;
+            }
+
+            // Refunded units back in stock are inventory again (same rule as getProfitSummary).
+            $restocked = $restockedUnitsByOrder[(int) $line->order_id] ?? [];
+            if ($restocked !== [] && $unitCost > 0) {
+                $restockedUnits = $orderItems->count() === 1
+                    ? array_sum($restocked)
+                    : (float) ($restocked[$this->normalizeSkuKey($line->sku_code)] ?? 0.0);
+                $lineCogs = max(0.0, $lineCogs - min($lineQty, $restockedUnits) * $unitCost);
             }
 
             // Payment-sheet claim returns are already inside settlement net; map excludes them.
@@ -907,6 +956,8 @@ class ProfitEngineService
             ];
         }
 
+        $this->attachCostingSkusToUnlinkedLines($ordersCollection->flatMap(fn ($order) => $order->items));
+
         $summaryMasterIds = $ordersCollection->flatMap(function ($order) {
             return $order->items->map(fn ($i) => $i->sku?->offer?->masterProduct?->id);
         })->filter()->unique()->values()->all();
@@ -921,11 +972,15 @@ class ProfitEngineService
 
         $platformOrderIds = $ordersCollection->pluck('platform_order_id')->filter()->unique()->values()->all();
         $negativeFees = $this->settlementNegativeFeesForOrders($orderIds, $platformOrderIds, $filters);
+        $restockedUnitsByOrder = $this->refundedRestockedUnitsByOrder($orderIds);
 
         $displayRevenue = 0.0;
         $totalCogs = 0.0;
+        $totalCogsReversed = 0.0;
         $totalRefunds = 0.0;
         $orderProfitSum = 0.0;
+        $uncostedLines = 0;
+        $uncostedRevenue = 0.0;
 
         foreach ($ordersCollection as $order) {
             $listSum = (float) $order->items->sum(fn ($i) => (float) $i->total_price);
@@ -949,6 +1004,26 @@ class ProfitEngineService
                     $orderCogs += $item->quantity * $unitCost;
                 }
             }
+
+            $unitCostByItemId = [];
+            foreach ($order->items as $item) {
+                $unitCost = $this->resolveEffectiveUnitCost($item->sku?->offer?->masterProduct, $item->sku, $batchCostsForSummary);
+                $unitCostByItemId[$item->id] = $unitCost;
+                if ($unitCost <= 0 && (float) $item->quantity > 0) {
+                    $uncostedLines++;
+                    $uncostedRevenue += (float) $item->total_price;
+                }
+            }
+
+            // A refunded unit that physically came back to stock is inventory again, not cost of goods sold.
+            $cogsReversal = $this->restockedReturnCogsReversal(
+                $order->items,
+                $restockedUnitsByOrder[(int) $order->id] ?? [],
+                $unitCostByItemId
+            );
+            $cogsReversal = min($cogsReversal, $orderCogs);
+            $orderCogs -= $cogsReversal;
+            $totalCogsReversed += $cogsReversal;
 
             $nonSettlementRefunds = (float) ($refundsByOrderId[$order->id] ?? 0.0);
 
@@ -985,7 +1060,176 @@ class ProfitEngineService
             'total_revenue' => round($displayRevenue, 2),
             'total_cogs' => round((float) $totalCogs, 2),
             'total_expenses' => round($expenses, 2),
+            // Cost of refunded units that came back to stock (ledger IN + refund evidence) — not COGS.
+            'cogs_reversed_restocked_returns' => round($totalCogsReversed, 2),
+            // Lines with no purchase cost on file. Their revenue is NOT profit; the P&L is incomplete by this much.
+            'uncosted_lines' => $uncostedLines,
+            'uncosted_revenue' => round($uncostedRevenue, 2),
         ];
+    }
+
+    /**
+     * Order lines imported before their SKU existed have sku_id = NULL, so their cost resolved to 0 and
+     * the whole sale was booked as profit (Feb–Mar 2026: ~1.25M EGP of sales with ~3k cost). For costing
+     * only, resolve such lines to the SKU that owns the same code — when exactly one live SKU does.
+     * The relation is set in memory; sku_id is not written (that would make stock tools treat the
+     * historical line as deductible).
+     *
+     * @param  iterable<int, InventoryOrderItem>  $items
+     */
+    private function attachCostingSkusToUnlinkedLines(iterable $items): void
+    {
+        $unlinked = [];
+        foreach ($items as $item) {
+            if (empty($item->sku_id) && trim((string) $item->sku_code) !== '') {
+                $unlinked[] = $item;
+            }
+        }
+        if ($unlinked === []) {
+            return;
+        }
+
+        $byCode = $this->costingSkusByCode(array_map(fn ($i) => (string) $i->sku_code, $unlinked));
+        foreach ($unlinked as $item) {
+            $sku = $byCode[trim((string) $item->sku_code)] ?? null;
+            if ($sku) {
+                $item->setRelation('sku', $sku);
+            }
+        }
+    }
+
+    /**
+     * @param  list<string>  $codes
+     * @return array<string, Sku> code => the single live SKU owning it (ambiguous codes are left out)
+     */
+    private function costingSkusByCode(array $codes): array
+    {
+        $codes = array_values(array_unique(array_filter(array_map(fn ($c) => trim((string) $c), $codes))));
+        if ($codes === []) {
+            return [];
+        }
+
+        $candidates = Sku::query()
+            ->with('offer.masterProduct')
+            ->where(function ($q) use ($codes) {
+                $q->whereIn('sku', $codes)->orWhereIn('marketplace_id', $codes);
+            })
+            ->get();
+
+        $byCode = [];
+        foreach ($candidates as $sku) {
+            foreach (array_unique(array_filter([trim((string) $sku->sku), trim((string) $sku->marketplace_id)])) as $code) {
+                $byCode[$code][$sku->id] = $sku;
+            }
+        }
+
+        $out = [];
+        foreach ($byCode as $code => $matches) {
+            if (count($matches) === 1) {
+                $out[$code] = reset($matches);
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Units per order and SKU code that were refunded AND physically restocked. Both proofs are required:
+     * a stock-ledger IN for the return (goods back) and a refund on the order (sale reversed). Status flags
+     * and auto-filled credit amounts are not trusted — in Apr 2026 ~900 returns carried a credit amount
+     * with no refund on any payment sheet.
+     *
+     * @param  list<int>  $orderIds
+     * @return array<int, array<string, float>> order id => normalized sku code => units
+     */
+    private function refundedRestockedUnitsByOrder(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_filter(array_map('intval', $orderIds))));
+        if ($orderIds === []) {
+            return [];
+        }
+
+        $rows = DB::table('inventory_returns as r')
+            ->join('inventory_transactions as t', function ($j) {
+                $j->whereRaw('t.reference_id = CAST(r.id AS VARCHAR)')
+                    ->where('t.reference_type', 'Return')
+                    ->where('t.type', 'IN');
+            })
+            ->whereIn('r.inventory_order_id', $orderIds)
+            ->where(function ($q) {
+                // refund_amount is auto-filled as a credit note when a return is restocked, so it only proves
+                // a refund for orders no platform settles (shop). Platform orders need the refund on the sheet.
+                $q->where(function ($shop) {
+                    $shop->where('r.refund_amount', '>', 0)
+                        ->whereNotExists(function ($sub) {
+                            $sub->select(DB::raw(1))
+                                ->from('settlement_items as si_any')
+                                ->whereColumn('si_any.inventory_order_id', 'r.inventory_order_id');
+                        });
+                })
+                    ->orWhereExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('settlement_items as si')
+                            ->whereColumn('si.inventory_order_id', 'r.inventory_order_id')
+                            ->where('si.amount', '<', 0)
+                            ->where(function ($w) {
+                                $w->where('si.line_kind', 'refund_principal')
+                                    ->orWhereRaw("LOWER(COALESCE(si.transaction_type, '')) LIKE '%refund%'")
+                                    ->orWhereRaw("LOWER(COALESCE(si.description, '')) LIKE 'refund%'");
+                            });
+                    });
+            })
+            ->groupBy('r.inventory_order_id', 'r.sku_code')
+            ->selectRaw('r.inventory_order_id as order_id, r.sku_code, SUM(t.quantity) as qty')
+            ->get();
+
+        $out = [];
+        foreach ($rows as $row) {
+            $key = $this->normalizeSkuKey((string) $row->sku_code);
+            $out[(int) $row->order_id][$key] = ($out[(int) $row->order_id][$key] ?? 0.0) + (float) $row->qty;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Cost to take back out of COGS for restocked refunded units, capped at each line's sold quantity
+     * (some historical returns booked more units back than were sold).
+     *
+     * @param  iterable<int, InventoryOrderItem>  $orderItems
+     * @param  array<string, float>  $restockedBySku
+     * @param  array<int, float>  $unitCostByItemId
+     */
+    private function restockedReturnCogsReversal(iterable $orderItems, array $restockedBySku, array $unitCostByItemId): float
+    {
+        if ($restockedBySku === []) {
+            return 0.0;
+        }
+
+        $items = collect($orderItems)->values();
+        if ($items->count() === 1) {
+            // Single-line order: the return can only be this line, whatever code the return sheet used.
+            $restockedBySku = ['*' => array_sum($restockedBySku)];
+        }
+
+        $reversal = 0.0;
+        foreach ($items as $item) {
+            $keys = $items->count() === 1
+                ? ['*']
+                : $this->collectSkuMatchKeys($item->sku_code, $item->sku instanceof Sku ? $item->sku : null);
+            $need = (float) $item->quantity;
+            foreach ($keys as $k) {
+                $take = min($need, (float) ($restockedBySku[$k] ?? 0.0));
+                if ($take <= 0) {
+                    continue;
+                }
+                $restockedBySku[$k] -= $take;
+                $need -= $take;
+                $reversal += $take * (float) ($unitCostByItemId[$item->id] ?? 0.0);
+            }
+        }
+
+        return $reversal;
     }
 
     /**
@@ -1035,7 +1279,19 @@ class ProfitEngineService
         $roi = $totalCapital > 0 ? ($netProfit / $totalCapital) * 100 : 0.0;
         $grossMargin = $revenue > 0 ? (($revenue - $cogs) / $revenue) * 100 : 0.0;
         $netMargin = $revenue > 0 ? ($netProfit / $revenue) * 100 : 0.0;
-        $rotationDays = $revenue > 0 ? (int) round(($totalPurchases / $revenue) * 365) : 0;
+
+        // Days of inventory on hand = stock at cost ÷ average daily COGS over the period.
+        // (Purchases ÷ revenue is not a turnover measure: it mixes cost with selling price and
+        // grows whenever stock is built up.)
+        $inventoryAtCost = (float) (app(InventoryValuationService::class)->warehouseTotals()['total_cost'] ?? 0);
+        $periodDays = $this->roiPeriodDays($startDate, $endDate, $filters);
+        $dailyCogs = $periodDays > 0 ? $cogs / $periodDays : 0.0;
+        $rotationDays = $dailyCogs > 0 ? (int) round($inventoryAtCost / $dailyCogs) : 0;
+
+        // Cash in hand is the treasury ledger position (receipts − payments − expenses), the same number
+        // as the Bank Accounts screen. Capital is already a receipt there, so it is not added again.
+        $tenantUserId = (int) (TenantContext::id() ?? Auth::id() ?? 0);
+        $cashInHand = app(TreasurySpendGuard::class)->availableCashForUser($tenantUserId);
 
         $expensesByCategory = Expense::query()
             ->when(! empty($filters['start_date']) && ! empty($filters['end_date']), function ($q) use ($filters) {
@@ -1070,11 +1326,32 @@ class ProfitEngineService
             'purchased_inventory' => round($totalPurchases, 2),
             'total_losses' => round($totalLosses, 2),
             'rotation_days' => $rotationDays,
-            'cash_in_hand' => round($totalCapital - $totalPurchases + $revenue - $expensesAmt, 2),
+            'inventory_at_cost' => round($inventoryAtCost, 2),
+            'cash_in_hand' => round($cashInHand, 2),
             'expenses_by_category' => $expensesByCategory,
             'period_start' => $startDate,
             'period_end' => $endDate,
         ];
+    }
+
+    /**
+     * Calendar days the ROI period really covers. An open "all time" start (2000-01-01) is clamped to
+     * the first order date so averages are not diluted by years with no trading.
+     */
+    private function roiPeriodDays(string $startDate, string $endDate, array $filters): int
+    {
+        [$startAt, $endAt] = $this->normalizeRange($startDate, $endDate);
+        $firstOrderAt = $this->applyOrderFilters(InventoryOrder::query(), $filters)
+            ->whereBetween('order_date', [$startAt, $endAt])
+            ->min('order_date');
+
+        $from = Carbon::parse($firstOrderAt ?: $startAt)->startOfDay();
+        $to = Carbon::parse($endAt)->startOfDay();
+        if ($to->isFuture()) {
+            $to = now()->startOfDay();
+        }
+
+        return max(1, (int) $from->diffInDays($to) + 1);
     }
 
     /**

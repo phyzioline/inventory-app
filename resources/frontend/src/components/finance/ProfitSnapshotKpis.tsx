@@ -15,7 +15,8 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import api from '@/lib/api';
-import { useCustomerAccountSummaries } from '@/hooks/useCustomerAccountSummaries';
+import { useCustomerReceivablesTotals } from '@/hooks/useCustomerReceivablesTotals';
+import { useTreasuryCashFlowStats } from '@/hooks/useTreasuryCashFlowStats';
 import { useSupplierAccountSummaries } from '@/hooks/useSupplierAccountSummaries';
 import { getSupplierOutstanding } from '@/lib/supplierOutstanding';
 import { sumWarehouseSummary } from '@/lib/warehouseSummaryAggregation';
@@ -118,38 +119,15 @@ export function ProfitSnapshotKpis({ showReceivablesRow = true, onBeforeScrollTo
     staleTime: 120_000,
   });
 
-  const { data: expenses = [] } = useQuery({
-    queryKey: ['expenses'],
-    queryFn: () => api.getArray('/expenses'),
-  });
-
-  const { data: receipts = [] } = useQuery({
-    queryKey: ['receipts-for-profit-balance'],
-    queryFn: () => api.getArray('/receipts'),
-  });
-
-  const { data: payments = [] } = useQuery({
-    queryKey: ['payments-for-profit-balance'],
-    queryFn: () => api.getArray('/payments'),
-  });
-
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers-for-profit-balance'],
     queryFn: () => api.getArray('/suppliers'),
   });
 
-  const { data: customers = [] } = useQuery({
-    queryKey: ['customers-for-profit-receivables'],
-    queryFn: () => api.getArray('/customers'),
-  });
-
   const { summaryMap } = useSupplierAccountSummaries(suppliers);
-  const { summaryMap: customerSummaryMap } = useCustomerAccountSummaries(customers);
+  const { data: customerTotals } = useCustomerReceivablesTotals();
 
-  const { data: capitalSources = [] } = useQuery({
-    queryKey: ['capital-sources'],
-    queryFn: () => api.getArray('/capital-sources'),
-  });
+  const { data: treasuryStats } = useTreasuryCashFlowStats();
 
   const { data: warehouseSummaryRows = [], isLoading: loadingInventory } = useQuery({
     queryKey: ['warehouses-summary'],
@@ -184,13 +162,9 @@ export function ProfitSnapshotKpis({ showReceivablesRow = true, onBeforeScrollTo
 
   const receivablesBreakdown = useMemo(() => {
     const orderRows = Array.isArray(orders) ? orders : [];
-    const customerRows = Array.isArray(customers) ? customers : [];
 
-    // Same as Customers page «المستحق»: sum of account-summary outstanding per contact.
-    let customerReceivable = customerRows.reduce((sum: number, c: any) => {
-      const summary = customerSummaryMap[String(c.id)];
-      return sum + Math.max(0, toNumber(summary?.outstanding));
-    }, 0);
+    // Same as Customers page «المستحق»: server aggregate of positive customer balances (Guests excluded).
+    const customerReceivable = toNumber(customerTotals?.receivable);
     let platformPending = 0;
 
     orderRows.forEach((o: any) => {
@@ -221,14 +195,11 @@ export function ProfitSnapshotKpis({ showReceivablesRow = true, onBeforeScrollTo
       platformPending,
       total: customerReceivable + platformPending,
     };
-  }, [orders, customers, customerSummaryMap]);
+  }, [orders, customerTotals]);
 
   const balanceNowData = useMemo(() => {
-    const totalCapital = (capitalSources || []).reduce((s: number, c: any) => s + toNumber(c.amount), 0);
-    const totalReceipts = (receipts || []).reduce((s: number, r: any) => s + toNumber(r.amount), 0);
-    const totalPayments = (payments || []).reduce((s: number, p: any) => s + toNumber(p.amount), 0);
-    const totalExpensesAll = (expenses || []).reduce((s: number, e: any) => s + toNumber(e.amount), 0);
-    const cashInSystem = totalCapital + totalReceipts - totalPayments - totalExpensesAll;
+    // Server treasury ledger: receipts (capital injections included) − payments − expenses.
+    const cashInSystem = toNumber(treasuryStats?.stats?.estimated_balance);
 
     const awaitingCollection = (orders || [])
       .filter((order: any) => {
@@ -247,7 +218,7 @@ export function ProfitSnapshotKpis({ showReceivablesRow = true, onBeforeScrollTo
       awaitingCollection,
       totalBalanceNow: cashInSystem + awaitingCollection,
     };
-  }, [capitalSources, receipts, payments, expenses, orders]);
+  }, [treasuryStats, orders]);
 
   const suppliersDueTotal = useMemo(
     () =>

@@ -703,34 +703,7 @@ class SettlementService
                 // Status must reflect *all* matched settlement lines for this order across every uploaded sheet.
                 // Amazon repeats order ids across cycles with fee-only rows; using only the current file wrongly
                 // cleared older "charged/settled" states (e.g. Feb orders still showing pending after April import).
-                $allMatchedForOrder = SettlementItem::query()
-                    ->where('inventory_order_id', $orderId)
-                    ->where('reconciliation_status', 'matched')
-                    ->get();
-
-                $hasProductRefund = false;
-                $hasNonProductRefund = false;
-                $hasOrderRevenue = false;
-                foreach ($allMatchedForOrder as $item) {
-                    if ($this->isReleasedTransaction($item) && $this->isRefundLine($item)) {
-                        if ($this->isProductRefundSettlementLine($item)) {
-                            $hasProductRefund = true;
-                        } else {
-                            $hasNonProductRefund = true;
-                        }
-                    }
-                    if ($this->isOrderRevenueLine($item) && $this->isReleasedTransaction($item)) {
-                        $hasOrderRevenue = true;
-                    }
-                }
-
-                InventoryOrder::where('id', $orderId)->update([
-                    // Do not use net amount here; fees/shipping lines are often negative and can flip status incorrectly.
-                    'financial_status' => $this->resolveOrderFinancialStatus($hasOrderRevenue, $hasProductRefund, $hasNonProductRefund),
-                    // Only released product-payment lines mark order as settled.
-                    // Fees/service charges alone must NOT close settlement.
-                    'settlement_status' => $hasOrderRevenue ? 'settled' : 'pending',
-                ]);
+                $this->recomputeOrderFinancialStatuses((int) $orderId);
 
                 $this->reconcileSettlementReturnsForOrder((int) $orderId, false);
             }
@@ -896,12 +869,23 @@ class SettlementService
             }
         }
 
+        $updates = [
+            // Do not use net amount here; fees/shipping lines are often negative and can flip status incorrectly.
+            'financial_status' => $this->resolveOrderFinancialStatus($hasOrderRevenue, $hasProductRefund, $hasNonProductRefund),
+            // Only released product-payment lines mark order as settled. Fees/service charges alone must NOT close settlement.
+            'settlement_status' => $hasOrderRevenue ? 'settled' : 'pending',
+        ];
+
+        // Released product revenue means the platform charged the buyer, so the order shipped. Order reports
+        // exported before shipment leave "pending" behind; that hid paid sales (and their already-deducted
+        // stock) from P&L, which only recognises fulfilled statuses.
+        if ($hasOrderRevenue && strtolower(trim((string) $order->status)) === 'pending') {
+            $updates['status'] = 'shipped';
+        }
+
         InventoryOrder::query()
             ->where('id', $orderId)
-            ->update([
-                'financial_status' => $this->resolveOrderFinancialStatus($hasOrderRevenue, $hasProductRefund, $hasNonProductRefund),
-                'settlement_status' => $hasOrderRevenue ? 'settled' : 'pending',
-            ]);
+            ->update($updates);
     }
 
     /**
@@ -2347,6 +2331,29 @@ class SettlementService
         if ($exactDuplicate) {
             // Prefer update so fingerprint/line_kind get backfilled on legacy rows.
             return ['action' => 'update_existing', 'item' => $exactDuplicate];
+        }
+
+        // Overlapping statements (Noon exports by custom date range) repeat the very same transaction in a
+        // second sheet. A line identical in every field — dated, same channel — is one transaction: booking it
+        // twice doubled ~46k EGP of Noon revenue/fees. Undated lines are not safe to match across sheets.
+        if ($incomingDate !== null && $settlement->channel_id) {
+            $postedInOtherSheet = SettlementItem::query()
+                ->where('settlement_id', '<>', $settlement->id)
+                ->whereIn('settlement_id', Settlement::query()->select('id')->where('channel_id', $settlement->channel_id))
+                ->where('platform_order_id', $orderId)
+                ->whereRaw('LOWER(transaction_type) = ?', [$transactionType])
+                ->where('transaction_date', $incomingDate)
+                ->whereRaw('COALESCE(sku, \'\') = ?', [$incomingSku])
+                ->whereRaw('COALESCE(description, \'\') = ?', [$incomingDesc])
+                ->where('amount', $incomingAmount)
+                ->where('fee_amount', $incomingFee)
+                ->where('quantity', $incomingQty)
+                ->whereRaw('LOWER(COALESCE(transaction_status, \''.self::STATUS_RELEASED.'\')) = ?', [$incomingStatus])
+                ->exists();
+
+            if ($postedInOtherSheet) {
+                return ['action' => 'skip_duplicate', 'item' => null];
+            }
         }
 
         // Always create a new row if it isn't an exact duplicate.

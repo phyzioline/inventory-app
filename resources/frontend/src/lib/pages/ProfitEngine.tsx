@@ -39,6 +39,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useSupplierAccountSummaries } from '@/hooks/useSupplierAccountSummaries';
+import { useTreasuryCashFlowStats } from '@/hooks/useTreasuryCashFlowStats';
 import { getSupplierOutstanding } from '@/lib/supplierOutstanding';
 import { PeriodActualProfitKpis } from '@/components/finance/PeriodActualProfitKpis';
 
@@ -379,18 +380,6 @@ export default function ProfitEngine() {
     staleTime: 120_000,
   });
 
-  const { data: receipts = [] } = useQuery({
-    queryKey: ['receipts-for-profit-balance'],
-    queryFn: () => api.getArray('/receipts'),
-    enabled: view !== 'by-period' && view !== 'roi',
-  });
-
-  const { data: payments = [] } = useQuery({
-    queryKey: ['payments-for-profit-balance'],
-    queryFn: () => api.getArray('/payments'),
-    enabled: view !== 'by-period' && view !== 'roi',
-  });
-
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers-for-profit-balance'],
     queryFn: () => api.getArray('/suppliers'),
@@ -406,12 +395,7 @@ export default function ProfitEngine() {
     staleTime: 120_000,
   });
 
-  const { data: capitalSources = [] } = useQuery({
-    queryKey: ['capital-sources'],
-    queryFn: () => api.getArray('/capital-sources'),
-    enabled: view === 'roi' || view === 'capital-cycle',
-    staleTime: 300_000,
-  });
+  const { data: treasuryStats } = useTreasuryCashFlowStats();
 
   const { data: currentInventoryCost = 0 } = useQuery({
     queryKey: ['inventory-current-cost'],
@@ -461,11 +445,8 @@ export default function ProfitEngine() {
   const totalExpensesCombined = totalExpenses + totalOrderCosts;
 
   const balanceNowData = useMemo(() => {
-    const totalCapital = (capitalSources || []).reduce((s: number, c: any) => s + toNumber(c.amount), 0);
-    const totalReceipts = (receipts || []).reduce((s: number, r: any) => s + toNumber(r.amount), 0);
-    const totalPayments = (payments || []).reduce((s: number, p: any) => s + toNumber(p.amount), 0);
-    const totalExpensesAll = (expenses || []).reduce((s: number, e: any) => s + toNumber(e.amount), 0);
-    const cashInSystem = totalCapital + totalReceipts - totalPayments - totalExpensesAll;
+    // Server treasury ledger: receipts (capital injections included) − payments − expenses.
+    const cashInSystem = toNumber(treasuryStats?.stats?.estimated_balance);
 
     const awaitingCollection = (orders || [])
       .filter((order: any) => {
@@ -484,7 +465,7 @@ export default function ProfitEngine() {
       awaitingCollection,
       totalBalanceNow: cashInSystem + awaitingCollection,
     };
-  }, [capitalSources, receipts, payments, expenses, orders]);
+  }, [treasuryStats, orders]);
 
   // Same outstanding rule as Finance → Suppliers / Capital (account-summary), not raw DB balance.
   const suppliersDueTotal = useMemo(
