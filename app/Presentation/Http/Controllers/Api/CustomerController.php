@@ -7,9 +7,9 @@ use App\Application\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use App\Application\Services\CustomerReceivablesQueryService;
 use App\Application\Services\ReceiptApplicationService;
 use App\Domain\Models\Wms\Customer;
 use App\Domain\Models\Wms\InventoryOrder;
@@ -150,7 +150,8 @@ class CustomerController extends Controller
     /**
      * Paginated customer list with aggregated summary computed in SQL.
      * Returns 50 rows per page, default sort: outstanding DESC (customers who owe money first).
-     * Guest/Gnt placeholder customers are excluded by default (exclude_guests=1).
+     * Marketplace "Guest" placeholder customers are excluded by default (exclude_guests=1).
+     * meta.totals aggregates the FULL filtered set (not just the current page) for KPI cards.
      *
      * Query params:
      *   page           int
@@ -162,220 +163,68 @@ class CustomerController extends Controller
      *   end_date       date
      *   exclude_guests 0|1     (default 1)
      */
-    public function paginatedWithSummary(Request $request): \Illuminate\Http\JsonResponse
+    public function paginatedWithSummary(Request $request, CustomerReceivablesQueryService $receivables): \Illuminate\Http\JsonResponse
     {
         $this->ensureLegacyCustomersLinkedToUser();
 
-        $perPage = min(max((int) $request->query('per_page', 50), 1), 100);
-        $search = trim((string) $request->query('search', ''));
-        $sort = in_array($request->query('sort'), ['outstanding', 'total_sales', 'total_received', 'invoice_count', 'name'], true)
-            ? (string) $request->query('sort')
-            : 'outstanding';
-        $direction = $request->query('direction') === 'asc' ? 'ASC' : 'DESC';
-        $startDate = $request->query('start_date');
-        $endDate = $request->query('end_date');
-        $excludeGuests = $request->query('exclude_guests', '1') !== '0';
         $userId = $this->tenantUserId();
         if ($userId === null) {
             abort(401);
         }
 
-        $orderDateClause = '';
-        $receiptDateClause = '';
-        if ($startDate && $endDate) {
-            $orderDateClause = 'AND io.order_date BETWEEN ? AND ?';
-            $receiptDateClause = 'AND r.receipt_date BETWEEN ? AND ?';
-        }
-
-        $searchClause = '';
-        if ($search !== '') {
-            $searchClause = 'AND (c.name ILIKE ? OR c.email ILIKE ? OR c.phone ILIKE ?)';
-        }
-
-        // Hide marketplace Guest spam unless the user is explicitly searching for them.
-        $guestClause = '';
-        if ($excludeGuests && ! preg_match('/guest|gnt/i', $search)) {
-            $guestClause = "AND LOWER(TRIM(COALESCE(c.name, ''))) NOT IN ('guest', 'gnt')
-                AND c.name NOT ILIKE 'guest%'";
-        }
-
-        $sortCol = match ($sort) {
-            'total_sales' => 'total_sales',
-            'total_received' => 'total_received',
-            'invoice_count' => 'invoice_count',
-            'name' => 'c.name',
-            default => 'outstanding',
-        };
-
-        // Aggregate orders by customer_id OR by exact name (for legacy rows without customer_id).
-        // Name matching skips Guest/Gnt so thousands of marketplace guests don't share one pile of sales.
-        $sql = "
-            SELECT
-                c.id,
-                c.name,
-                c.email,
-                c.phone,
-                c.tax_id,
-                c.address,
-                c.credit_limit,
-                c.current_balance,
-                c.currency,
-                c.is_active,
-                c.user_id,
-                c.created_at,
-                c.updated_at,
-                COALESCE(ord.total_sales, 0) AS total_sales,
-                COALESCE(ord.invoice_count, 0) AS invoice_count,
-                COALESCE(ord.paid_sum, 0) AS paid_sum,
-                COALESCE(ord.remaining_sum, 0) AS remaining_sum,
-                COALESCE(rec.receipts_total, 0) AS receipts_total,
-                (COALESCE(ord.remaining_sum, 0) - COALESCE(rec.orphan_receipts, 0)) AS outstanding,
-                GREATEST(0,
-                    COALESCE(ord.total_sales, 0)
-                    - (COALESCE(ord.remaining_sum, 0) - COALESCE(rec.orphan_receipts, 0))
-                ) AS total_received
-            FROM customers c
-            LEFT JOIN (
-                SELECT
-                    resolved.customer_id,
-                    SUM(resolved.total_amount) AS total_sales,
-                    COUNT(*) AS invoice_count,
-                    SUM(COALESCE(resolved.paid_amount, 0)) AS paid_sum,
-                    -- Negative here means a credit balance owed back to the customer
-                    -- (e.g. a return worth more than what was left owed on that order).
-                    SUM(resolved.total_amount - COALESCE(resolved.paid_amount, 0) - COALESCE(ret.return_total, 0)) AS remaining_sum
-                FROM (
-                    SELECT
-                        io.customer_id AS customer_id,
-                        io.id AS order_id,
-                        io.total_amount,
-                        io.paid_amount
-                    FROM inventory_orders io
-                    WHERE io.user_id = ?
-                      AND io.status NOT IN ('cancelled', 'rejected')
-                      AND io.customer_id IS NOT NULL
-                      {$orderDateClause}
-
-                    UNION ALL
-
-                    SELECT
-                        c2.id AS customer_id,
-                        io.id AS order_id,
-                        io.total_amount,
-                        io.paid_amount
-                    FROM inventory_orders io
-                    INNER JOIN customers c2
-                        ON c2.user_id = io.user_id
-                       AND LOWER(TRIM(COALESCE(c2.name, ''))) = LOWER(TRIM(COALESCE(io.customer_name, '')))
-                       AND LOWER(TRIM(COALESCE(c2.name, ''))) NOT IN ('guest', 'gnt', '')
-                       AND c2.name NOT ILIKE 'guest%'
-                    WHERE io.user_id = ?
-                      AND io.status NOT IN ('cancelled', 'rejected')
-                      AND io.customer_id IS NULL
-                      AND TRIM(COALESCE(io.customer_name, '')) <> ''
-                      {$orderDateClause}
-                ) resolved
-                LEFT JOIN (
-                    SELECT inventory_order_id, SUM(refund_amount) AS return_total
-                    FROM inventory_returns
-                    WHERE status = 'completed'
-                    GROUP BY inventory_order_id
-                ) ret ON ret.inventory_order_id = resolved.order_id
-                GROUP BY resolved.customer_id
-            ) ord ON ord.customer_id = c.id
-            LEFT JOIN (
-                SELECT
-                    LOWER(TRIM(r.payer_name)) AS payer_key,
-                    SUM(r.amount) AS receipts_total,
-                    SUM(CASE WHEN r.reference_id IS NULL THEN r.amount ELSE 0 END) AS orphan_receipts
-                FROM inv_receipts r
-                WHERE r.user_id = ?
-                  AND r.category = 'customer_collection'
-                  {$receiptDateClause}
-                GROUP BY LOWER(TRIM(r.payer_name))
-            ) rec ON rec.payer_key = LOWER(TRIM(c.name))
-            WHERE c.user_id = ?
-            {$guestClause}
-            {$searchClause}
-        ";
-
-        $bindings = [];
-        // orders by customer_id
-        $bindings[] = $userId;
-        if ($startDate && $endDate) {
-            $bindings[] = $startDate;
-            $bindings[] = $endDate.' 23:59:59';
-        }
-        // orders by name fallback
-        $bindings[] = $userId;
-        if ($startDate && $endDate) {
-            $bindings[] = $startDate;
-            $bindings[] = $endDate.' 23:59:59';
-        }
-        // receipts
-        $bindings[] = $userId;
-        if ($startDate && $endDate) {
-            $bindings[] = $startDate;
-            $bindings[] = $endDate;
-        }
-        // customers filter
-        $bindings[] = $userId;
-        if ($search !== '') {
-            $searchParam = '%'.$search.'%';
-            $bindings[] = $searchParam;
-            $bindings[] = $searchParam;
-            $bindings[] = $searchParam;
-        }
-
-        $countResult = DB::selectOne("SELECT COUNT(*) AS total FROM ({$sql}) AS sub", $bindings);
-        $total = (int) ($countResult->total ?? 0);
-
+        $perPage = min(max((int) $request->query('per_page', 50), 1), 100);
         $page = max(1, (int) $request->query('page', 1));
-        $offset = ($page - 1) * $perPage;
-        $sortExpr = $sortCol === 'c.name'
-            ? "c.name {$direction}"
-            : "{$sortCol} {$direction}, c.name ASC";
+        $sort = in_array($request->query('sort'), CustomerReceivablesQueryService::SORTS, true)
+            ? (string) $request->query('sort')
+            : 'outstanding';
+        $direction = $request->query('direction') === 'asc' ? 'ASC' : 'DESC';
+        $filters = $this->receivablesFilters($request);
 
-        $rows = DB::select(
-            "{$sql} ORDER BY {$sortExpr} LIMIT {$perPage} OFFSET {$offset}",
-            $bindings
-        );
-
-        $items = collect($rows)->map(function ($row) {
-            return [
-                'id' => $row->id,
-                'name' => $row->name,
-                'email' => $row->email,
-                'phone' => $row->phone,
-                'tax_id' => $row->tax_id,
-                'address' => $row->address,
-                'credit_limit' => (float) $row->credit_limit,
-                'current_balance' => (float) $row->current_balance,
-                'currency' => $row->currency,
-                'is_active' => (bool) $row->is_active,
-                'user_id' => $row->user_id,
-                'created_at' => $row->created_at,
-                'updated_at' => $row->updated_at,
-                'summary' => [
-                    'total_sales' => round((float) $row->total_sales, 2),
-                    'total_received' => round((float) $row->total_received, 2),
-                    'outstanding' => round((float) $row->outstanding, 2),
-                    'invoice_count' => (int) $row->invoice_count,
-                    'avg_collection_days' => 0,
-                ],
-            ];
-        });
+        $result = $receivables->paginate($userId, $filters, $sort, $direction, $page, $perPage);
 
         return response()->json([
-            'data' => $items,
+            'data' => $result['data'],
             'meta' => [
-                'total' => $total,
+                'total' => $result['total'],
                 'per_page' => $perPage,
                 'current_page' => $page,
-                'last_page' => (int) max(1, ceil($total / max(1, $perPage))),
-                'exclude_guests' => $excludeGuests,
+                'last_page' => (int) max(1, ceil($result['total'] / max(1, $perPage))),
+                'exclude_guests' => $filters['exclude_guests'],
+                'totals' => $result['totals'],
             ],
         ]);
+    }
+
+    /**
+     * Customer receivables KPI totals only (Treasury / Capital cards).
+     * Same numbers as the Customers page cards for the same filters.
+     */
+    public function receivablesSummary(Request $request, CustomerReceivablesQueryService $receivables): \Illuminate\Http\JsonResponse
+    {
+        $this->ensureLegacyCustomersLinkedToUser();
+
+        $userId = $this->tenantUserId();
+        if ($userId === null) {
+            abort(401);
+        }
+
+        return response()->json($receivables->totals($userId, $this->receivablesFilters($request)));
+    }
+
+    /**
+     * @return array{search: string, start_date: ?string, end_date: ?string, exclude_guests: bool}
+     */
+    private function receivablesFilters(Request $request): array
+    {
+        $startDate = $request->query('start_date') ?: null;
+        $endDate = $request->query('end_date') ?: null;
+
+        return [
+            'search' => trim((string) $request->query('search', '')),
+            'start_date' => $startDate && $endDate ? (string) $startDate : null,
+            'end_date' => $startDate && $endDate ? (string) $endDate : null,
+            'exclude_guests' => $request->query('exclude_guests', '1') !== '0',
+        ];
     }
 
     public function store(Request $request)
@@ -485,7 +334,10 @@ class CustomerController extends Controller
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
 
-        $nameTrim = trim((string) $customer->name);
+        // Guest placeholders share one name across thousands of marketplace orders —
+        // match them by customer_id only, never by name/payer_name.
+        $isGuest = CustomerReceivablesQueryService::isGuestPlaceholderName($customer->name);
+        $nameTrim = $isGuest ? '' : trim((string) $customer->name);
         $emailNorm = strtolower(trim((string) ($customer->email ?? '')));
         $phoneTrim = trim((string) ($customer->phone ?? ''));
 
@@ -514,7 +366,12 @@ class CustomerController extends Controller
 
         $orders = $ordersQuery->orderByDesc('order_date')->get();
 
-        $receiptsQuery = Receipt::where(function ($q) use ($customer, $nameTrim) {
+        $receiptsQuery = Receipt::where(function ($q) use ($customer, $nameTrim, $isGuest) {
+            if ($isGuest) {
+                $q->whereRaw('0 = 1');
+
+                return;
+            }
             $q->where('payer_name', $customer->name);
             if ($nameTrim !== '') {
                 $q->orWhere('payer_name', $nameTrim)

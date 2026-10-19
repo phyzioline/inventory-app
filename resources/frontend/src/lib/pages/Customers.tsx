@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import type { CustomerDirectoryTotals } from '@/hooks/useCustomerReceivablesTotals';
 import api from '@/lib/api';
 import { customerService, salesOrderService } from '@/lib/supabase-services';
 import { OrderInvoiceDetailDialog } from '@/components/sales/OrderInvoiceDetailDialog';
@@ -111,7 +112,13 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [summaryMap, setSummaryMap] = useState<Record<string, any>>({});
-  const [paginationMeta, setPaginationMeta] = useState<{ total: number; per_page: number; current_page: number; last_page: number } | null>(null);
+  const [paginationMeta, setPaginationMeta] = useState<{
+    total: number;
+    per_page: number;
+    current_page: number;
+    last_page: number;
+    totals?: CustomerDirectoryTotals;
+  } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<any>(null);
@@ -202,20 +209,17 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
   // Server already sorted; just use as-is
   const sortedCustomers = filteredCustomers;
 
-  // Totals across the current visible page only (server handles sorting/filtering)
+  // KPI cards: server aggregates the FULL filtered set (all pages), never just the visible page.
   const totals = useMemo(() => {
-    return customers.reduce(
-      (acc: any, c: any) => {
-        const s = rowSummary(c, summaryMap);
-        acc.totalSales += Number(s.total_sales || 0);
-        acc.totalReceived += Number(s.total_received || 0);
-        acc.outstanding += Number(s.outstanding || 0);
-        acc.invoiceCount += Number(s.invoice_count || 0);
-        return acc;
-      },
-      { totalSales: 0, totalReceived: 0, outstanding: 0, invoiceCount: 0 }
-    );
-  }, [customers, summaryMap]);
+    const t = paginationMeta?.totals;
+    return {
+      totalSales: Number(t?.total_sales || 0),
+      totalReceived: Number(t?.total_received || 0),
+      outstanding: Number(t?.receivable || 0),
+      credit: Math.abs(Number(t?.credit || 0)),
+      invoiceCount: Number(t?.invoice_count || 0),
+    };
+  }, [paginationMeta]);
 
   const openDetails = async (customerId: string) => {
     setSelectedCustomerId(customerId);
@@ -538,6 +542,11 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
           <CardContent className={cn('space-y-1', embedded ? 'pt-4' : 'pt-6')}>
             <p className={cn('font-bold tabular-nums text-green-700 dark:text-green-400', embedded ? 'text-base' : 'text-xl')}>{totals.outstanding.toLocaleString()} EGP</p>
             <p className="text-xs text-green-700/80 dark:text-green-400/80">{t('customers.outstanding')}</p>
+            {totals.credit > 0.005 && (
+              <p className="text-[11px] text-green-700/70 dark:text-green-400/70 leading-snug">
+                {t('customers.creditBalances')}: {totals.credit.toLocaleString()} EGP
+              </p>
+            )}
             {!embedded && <p className="text-[11px] text-green-700/70 dark:text-green-400/70 leading-snug pt-1">{t('customers.outstandingHint')}</p>}
           </CardContent>
         </Card>

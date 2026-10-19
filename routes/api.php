@@ -157,6 +157,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::get('suppliers/template/download', [SupplierController::class, 'downloadTemplate']);
         Route::apiResource('suppliers', SupplierController::class);
         Route::get('customers/paginated-with-summary', [CustomerController::class, 'paginatedWithSummary']);
+        Route::get('customers/receivables-summary', [CustomerController::class, 'receivablesSummary']);
         Route::get('customers/{customer}/account-summary', [CustomerController::class, 'accountSummary']);
         Route::post('customers/{customer}/receive', [CustomerController::class, 'receive']);
         Route::post('customers/{customer}/sync-crm', [CustomerController::class, 'syncCrm']);
