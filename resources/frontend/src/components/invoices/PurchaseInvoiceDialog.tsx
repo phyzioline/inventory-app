@@ -116,7 +116,7 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
         items: [{ product_id: '', sku_id: null, quantity: 1, unit_price: 0 }],
     });
 
-    const { register, control, handleSubmit, watch, setValue, reset, getValues } = useForm<PurchaseInvoiceFormValues>({
+    const { register, control, handleSubmit, watch, setValue, reset } = useForm<PurchaseInvoiceFormValues>({
         defaultValues: buildDefaultValues(),
     });
 
@@ -914,29 +914,9 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
         return { total, paid, remaining };
     }, [watchedItems, watchedPaidAmount]);
 
-    // When line totals update, cap advance payment so it never exceeds invoice total.
-    useEffect(() => {
-        const total = computedTotals.total;
-        if (total <= 0) return;
-        const paid = Number(getValues('paid_amount') || 0);
-        if (paid > total) {
-            setValue('paid_amount', total, { shouldDirty: true });
-        }
-    }, [computedTotals.total, getValues, setValue]);
-
+    // Payment type is the method only; the paid amount is never filled or changed for the user.
     const handlePaymentTypeChange = (nextType: 'cash' | 'credit') => {
         setValue('payment_type', nextType);
-        const total = Number(computedTotals.total || 0);
-        const currentPaid = Number(getValues('paid_amount') || 0);
-
-        // Default helpers only; do not lock user input.
-        if (nextType === 'cash' && (currentPaid <= 0 || currentPaid > total)) {
-            setValue('paid_amount', total, { shouldDirty: true });
-            return;
-        }
-        if (nextType === 'credit') {
-            setValue('paid_amount', 0, { shouldDirty: true });
-        }
     };
 
     const openCreateProductDialog = (index?: number, initialName?: string) => {
@@ -1363,21 +1343,14 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
                                         }
                                         const raw = Number(rawStr);
                                         if (Number.isNaN(raw)) return;
-                                        const cap = Number(computedTotals.total || 0);
-                                        // If invoice total is still 0, do not clamp paid to 0 — user may enter a down payment before prices/lines are filled.
-                                        const safe =
-                                            cap > 0 ? Math.max(0, Math.min(raw, cap)) : Math.max(0, raw);
-                                        setValue('paid_amount', safe, { shouldDirty: true, shouldTouch: true });
+                                        // Keep exactly what was typed; saving rejects paid > total instead of rewriting it.
+                                        setValue('paid_amount', Math.max(0, raw), { shouldDirty: true, shouldTouch: true });
                                     }}
                                 />
                                 <p className="text-[10px] text-muted-foreground">
                                     {isAr
-                                        ? (watchedPaymentType === 'cash'
-                                            ? 'افتراضيًا = إجمالي الفاتورة (كاش)، ويمكنك التعديل.'
-                                            : 'يمكنك إدخال أي مدفوع الآن (دفعة مقدمة) في الآجل.')
-                                        : (watchedPaymentType === 'cash'
-                                            ? 'Defaults to invoice total for cash, but you can edit it.'
-                                            : 'You can enter any upfront paid amount for credit.')}
+                                        ? 'اكتب المبلغ اللي اتدفع فعلًا للمورد. لو مدفعتش حاجة سيبه صفر.'
+                                        : 'Enter the amount actually paid to the supplier. Leave 0 if nothing was paid.'}
                                 </p>
                             </div>
                             <div className="space-y-1">

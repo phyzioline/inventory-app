@@ -198,10 +198,13 @@ class InventoryOrderMutationService
         $totalAmount = (float) ($validated['total_amount'] ?? 0);
         $taxAmount = (float) ($validated['tax_amount'] ?? 0);
         $discountAmount = (float) ($validated['discount_amount'] ?? 0);
-        $paidAmount = $validated['paid_amount'] ?? null;
-        $paidAmount = $paidAmount === null
-            ? ($paymentType === 'cash' ? $totalAmount : 0.0)
-            : (float) $paidAmount;
+        // Paid is only what the user entered. Cash is a payment method, never "fully paid" by default.
+        $paidAmount = (float) ($validated['paid_amount'] ?? 0);
+        if ($paidAmount > $totalAmount + 0.00001) {
+            return response()->json([
+                'message' => 'المبلغ المدفوع أكبر من إجمالي الفاتورة / Paid amount cannot exceed the invoice total.',
+            ], 422);
+        }
         $paidAmount = min(max(0.0, $paidAmount), max(0.0, $totalAmount));
         $remainingAmount = max(0.0, $totalAmount - $paidAmount);
         $isFullyPaid = $remainingAmount <= 0.0001;
@@ -676,11 +679,8 @@ class InventoryOrderMutationService
             $paidAmount = array_key_exists('paid_amount', $validated)
                 ? (float) ($validated['paid_amount'] ?? 0)
                 : (float) ($order->paid_amount ?? 0);
-            if ($paymentType === 'cash') {
-                $paidAmount = $computedGrand;
-            } else {
-                $paidAmount = max(0.0, min($paidAmount, max(0.0, $computedGrand)));
-            }
+            // Keep the entered/stored paid amount; switching to cash or editing lines never marks it paid.
+            $paidAmount = max(0.0, min($paidAmount, max(0.0, $computedGrand)));
             $remainingAmount = max(0.0, $computedGrand - $paidAmount);
 
             $orderUpdate = $this->filterOrderColumns(array_merge($validated, [

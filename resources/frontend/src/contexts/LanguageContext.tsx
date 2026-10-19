@@ -1495,6 +1495,7 @@ const translations: Record<Language, Record<string, string>> = {
     'smartImport.credit': 'Credit',
     'smartImport.paidAmount': 'Amount paid',
     'smartImport.remaining': 'Remaining',
+    'smartImport.paidExceedsTotal': 'Paid amount cannot exceed the invoice total',
     // Language names
     'lang.selectLanguage': 'Language',
     'lang.english': 'English',
@@ -3026,6 +3027,7 @@ const translations: Record<Language, Record<string, string>> = {
     'smartImport.credit': 'أجل',
     'smartImport.paidAmount': 'تم دفع مبلغ',
     'smartImport.remaining': 'المتبقي',
+    'smartImport.paidExceedsTotal': 'المبلغ المدفوع أكبر من إجمالي الفاتورة',
     // Language names
     'lang.selectLanguage': 'اللغة',
     'lang.english': 'الإنجليزية',

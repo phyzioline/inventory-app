@@ -639,13 +639,18 @@ function BatchReviewSection({ batchId, onBack }: { batchId: number; onBack: () =
     }));
 
     const grandTotal = Number(batch?.grand_total || 0);
-    const creditPaid = Math.min(Math.max(0, Number(paidAmountDraft) || 0), grandTotal);
+    const typedPaid = Math.max(0, Number(paidAmountDraft) || 0);
+    if (typedPaid > grandTotal + 0.00001) {
+      toast.error(t('smartImport.paidExceedsTotal'));
+      return;
+    }
 
     try {
       // Persist payment meta BEFORE approval so vendor outstanding is calculated correctly.
+      // Paid is only what the user typed — cash does not mean the whole invoice was paid.
       await api.post(`/purchases/smart-import/batches/${batchId}/payment-meta`, {
         payment_type: paymentType,
-        ...(paymentType === 'credit' ? { paid_amount: creditPaid } : {}),
+        paid_amount: typedPaid,
       });
 
       // One-step confirmation: if still draft/review, approve then receive immediately.
@@ -668,13 +673,8 @@ function BatchReviewSection({ batchId, onBack }: { batchId: number; onBack: () =
     if (!batch) return;
     const meta = parsePaymentMeta(batch.notes);
     if (meta.type) setPaymentType(meta.type);
-    const total = Number(batch.grand_total || 0);
-    let paid = meta.paid;
-    if (paid === null) {
-      paid = meta.type === 'cash' && total > 0 ? total : 0;
-    }
-    setPaidAmountDraft(String(paid ?? 0));
-  }, [batch?.id, batch?.notes, batch?.grand_total]);
+    setPaidAmountDraft(String(meta.paid ?? 0));
+  }, [batch?.id, batch?.notes]);
 
   if (isLoading || !batch) {
     return (
@@ -689,18 +689,16 @@ function BatchReviewSection({ batchId, onBack }: { batchId: number; onBack: () =
   const supplierDisplayName = batch.vendor?.name || batch.supplier_name_raw || 'Unknown Supplier';
   const canEditPayment = batch.status !== 'cancelled';
   const grandTotal = Number(batch.grand_total || 0);
-  const paidAmountResolved =
-    paymentType === 'cash'
-      ? grandTotal
-      : Math.min(Math.max(0, Number(paidAmountDraft) || 0), grandTotal);
+  const paidAmountResolved = Math.max(0, Number(paidAmountDraft) || 0);
   const remainingAmount = Math.max(0, grandTotal - paidAmountResolved);
 
-  const persistCreditPaid = () => {
-    if (!canEditPayment || paymentType !== 'credit') return;
-    paymentMetaMutation.mutate({
-      payment_type: 'credit',
-      paid_amount: Math.min(Math.max(0, Number(paidAmountDraft) || 0), grandTotal),
-    });
+  const persistTypedPaid = () => {
+    if (!canEditPayment) return;
+    if (paidAmountResolved > grandTotal + 0.00001) {
+      toast.error(t('smartImport.paidExceedsTotal'));
+      return;
+    }
+    paymentMetaMutation.mutate({ payment_type: paymentType, paid_amount: paidAmountResolved });
   };
 
   return (
@@ -784,8 +782,7 @@ function BatchReviewSection({ batchId, onBack }: { batchId: number; onBack: () =
                   disabled={!canEditPayment || paymentMetaMutation.isPending}
                   onClick={() => {
                     setPaymentType('credit');
-                    const paid = Math.min(Math.max(0, Number(paidAmountDraft) || 0), grandTotal);
-                    paymentMetaMutation.mutate({ payment_type: 'credit', paid_amount: paid });
+                    paymentMetaMutation.mutate({ payment_type: 'credit' });
                   }}
                 >
                   {t('smartImport.credit')}
@@ -800,10 +797,10 @@ function BatchReviewSection({ batchId, onBack }: { batchId: number; onBack: () =
                 min={0}
                 step="0.01"
                 inputMode="decimal"
-                disabled={!canEditPayment || paymentType === 'cash' || paymentMetaMutation.isPending}
-                value={paymentType === 'cash' ? String(grandTotal) : paidAmountDraft}
+                disabled={!canEditPayment || paymentMetaMutation.isPending}
+                value={paidAmountDraft}
                 onChange={(e) => setPaidAmountDraft(e.target.value)}
-                onBlur={() => persistCreditPaid()}
+                onBlur={() => persistTypedPaid()}
                 className="text-right font-mono"
               />
             </div>

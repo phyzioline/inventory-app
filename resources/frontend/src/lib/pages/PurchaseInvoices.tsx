@@ -415,9 +415,9 @@ export default function PurchaseInvoicesPage() {
             .trim();
     };
 
+    // Method only: the server keeps the paid amount already entered on the invoice.
     const paymentMetaPayload = (paymentType: 'cash' | 'credit') => ({
         payment_type: paymentType,
-        ...(paymentType === 'credit' ? { paid_amount: 0 } : {}),
     });
 
     const resolveSupplierRefFromBatch = (batch: any) => {
@@ -536,9 +536,10 @@ export default function PurchaseInvoicesPage() {
         }
         setSavingDetails(true);
         try {
-            // Always persist payment type first (otherwise users think save failed).
-            // For cash: mark as fully paid by default; for credit: keep paid amount as-is unless user explicitly changes it elsewhere.
-            await api.post(`purchases/smart-import/batches/${selectedInvoice.id}/payment-meta`, paymentMetaPayload(detailsForm.paymentType as 'cash' | 'credit'));
+            // Persist the payment method only when it changed; it never changes the paid amount.
+            if (detailsForm.paymentType !== defaultPaymentTypeFromNotes(selectedInvoice?.notes)) {
+                await api.post(`purchases/smart-import/batches/${selectedInvoice.id}/payment-meta`, paymentMetaPayload(detailsForm.paymentType as 'cash' | 'credit'));
+            }
 
             const [supplierType, supplierIdRaw] = String(detailsForm.supplier_ref || '').split(':');
             const supplierId = Number(supplierIdRaw || 0);

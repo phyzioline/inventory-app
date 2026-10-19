@@ -304,26 +304,14 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       payment_date: todayIso,
       notes: '',
     });
+    // Load the balance for display only — the payment amount is always typed by the user.
     try {
       const data = await api.get(`suppliers/${supplier.id}/account-summary`, {
         params: startDate && endDate ? { start_date: startDate, end_date: endDate } : {},
       });
-      const outstanding = Math.max(0, Number(data.summary?.outstanding ?? getSupplierOutstanding(supplier, summaryMap)));
       setSummaryMap((prev) => ({ ...prev, [String(supplier.id)]: data.summary }));
-      setSettleForm({
-        amount: outstanding > 0 ? String(outstanding) : '',
-        payment_method: 'bank_transfer',
-        payment_date: todayIso,
-        notes: '',
-      });
     } catch {
-      const outstanding = Math.max(0, getSupplierOutstanding(supplier, summaryMap));
-      setSettleForm({
-        amount: outstanding > 0 ? String(outstanding) : '',
-        payment_method: 'bank_transfer',
-        payment_date: todayIso,
-        notes: '',
-      });
+      // Keep the cached summary; the amount field stays empty either way.
     }
   };
 

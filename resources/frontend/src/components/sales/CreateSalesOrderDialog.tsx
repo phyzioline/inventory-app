@@ -146,19 +146,9 @@ export function CreateSalesOrderDialog({ open, onOpenChange }: CreateSalesOrderD
   const taxableBase = Math.max(0, subtotalAmount - discountAmount);
   const taxAmount = vatEnabled ? Math.round(taxableBase * 0.14 * 100) / 100 : 0;
   const totalAmount = taxableBase + taxAmount;
-  const paidAmount = Math.min(Math.max(0, Number.isFinite(paidAmountInput) ? paidAmountInput : 0), Math.max(0, totalAmount));
+  // Paid is only what the user typed — never filled from the total or the payment type.
+  const paidAmount = Math.max(0, Number.isFinite(paidAmountInput) ? paidAmountInput : 0);
   const remainingAmount = Math.max(0, totalAmount - paidAmount);
-
-  useEffect(() => {
-    if (paymentType === 'cash') {
-      setValue('paid_amount', totalAmount, { shouldDirty: true, shouldValidate: true });
-      return;
-    }
-
-    if (paidAmountInput > totalAmount) {
-      setValue('paid_amount', totalAmount, { shouldDirty: true, shouldValidate: true });
-    }
-  }, [paymentType, totalAmount, paidAmountInput, setValue]);
 
   useEffect(() => {
     if (!warehouseId) return;
@@ -198,6 +188,10 @@ export function CreateSalesOrderDialog({ open, onOpenChange }: CreateSalesOrderD
     }
     if (data.items.some(item => !item.product_id)) {
       toast.error(language === 'ar' ? 'من فضلك اختر منتج لكل بند' : 'Please select products for all items');
+      return;
+    }
+    if (paidAmount > totalAmount + 0.00001) {
+      toast.error(language === 'ar' ? 'المبلغ المدفوع أكبر من إجمالي الفاتورة' : 'Paid amount cannot exceed the invoice total');
       return;
     }
 
@@ -500,7 +494,6 @@ export function CreateSalesOrderDialog({ open, onOpenChange }: CreateSalesOrderD
                     step="0.01"
                     min="0"
                     max={Math.max(0, totalAmount)}
-                    disabled={paymentType === 'cash'}
                     {...register('paid_amount', { valueAsNumber: true })}
                   />
                 </div>

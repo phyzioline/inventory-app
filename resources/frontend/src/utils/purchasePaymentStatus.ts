@@ -36,22 +36,27 @@ export function resolvePurchasePaymentDisplayStatus(
   return 'confirmed';
 }
 
+/**
+ * Mirrors App\Domain\ValueObjects\PurchasePaymentMeta::paidAgainst(): paid is only the amount
+ * entered on the invoice. `type=cash` is the payment method, never "fully paid".
+ */
 export function resolvePaidRemainingFromBatchNotes(
   rawNotes: unknown,
   totalAmount: number
 ): { paid: number; remaining: number; type: 'cash' | 'credit' } {
   const total = Math.max(0, Number(totalAmount) || 0);
   const meta = parsePurchasePaymentMeta(rawNotes);
-  if (meta.type === 'cash') {
-    return { paid: total, remaining: 0, type: 'cash' };
+  const type = meta.type === 'cash' ? 'cash' : 'credit';
+  if (total <= 0.00001) {
+    return { paid: 0, remaining: 0, type };
   }
   if (meta.remaining != null && !Number.isNaN(Number(meta.remaining))) {
     const remaining = Math.max(0, Math.min(Number(meta.remaining), total));
-    return { paid: Math.max(0, total - remaining), remaining, type: 'credit' };
+    return { paid: Math.max(0, total - remaining), remaining, type };
   }
   if (meta.paid != null && !Number.isNaN(Number(meta.paid))) {
     const paid = Math.max(0, Math.min(Number(meta.paid), total));
-    return { paid, remaining: Math.max(0, total - paid), type: 'credit' };
+    return { paid, remaining: Math.max(0, total - paid), type };
   }
-  return { paid: 0, remaining: total, type: 'credit' };
+  return { paid: 0, remaining: total, type };
 }

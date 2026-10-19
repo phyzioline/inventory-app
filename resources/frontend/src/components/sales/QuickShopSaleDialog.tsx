@@ -242,7 +242,8 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
   const taxableBase = Math.max(0, subtotalAmount - discountAmount);
   const taxAmount = vatEnabled ? Math.round(taxableBase * 0.14 * 100) / 100 : 0;
   const totalAmount = taxableBase + taxAmount;
-  const paidAmount = paymentType === 'cash' ? totalAmount : Math.min(Math.max(0, paidAmountInput), totalAmount);
+  // Paid is only what the cashier typed — never filled from the total or the payment type.
+  const paidAmount = Math.max(0, Number.isFinite(paidAmountInput) ? paidAmountInput : 0);
   const remainingAmount = Math.max(0, totalAmount - paidAmount);
 
   const persistDraft = useCallback((form: FormData, warehouseId: string, vat: boolean, discount: number) => {
@@ -301,6 +302,8 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
     reset({
       ...EMPTY_FORM,
       ...draft.form,
+      // Older drafts auto-filled paid = total for cash; only a typed (credit) amount is trusted.
+      paid_amount: draft.form.payment_type === 'credit' ? Number(draft.form.paid_amount) || 0 : 0,
       items:
         draft.form.items?.length > 0
           ? draft.form.items.map((item) => ({
@@ -315,13 +318,6 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
     setDiscountAmountInput(Number(draft.discountAmountInput) || 0);
     setHasRestoredDraft(true);
   }, [open, reset, resetLocalUi]);
-
-  // Auto-update paid amount for cash
-  useEffect(() => {
-    if (paymentType === 'cash') {
-      setValue('paid_amount', totalAmount, { shouldDirty: true });
-    }
-  }, [paymentType, totalAmount, setValue]);
 
   // Autosave draft while editing; also flush if the page unmounts while open.
   useEffect(() => {
@@ -402,6 +398,10 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
     }
     if (totalAmount <= 0) {
       toast.error(isAr ? 'الإجمالي لا يمكن أن يكون صفراً' : 'Total cannot be zero');
+      return;
+    }
+    if (paidAmount > totalAmount + 0.00001) {
+      toast.error(isAr ? 'المبلغ المدفوع أكبر من إجمالي الفاتورة' : 'Paid amount cannot exceed the invoice total');
       return;
     }
 
@@ -707,7 +707,6 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
                 type="number"
                 step="0.01"
                 min="0"
-                disabled={paymentType === 'cash'}
                 className="h-8 text-sm"
                 {...register('paid_amount', { valueAsNumber: true })}
               />

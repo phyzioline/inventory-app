@@ -21,6 +21,7 @@ use App\Domain\Models\Wms\Sku;
 use App\Domain\Models\Wms\SkuInventory;
 use App\Domain\Models\Wms\Supplier;
 use App\Domain\Models\Wms\Vendor;
+use App\Domain\ValueObjects\PurchasePaymentMeta;
 
 class PurchaseImportController extends Controller
 {
@@ -31,39 +32,9 @@ class PurchaseImportController extends Controller
         $this->importService = $importService;
     }
 
-    private function parsePaymentMeta(?string $rawNotes): array
-    {
-        $notes = (string) ($rawNotes ?? '');
-        $line = collect(preg_split('/\r\n|\r|\n/', $notes))
-            ->first(fn ($entry) => str_starts_with(trim((string) $entry), '[PAYMENT]')) ?? '';
-
-        preg_match('/paid=([0-9]+(?:\.[0-9]+)?)/i', $line, $paidMatch);
-        preg_match('/remaining=([0-9]+(?:\.[0-9]+)?)/i', $line, $remainingMatch);
-        preg_match('/type=(cash|credit)/i', $line, $typeMatch);
-        preg_match('/status=([a-z_]+)/i', $line, $statusMatch);
-
-        return [
-            'paid' => isset($paidMatch[1]) ? (float) $paidMatch[1] : null,
-            'remaining' => isset($remainingMatch[1]) ? (float) $remainingMatch[1] : null,
-            'type' => isset($typeMatch[1]) ? strtolower((string) $typeMatch[1]) : null,
-            'status' => isset($statusMatch[1]) ? strtolower((string) $statusMatch[1]) : null,
-        ];
-    }
-
     private function mergePaymentMetaNotes(?string $rawNotes, string $paymentType, float $paid, float $remaining, string $status): string
     {
-        $base = collect(preg_split('/\r\n|\r|\n/', (string) ($rawNotes ?? '')))
-            ->filter(fn ($line) => ! str_starts_with(trim((string) $line), '[PAYMENT]'))
-            ->implode("\n");
-        $meta = sprintf(
-            '[PAYMENT] type=%s; paid=%s; remaining=%s; status=%s',
-            $paymentType,
-            number_format($paid, 2, '.', ''),
-            number_format($remaining, 2, '.', ''),
-            $status
-        );
-
-        return trim(implode("\n", array_filter([trim($base), $meta], fn ($line) => trim((string) $line) !== '')));
+        return PurchasePaymentMeta::writeToNotes($rawNotes, $paymentType, $paid, $remaining, $status);
     }
 
     private function syncSupplierBalanceFromVendorDelta(int $vendorId, float $delta): void
@@ -449,15 +420,16 @@ class PurchaseImportController extends Controller
             $items[$i]['sku_id'] = $resolvedSkuId;
         }
 
-        $paymentMeta = $this->parsePaymentMeta($validated['notes'] ?? null);
-        if (($paymentMeta['type'] ?? '') === 'cash') {
+        $paymentMeta = PurchasePaymentMeta::fromNotes($validated['notes'] ?? null);
+        if ($paymentMeta->type === 'cash') {
             $invoiceTotal = array_reduce(
                 $items,
                 fn (float $sum, array $row) => $sum + ((float) ($row['quantity'] ?? 0) * (float) ($row['unit_price'] ?? 0)),
                 0.0
             );
-            if ($invoiceTotal > 0.00001) {
-                app(TreasurySpendGuard::class)->assertPaymentAllowedForUser($batchUserId, $invoiceTotal);
+            $paidNow = $paymentMeta->paidAgainst($invoiceTotal);
+            if ($paidNow > 0.00001) {
+                app(TreasurySpendGuard::class)->assertPaymentAllowedForUser($batchUserId, $paidNow);
             }
         }
 
@@ -587,9 +559,8 @@ class PurchaseImportController extends Controller
                     fn (float $sum, array $row) => $sum + ((float) ($row['quantity'] ?? 0) * (float) ($row['unit_price'] ?? 0)),
                     0.0
                 );
-                $paid = $request->has('paid_amount')
-                    ? max(0.0, min((float) $request->input('paid_amount'), $total))
-                    : ($paymentType === 'cash' ? $total : 0.0);
+                // Paid is only what the caller sent. Cash is a payment method, not "fully paid".
+                $paid = max(0.0, min((float) $request->input('paid_amount', 0), $total));
                 $remaining = max(0.0, $total - $paid);
                 $status = PurchaseImportService::resolvePaymentMetaStatus('draft', $paid, $remaining, $paymentType);
                 $request->merge([
@@ -1182,11 +1153,9 @@ class PurchaseImportController extends Controller
 
         if ($request->filled('paid_amount')) {
             $newPaid = max(0.0, min((float) $request->paid_amount, $total));
-        } elseif ($paymentType === 'cash') {
-            $newPaid = $total;
         } else {
-            // Full credit (أجل) unless caller sends an explicit advance via paid_amount.
-            $newPaid = 0.0;
+            // Changing the payment method alone never moves money: keep the paid amount already entered.
+            $newPaid = PurchasePaymentMeta::fromNotes($batch->notes)->paidAgainst($total);
         }
 
         $newRemaining = max(0.0, $total - $newPaid);

@@ -15,6 +15,7 @@ use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\MasterProduct;
 use App\Domain\Models\Wms\Payment;
 use App\Domain\Models\Wms\PurchaseBatch;
+use App\Domain\ValueObjects\PurchasePaymentMeta;
 use App\Domain\Models\Wms\PurchaseBatchItem;
 use App\Domain\Models\Wms\PurchaseUpload;
 use App\Domain\Models\Wms\Sku;
@@ -1429,7 +1430,7 @@ class PurchaseImportService
 
     /**
      * Open accounts-payable for a purchase batch from [PAYMENT] meta.
-     * Cash purchases create no vendor payable (money settled at purchase time).
+     * Only the paid amount the user entered settles the invoice; `type=cash` alone settles nothing.
      */
     public function computeOpenPayableFromBatch(PurchaseBatch $batch): float
     {
@@ -1444,22 +1445,7 @@ class PurchaseImportService
             return 0.0;
         }
 
-        $meta = $this->extractPaymentMetaFromNotes($notes);
-        if (($meta['type'] ?? '') === 'cash') {
-            return 0.0;
-        }
-
-        if ($meta['remaining'] !== null) {
-            return max(0.0, min((float) $meta['remaining'], $grandTotal));
-        }
-
-        if ($meta['paid'] !== null) {
-            $paid = max(0.0, min((float) $meta['paid'], $grandTotal));
-
-            return max(0.0, $grandTotal - $paid);
-        }
-
-        return max(0.0, $grandTotal);
+        return PurchasePaymentMeta::fromNotes($notes)->remainingAgainst($grandTotal);
     }
 
     /**
@@ -1492,8 +1478,8 @@ class PurchaseImportService
     }
 
     /**
-     * Record a completed cash settlement in inv_payments for audit (Finance → Payments).
-     * Does not change vendor balance (cash invoices never increase AP after computeOpenPayable fix).
+     * Record the cash the user said was paid on a received cash invoice in inv_payments (Finance → Payments).
+     * The amount is the entered paid amount, never the invoice total: nothing is posted when paid is 0.
      */
     public function syncAutoCashPurchasePayment(PurchaseBatch $batch): void
     {
@@ -1505,13 +1491,14 @@ class PurchaseImportService
             return;
         }
 
-        $meta = $this->extractPaymentMetaFromNotes((string) ($batch->notes ?? ''));
-        if (($meta['type'] ?? '') !== 'cash') {
+        $meta = PurchasePaymentMeta::fromNotes((string) ($batch->notes ?? ''));
+        if ($meta->type !== 'cash') {
             return;
         }
 
         $total = (float) ($batch->grand_total ?? $batch->subtotal ?? 0);
-        if ($total <= 0.00001) {
+        $paid = $meta->paidAgainst($total);
+        if ($paid <= 0.00001) {
             return;
         }
 
@@ -1529,7 +1516,7 @@ class PurchaseImportService
             ? $batch->invoice_date->toDateString()
             : ($batch->created_at?->toDateString() ?? now()->toDateString());
 
-        $amount = round($total, 2);
+        $amount = round($paid, 2);
         app(TreasurySpendGuard::class)->assertPaymentAllowedForUser((int) $batch->user_id, $amount);
 
         Payment::query()->create([
@@ -1610,36 +1597,6 @@ class PurchaseImportService
         $supplier->update([
             'balance' => max(0, $current + $delta),
         ]);
-    }
-
-    private function extractPaymentMetaFromNotes(string $notes): array
-    {
-        $line = collect(explode("\n", $notes))
-            ->first(fn ($entry) => str_starts_with(trim((string) $entry), '[PAYMENT]'));
-
-        $parseNumber = function (?string $raw): ?float {
-            if ($raw === null || trim($raw) === '') {
-                return null;
-            }
-
-            return (float) $raw;
-        };
-
-        if (! $line) {
-            return ['paid' => null, 'remaining' => null, 'type' => null, 'status' => null];
-        }
-
-        preg_match('/paid=([0-9]+(?:\.[0-9]+)?)/i', $line, $paidMatch);
-        preg_match('/remaining=([0-9]+(?:\.[0-9]+)?)/i', $line, $remainingMatch);
-        preg_match('/type=(cash|credit)/i', $line, $typeMatch);
-        preg_match('/status=([a-z_]+)/i', $line, $statusMatch);
-
-        return [
-            'paid' => $parseNumber($paidMatch[1] ?? null),
-            'remaining' => $parseNumber($remainingMatch[1] ?? null),
-            'type' => strtolower((string) ($typeMatch[1] ?? '')) ?: null,
-            'status' => strtolower((string) ($statusMatch[1] ?? '')) ?: null,
-        ];
     }
 
     // ═══════════════════════════════════════════════════════════════

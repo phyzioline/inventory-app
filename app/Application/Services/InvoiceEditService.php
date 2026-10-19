@@ -72,15 +72,11 @@ class InvoiceEditService
             $grandTotal = max(0.0, $subtotal + $taxAmount - $discountAmount);
 
             $paymentType = $dto->paymentType ?? (string) ($order->payment_type ?? 'cash');
-            if ($dto->paidAmount !== null) {
-                $paidAmount = $paymentType === 'cash'
-                    ? $grandTotal
-                    : max(0.0, min((float) $dto->paidAmount, $grandTotal));
-            } else {
-                $paidAmount = $paymentType === 'cash'
-                    ? $grandTotal
-                    : (float) ($order->paid_amount ?? 0);
-            }
+            // Paid is only what the user entered (or what was already stored). Cash never implies fully paid.
+            $paidAmount = max(0.0, min(
+                $dto->paidAmount !== null ? (float) $dto->paidAmount : (float) ($order->paid_amount ?? 0),
+                $grandTotal
+            ));
             $remainingAmount = max(0.0, $grandTotal - $paidAmount);
             $isFullyPaid = $remainingAmount <= 0.0001;
 

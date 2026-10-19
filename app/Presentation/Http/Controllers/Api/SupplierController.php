@@ -13,6 +13,7 @@ use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\PurchaseReturn;
 use App\Domain\Models\Wms\Supplier;
 use App\Domain\Models\Wms\Vendor;
+use App\Domain\ValueObjects\PurchasePaymentMeta;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -21,59 +22,23 @@ class SupplierController extends Controller
 {
     private function parsePaymentMeta(?string $rawNotes): array
     {
-        $notes = (string) ($rawNotes ?? '');
-        $line = collect(preg_split('/\r\n|\r|\n/', $notes))
-            ->first(fn ($entry) => str_starts_with(trim((string) $entry), '[PAYMENT]')) ?? '';
-
-        preg_match('/paid=([0-9]+(?:\.[0-9]+)?)/i', $line, $paidMatch);
-        preg_match('/remaining=([0-9]+(?:\.[0-9]+)?)/i', $line, $remainingMatch);
-        preg_match('/type=(cash|credit)/i', $line, $typeMatch);
-        preg_match('/status=([a-z_]+)/i', $line, $statusMatch);
-
-        return [
-            'paid' => isset($paidMatch[1]) ? (float) $paidMatch[1] : null,
-            'remaining' => isset($remainingMatch[1]) ? (float) $remainingMatch[1] : null,
-            'type' => isset($typeMatch[1]) ? strtolower((string) $typeMatch[1]) : null,
-            'status' => isset($statusMatch[1]) ? strtolower((string) $statusMatch[1]) : null,
-        ];
+        return PurchasePaymentMeta::fromNotes($rawNotes)->toArray();
     }
 
     /**
+     * Paid = only what the user entered on the invoice ([PAYMENT] paid/remaining). Neither
+     * `type=cash` nor "received" (goods in) settles anything by itself.
+     *
      * @return array{paid: float, remaining: float}
      */
     private function resolvePurchaseInvoicePaidRemaining(PurchaseBatch $batch, float $invoiceTotal): array
     {
-        $notes = (string) ($batch->notes ?? '');
-        $hasPayment = str_contains($notes, '[PAYMENT]');
-        $meta = $this->parsePaymentMeta($notes);
-        $status = strtolower((string) ($batch->status ?? ''));
+        $meta = PurchasePaymentMeta::fromNotes((string) ($batch->notes ?? ''));
 
-        if (($meta['type'] ?? '') === 'cash') {
-            return ['paid' => $invoiceTotal, 'remaining' => 0.0];
-        }
-
-        if ($hasPayment && $meta['remaining'] !== null) {
-            $remaining = max(0.0, min((float) $meta['remaining'], $invoiceTotal));
-
-            return [
-                'paid' => max(0.0, $invoiceTotal - $remaining),
-                'remaining' => $remaining,
-            ];
-        }
-
-        if ($hasPayment && $meta['paid'] !== null) {
-            $paid = max(0.0, min((float) $meta['paid'], $invoiceTotal));
-
-            return [
-                'paid' => $paid,
-                'remaining' => max(0.0, $invoiceTotal - $paid),
-            ];
-        }
-
-        // Do not treat "received" (goods in) as fully paid without [PAYMENT] / cash meta:
-        // credit purchases stay open until notes or linked Payment rows reflect settlement.
-
-        return ['paid' => 0.0, 'remaining' => $invoiceTotal];
+        return [
+            'paid' => $meta->paidAgainst($invoiceTotal),
+            'remaining' => $meta->remainingAgainst($invoiceTotal),
+        ];
     }
 
     /**

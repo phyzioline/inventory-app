@@ -15,6 +15,7 @@ use App\Domain\Models\Wms\Expense;
 use App\Domain\Models\Wms\Payment;
 use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\Receipt;
+use App\Domain\ValueObjects\PurchasePaymentMeta;
 use Throwable;
 
 /**
@@ -52,20 +53,13 @@ class CashFlowSummaryController extends Controller
 
     private function parseBatchPaymentMeta(?string $rawNotes): array
     {
-        $notes = (string) ($rawNotes ?? '');
-        $line = collect(preg_split('/\r\n|\r|\n/', $notes))
-            ->first(fn ($entry) => str_starts_with(trim((string) $entry), '[PAYMENT]')) ?? '';
-
-        preg_match('/paid=([0-9]+(?:\.[0-9]+)?)/i', $line, $paidMatch);
-        preg_match('/remaining=([0-9]+(?:\.[0-9]+)?)/i', $line, $remainingMatch);
-        preg_match('/type=(cash|credit)/i', $line, $typeMatch);
-        preg_match('/status=([a-z_]+)/i', $line, $statusMatch);
+        $meta = PurchasePaymentMeta::fromNotes($rawNotes);
 
         return [
-            'paid' => isset($paidMatch[1]) ? (float) $paidMatch[1] : null,
-            'remaining' => isset($remainingMatch[1]) ? (float) $remainingMatch[1] : null,
-            'type' => isset($typeMatch[1]) ? strtolower((string) $typeMatch[1]) : '',
-            'status' => isset($statusMatch[1]) ? strtolower((string) $statusMatch[1]) : '',
+            'paid' => $meta->paid,
+            'remaining' => $meta->remaining,
+            'type' => $meta->type ?? '',
+            'status' => $meta->status ?? '',
         ];
     }
 
@@ -92,27 +86,12 @@ class CashFlowSummaryController extends Controller
     }
 
     /**
-     * Paid amount implied by invoice notes only (no "received = fully paid" fallback — avoids double-count vs Payment rows).
+     * Paid amount the user entered on the invoice notes only (no "received = fully paid" and no
+     * "cash = fully paid" fallback — avoids counting money that never left the treasury).
      */
     private function resolveBatchPaidAmountForCashFlow(PurchaseBatch $batch, float $invoiceTotal): float
     {
-        if ($invoiceTotal <= 0.00001) {
-            return 0.0;
-        }
-        $meta = $this->parseBatchPaymentMeta((string) ($batch->notes ?? ''));
-        if (($meta['type'] ?? '') === 'cash') {
-            return $invoiceTotal;
-        }
-        if ($meta['remaining'] !== null) {
-            $remaining = max(0.0, min((float) $meta['remaining'], $invoiceTotal));
-
-            return max(0.0, $invoiceTotal - $remaining);
-        }
-        if ($meta['paid'] !== null) {
-            return max(0.0, min((float) $meta['paid'], $invoiceTotal));
-        }
-
-        return 0.0;
+        return PurchasePaymentMeta::fromNotes((string) ($batch->notes ?? ''))->paidAgainst($invoiceTotal);
     }
 
     /**

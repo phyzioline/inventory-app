@@ -318,6 +318,10 @@ export function OrderInvoiceDetailDialog({ order, open, onOpenChange, startEditi
       );
       return;
     }
+    if (toNumber(localOrder.paid_amount) > computeTotalsFromItems(localOrder).total + 0.00001) {
+      toast.error(isAr ? 'المبلغ المدفوع أكبر من إجمالي الفاتورة' : 'Paid amount cannot exceed the invoice total');
+      return;
+    }
     setIsSaving(true);
     try {
       const { total, paid, remaining, discount, tax } = computeTotalsFromItems(localOrder);
@@ -455,10 +459,7 @@ export function OrderInvoiceDetailDialog({ order, open, onOpenChange, startEditi
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        const total = computeTotalsFromItems(localOrder).total;
-                        setLocalOrderField({ payment_type: 'cash', paid_amount: total });
-                      }}
+                      onClick={() => setLocalOrderField({ payment_type: 'cash' })}
                       className={cn(
                         'flex-1 rounded border px-3 py-1.5 text-xs font-semibold transition-colors',
                         String(localOrder.payment_type || '').toLowerCase() === 'cash'
@@ -470,7 +471,7 @@ export function OrderInvoiceDetailDialog({ order, open, onOpenChange, startEditi
                     </button>
                     <button
                       type="button"
-                      onClick={() => setLocalOrderField({ payment_type: 'credit', paid_amount: 0 })}
+                      onClick={() => setLocalOrderField({ payment_type: 'credit' })}
                       className={cn(
                         'flex-1 rounded border px-3 py-1.5 text-xs font-semibold transition-colors',
                         String(localOrder.payment_type || '').toLowerCase() === 'credit'
