@@ -404,6 +404,11 @@ export function QuickShopSaleDialog({ open, onOpenChange }: QuickShopSaleDialogP
       toast.error(isAr ? 'المبلغ المدفوع أكبر من إجمالي الفاتورة' : 'Paid amount cannot exceed the invoice total');
       return;
     }
+    // Cash is the method, not proof of payment: the cashier must type what was actually paid.
+    if (paymentType === 'cash' && paidAmount <= 0.00001) {
+      toast.error(isAr ? 'اختار كاش بس ماكتبتش المبلغ المدفوع — اكتب المبلغ اللي اتدفع فعلاً، أو اختار آجل' : 'Cash is selected but no paid amount was entered — enter the amount actually paid, or choose credit');
+      return;
+    }
 
     const cid = String(data.customer_id || '').trim();
     createOrder.mutate({

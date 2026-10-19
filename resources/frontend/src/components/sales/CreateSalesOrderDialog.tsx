@@ -194,6 +194,11 @@ export function CreateSalesOrderDialog({ open, onOpenChange }: CreateSalesOrderD
       toast.error(language === 'ar' ? 'المبلغ المدفوع أكبر من إجمالي الفاتورة' : 'Paid amount cannot exceed the invoice total');
       return;
     }
+    // Cash is the method, not proof of payment: the paid amount must be typed.
+    if (paymentType === 'cash' && paidAmount <= 0.00001) {
+      toast.error(language === 'ar' ? 'اختار كاش بس ماكتبتش المبلغ المدفوع — اكتب المبلغ اللي اتدفع فعلاً، أو اختار آجل' : 'Cash is selected but no paid amount was entered — enter the amount actually paid, or choose credit');
+      return;
+    }
 
     createOrder.mutate({
       order_number: data.order_number,

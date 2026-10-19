@@ -464,6 +464,11 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
             toast.error(isAr ? 'المبلغ المدفوع أكبر من إجمالي الفاتورة' : 'Paid amount cannot exceed invoice total');
             return;
         }
+        // Cash is the method, not proof of payment: the paid amount must be typed.
+        if (data.payment_type === 'cash' && paidAmount <= 0.00001) {
+            toast.error(isAr ? 'اختار كاش بس ماكتبتش المبلغ المدفوع — اكتب المبلغ اللي اتدفع فعلاً، أو اختار آجل' : 'Cash is selected but no paid amount was entered — enter the amount actually paid, or choose credit');
+            return;
+        }
 
         const remainingAmount = Math.max(0, totalAmount - paidAmount);
         const paymentStatus = paidAmount >= totalAmount && totalAmount > 0
