@@ -2,7 +2,6 @@
 
 namespace App\Application\Services;
 
-use App\Domain\Models\Wms\Channel;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\InventoryOrderItem;
 use App\Domain\Models\Wms\InventoryTransaction;
@@ -13,7 +12,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Convert a quotation to a credit sales order with stock availability guard + OUT deduction.
+ * Convert a quotation to a credit sales order from المحل (main store) only.
+ * Never uses Amazon / Noon / Jumia channels or warehouses.
  */
 class QuotationConversionService
 {
@@ -31,18 +31,25 @@ class QuotationConversionService
             );
         }
 
-        $channelId = (int) ($requestedChannelId ?: ChannelStockResolver::resolveMainStoreChannelId());
-        if ($channelId <= 0) {
-            $channelId = (int) (Channel::query()->where('is_active', true)->orderBy('id')->value('id') ?? 0);
-        }
+        // Quotations always sell from المحل — ignore any marketplace channel_id from the client.
+        unset($requestedChannelId);
+        $channelId = ChannelStockResolver::resolveMainStoreChannelId();
         if ($channelId <= 0) {
             throw new QuotationConversionException(
-                'No sales channel configured for order conversion',
+                'No main store (المحل) channel configured for quotation conversion',
                 'no_channel'
             );
         }
 
-        $quotation->loadMissing('items.sku');
+        $storeLocationIds = ChannelStockResolver::resolveMainStoreLocationIds();
+        if ($storeLocationIds === []) {
+            throw new QuotationConversionException(
+                'No المحل warehouse locations configured for quotation conversion',
+                'no_store_location'
+            );
+        }
+
+        $quotation->loadMissing('items.sku.offer');
         if ($quotation->items->isEmpty()) {
             throw new QuotationConversionException(
                 'Quotation has no line items',
@@ -53,7 +60,7 @@ class QuotationConversionService
         $insufficient = $this->collectInsufficientLines($quotation, $channelId);
         if ($insufficient !== []) {
             throw new QuotationConversionException(
-                'Cannot convert quotation: insufficient stock for one or more items',
+                'Cannot convert quotation: insufficient stock in المحل for one or more items',
                 'insufficient_stock',
                 $insufficient
             );
@@ -87,14 +94,15 @@ class QuotationConversionService
             ]);
 
             foreach ($quotation->items as $item) {
-                $sku = $item->sku ?? ($item->sku_id ? Sku::query()->find($item->sku_id) : null);
+                $lineSkuId = (int) ($item->sku_id ?? 0);
+                $storeSkuId = $this->resolveStoreSkuId($lineSkuId, $channelId);
+                $sku = Sku::query()->find($storeSkuId) ?? $item->sku ?? ($lineSkuId > 0 ? Sku::query()->find($lineSkuId) : null);
                 $qty = (int) $item->quantity;
                 $unit = (float) $item->unit_price;
-                $skuId = (int) ($item->sku_id ?? 0);
 
                 InventoryOrderItem::create([
                     'inventory_order_id' => $order->id,
-                    'sku_id' => $item->sku_id,
+                    'sku_id' => $storeSkuId > 0 ? $storeSkuId : $item->sku_id,
                     'sku_code' => $sku?->sku ?? (string) ($item->sku_id ?? 'UNKNOWN'),
                     'product_name' => $sku?->name ?? $sku?->sku ?? 'Quotation line',
                     'quantity' => $qty,
@@ -105,7 +113,7 @@ class QuotationConversionService
                     'stock_shortage_reason' => null,
                 ]);
 
-                $this->deductStockForLine($skuId, $channelId, $qty, (int) $order->id, $userId);
+                $this->deductStockForLine($storeSkuId > 0 ? $storeSkuId : $lineSkuId, $qty, (int) $order->id, $userId);
             }
 
             $quotation->update(['status' => 'converted']);
@@ -117,27 +125,63 @@ class QuotationConversionService
     }
 
     /**
+     * Prefer the المحل listing SKU for the same master product when the quotation line
+     * was created from a marketplace listing.
+     */
+    private function resolveStoreSkuId(int $skuId, int $storeChannelId): int
+    {
+        if ($skuId <= 0 || $storeChannelId <= 0) {
+            return $skuId;
+        }
+
+        $sku = Sku::query()->with('offer')->find($skuId);
+        if (! $sku) {
+            return $skuId;
+        }
+
+        if ((int) ($sku->channel_id ?? 0) === $storeChannelId) {
+            return $skuId;
+        }
+
+        $masterId = (int) ($sku->offer?->master_product_id ?? 0);
+        if ($masterId <= 0) {
+            return $skuId;
+        }
+
+        $storeSkuId = (int) (Sku::query()
+            ->where('channel_id', $storeChannelId)
+            ->whereHas('offer', static function ($q) use ($masterId) {
+                $q->where('master_product_id', $masterId);
+            })
+            ->orderBy('id')
+            ->value('id') ?? 0);
+
+        return $storeSkuId > 0 ? $storeSkuId : $skuId;
+    }
+
+    /**
      * @return list<array{sku_id: int, sku_code: string, product_name: string, needed: int, available: float}>
      */
-    private function collectInsufficientLines(Quotation $quotation, int $channelId): array
+    private function collectInsufficientLines(Quotation $quotation, int $storeChannelId): array
     {
         $insufficient = [];
 
         foreach ($quotation->items as $item) {
-            $skuId = (int) ($item->sku_id ?? 0);
+            $lineSkuId = (int) ($item->sku_id ?? 0);
             $needed = (int) $item->quantity;
-            $sku = $item->sku ?? ($skuId > 0 ? Sku::query()->find($skuId) : null);
-            $available = $skuId > 0
-                ? ChannelStockResolver::availableQuantityForSkuId($skuId, $channelId)
+            $storeSkuId = $this->resolveStoreSkuId($lineSkuId, $storeChannelId);
+            $sku = Sku::query()->find($storeSkuId) ?? $item->sku ?? ($lineSkuId > 0 ? Sku::query()->find($lineSkuId) : null);
+            $available = $storeSkuId > 0
+                ? ChannelStockResolver::availableQuantityAtMainStore($storeSkuId)
                 : 0.0;
 
-            $canFulfill = $skuId > 0
+            $canFulfill = $storeSkuId > 0
                 && $needed > 0
-                && ChannelStockResolver::hasFulfillableLocationForSku($skuId, $channelId, $needed);
+                && ChannelStockResolver::resolveDeductionLocationIdAtMainStore($storeSkuId, $needed) !== null;
 
             if (! $canFulfill) {
                 $insufficient[] = [
-                    'sku_id' => $skuId,
+                    'sku_id' => $storeSkuId > 0 ? $storeSkuId : $lineSkuId,
                     'sku_code' => (string) ($sku?->sku ?? $item->sku_id ?? 'UNKNOWN'),
                     'product_name' => (string) ($sku?->name ?? $sku?->sku ?? 'Quotation line'),
                     'needed' => $needed,
@@ -149,7 +193,7 @@ class QuotationConversionService
         return $insufficient;
     }
 
-    private function deductStockForLine(int $skuId, int $channelId, int $qty, int $orderId, ?int $userId): void
+    private function deductStockForLine(int $skuId, int $qty, int $orderId, ?int $userId): void
     {
         if ($skuId <= 0 || $qty <= 0) {
             throw new QuotationConversionException(
@@ -158,10 +202,10 @@ class QuotationConversionService
             );
         }
 
-        $locationId = ChannelStockResolver::resolveDeductionLocationIdForSku($skuId, $channelId, $qty);
+        $locationId = ChannelStockResolver::resolveDeductionLocationIdAtMainStore($skuId, $qty);
         if (! $locationId) {
             throw new QuotationConversionException(
-                "No stock location with enough quantity for SKU {$skuId}",
+                "No المحل stock location with enough quantity for SKU {$skuId}",
                 'insufficient_stock'
             );
         }
@@ -175,7 +219,7 @@ class QuotationConversionService
         if (! $inventory || (float) $inventory->quantity + 1e-9 < $qty) {
             $available = (float) ($inventory->quantity ?? 0);
             throw new QuotationConversionException(
-                "Insufficient stock for SKU {$skuId} at location {$locationId}. Available: {$available}, needed: {$qty}.",
+                "Insufficient المحل stock for SKU {$skuId} at location {$locationId}. Available: {$available}, needed: {$qty}.",
                 'insufficient_stock'
             );
         }
@@ -190,7 +234,7 @@ class QuotationConversionService
             'reference_type' => 'Order',
             'reference_id' => (string) $orderId,
             'user_id' => $userId,
-            'notes' => 'Quotation conversion fulfillment',
+            'notes' => 'Quotation conversion fulfillment (المحل)',
         ]);
     }
 }

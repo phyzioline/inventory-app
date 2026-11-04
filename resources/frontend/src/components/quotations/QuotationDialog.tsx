@@ -192,13 +192,44 @@ export function QuotationEditor({
         }
     }, []);
 
+    const isMarketplaceWarehouseName = useCallback((name: string) => {
+        const n = String(name || '').toLowerCase();
+        return /amazon|امازون|fba|fbm|fbn|noon|نون|jumia|جوميا|website|الويب|art\b|ارت/.test(n);
+    }, []);
+
+    const isStoreWarehouseName = useCallback((name: string) => {
+        const n = String(name || '');
+        if (isMarketplaceWarehouseName(n)) return false;
+        return /المحل|store|shop|main\s*cairo|warehouse/i.test(n);
+    }, [isMarketplaceWarehouseName]);
+
+    /** Quotations sell from المحل only — never Amazon / Noon / Jumia floors. */
+    const storeWarehouses = useMemo(
+        () => (warehouses || []).filter((w: any) => isStoreWarehouseName(String(w?.name ?? '')) && w?.is_active !== false),
+        [warehouses, isStoreWarehouseName],
+    );
+
     const selectedStore = useMemo(
-        () => (warehouses || []).find((w: any) => String(w.id) === String(storeId)),
-        [warehouses, storeId],
+        () => storeWarehouses.find((w: any) => String(w.id) === String(storeId))
+            ?? (warehouses || []).find((w: any) => String(w.id) === String(storeId)),
+        [storeWarehouses, warehouses, storeId],
     );
 
     const isConverted = savedQuotation?.status === 'converted';
     const isEditable = !isConverted && (!savedQuotation || !!editingQuotationId);
+
+    useEffect(() => {
+        if (!isActive || !isEditable) return;
+        if (storeWarehouses.length === 0) return;
+        const currentIsStore = storeWarehouses.some((w: any) => String(w.id) === String(storeId));
+        if (storeId && currentIsStore) return;
+        const preferred =
+            storeWarehouses.find((w: any) => String(w.name ?? '').includes('المحل'))
+            ?? storeWarehouses[0];
+        if (preferred?.id != null) {
+            setStoreId(String(preferred.id));
+        }
+    }, [isActive, isEditable, storeWarehouses, storeId]);
 
     const resetForm = useCallback(() => {
         setCustomerId('');
@@ -1011,23 +1042,26 @@ export function QuotationEditor({
                         </div>
 
                         <div className="space-y-1.5 pt-1 border-t border-border/60">
-                            <Label className="text-xs text-muted-foreground">{t('quotations.warehouse') || (isAr ? 'المستودع / مكان الإضافة' : 'Warehouse / listing location')}</Label>
-                            <Select value={storeId || undefined} onValueChange={setStoreId} disabled={!isEditable}>
+                            <Label className="text-xs text-muted-foreground">
+                                {t('quotations.warehouseStoreOnly') || (isAr ? 'مستودع المحل (للبيع من المحل فقط)' : 'Shop warehouse (store sales only)')}
+                            </Label>
+                            <Select value={storeId || undefined} onValueChange={setStoreId} disabled={!isEditable || storeWarehouses.length === 0}>
                                 <SelectTrigger className="h-9 bg-background border-border">
-                                    <SelectValue placeholder={t('quotations.selectWarehouse') || (isAr ? 'اختر المستودع' : 'Select warehouse')} />
+                                    <SelectValue placeholder={t('quotations.selectWarehouse') || (isAr ? 'اختر مستودع المحل' : 'Select shop warehouse')} />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {(warehouses || []).map((w: any) => (
-                                        <SelectItem key={w.id} value={String(w.id)} disabled={w?.is_active === false}>
-                                            {w.name}{w?.is_active === false ? (isAr ? ' (غير نشط)' : ' (inactive)') : ''}
+                                    {storeWarehouses.map((w: any) => (
+                                        <SelectItem key={w.id} value={String(w.id)}>
+                                            {w.name}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
                             <p className="text-[10px] text-muted-foreground leading-snug">
-                                {storeId
-                                    ? (t('quotations.warehouseHint') || (isAr ? 'مطلوب لإضافة منتج جديد وربطه بالقناة' : 'Required for new products and channel listing'))
-                                    : (t('quotations.selectWarehouseFirst') || (isAr ? 'اختر المستودع أولاً لإضافة منتج جديد' : 'Select warehouse first to add a new product'))}
+                                {t('quotations.warehouseStoreOnlyHint') ||
+                                    (isAr
+                                        ? 'عرض السعر والتحويل لفاتورة بيع يخصم من المحل فقط — مش أمازون ولا نون ولا جوميا.'
+                                        : 'Quotations convert to shop sales only — stock is taken from المحل, never Amazon/Noon/Jumia.')}
                             </p>
                         </div>
                     </div>

@@ -147,12 +147,17 @@ class ChannelStockResolver
 
     public static function resolveMainStoreChannelId(): int
     {
+        if (self::$mainStoreChannelIdCache !== null) {
+            return self::$mainStoreChannelIdCache;
+        }
+
         $candidates = Channel::query()
             ->where(function ($q) {
                 $q->where('is_active', true)->orWhereNull('is_active');
             })
-            ->get(['id', 'name', 'slug']);
+            ->get(['id', 'name', 'slug', 'type']);
 
+        $matches = [];
         foreach ($candidates as $c) {
             $name = strtolower((string) ($c->name ?? ''));
             $slug = strtolower((string) ($c->slug ?? ''));
@@ -165,15 +170,143 @@ class ChannelStockResolver
                 || str_contains($slug, 'shop')
                 || str_contains($slug, 'main')
             ) {
-                self::$mainStoreChannelIdCache = (int) $c->id;
-
-                return self::$mainStoreChannelIdCache;
+                $matches[] = $c;
             }
+        }
+
+        if ($matches !== []) {
+            usort($matches, static function ($a, $b) {
+                $score = static function ($c): int {
+                    $type = strtolower((string) ($c->type ?? ''));
+                    if ($type === 'pos') {
+                        return 0;
+                    }
+                    if (in_array($type, ['store', 'shop', 'physical'], true)) {
+                        return 1;
+                    }
+                    // Prefer dedicated store channels over marketplace/"المحل" aliases.
+                    if ($type === 'marketplace') {
+                        return 3;
+                    }
+
+                    return 2;
+                };
+
+                return $score($a) <=> $score($b);
+            });
+
+            self::$mainStoreChannelIdCache = (int) $matches[0]->id;
+
+            return self::$mainStoreChannelIdCache;
         }
 
         self::$mainStoreChannelIdCache = self::MAIN_STORE_CHANNEL_ID;
 
         return self::$mainStoreChannelIdCache;
+    }
+
+    /**
+     * Warehouse location ids that belong to the physical shop (المحل) only —
+     * never Amazon / Noon / Jumia / FBA buckets.
+     *
+     * @return list<int>
+     */
+    public static function resolveMainStoreLocationIds(): array
+    {
+        $channelId = self::resolveMainStoreChannelId();
+        $ids = [];
+
+        foreach (self::resolveLocationIdsForChannel($channelId) as $id) {
+            if ($id > 0) {
+                $ids[$id] = true;
+            }
+        }
+
+        $named = InventoryLocation::query()
+            ->where(function ($q) {
+                $q->where('is_active', true)->orWhereNull('is_active');
+            })
+            ->where(function ($q) {
+                $q->where('name', 'ilike', '%المحل%')
+                    ->orWhere('name', 'ilike', '%store%')
+                    ->orWhere('name', 'ilike', '%shop%');
+            })
+            ->get(['id', 'name']);
+
+        foreach ($named as $loc) {
+            $name = mb_strtolower((string) ($loc->name ?? ''));
+            if (self::isMarketplaceLocationName($name)) {
+                continue;
+            }
+            $id = (int) $loc->id;
+            if ($id > 0) {
+                $ids[$id] = true;
+            }
+        }
+
+        return array_values(array_map('intval', array_keys($ids)));
+    }
+
+    public static function isMarketplaceLocationName(string $name): bool
+    {
+        $name = mb_strtolower($name);
+        foreach ([
+            'amazon', 'امازون', 'fba', 'fbm', 'fbn',
+            'noon', 'نون',
+            'jumia', 'جوميا',
+            'website', 'الويب',
+        ] as $needle) {
+            if (str_contains($name, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * On-hand qty for a SKU inside المحل warehouses only.
+     */
+    public static function availableQuantityAtMainStore(int $skuId): float
+    {
+        if ($skuId <= 0) {
+            return 0.0;
+        }
+
+        $locationIds = self::resolveMainStoreLocationIds();
+        if ($locationIds === []) {
+            return 0.0;
+        }
+
+        return max(0.0, (float) SkuInventory::query()
+            ->where('sku_id', $skuId)
+            ->whereIn('location_id', $locationIds)
+            ->sum('quantity'));
+    }
+
+    /**
+     * Pick a المحل location that can fulfill the full quantity (never marketplace floors).
+     */
+    public static function resolveDeductionLocationIdAtMainStore(int $skuId, int $quantity): ?int
+    {
+        if ($skuId <= 0 || $quantity <= 0) {
+            return null;
+        }
+
+        $locationIds = self::resolveMainStoreLocationIds();
+        if ($locationIds === []) {
+            return null;
+        }
+
+        $qty = max(1, $quantity);
+        $row = SkuInventory::query()
+            ->where('sku_id', $skuId)
+            ->whereIn('location_id', $locationIds)
+            ->where('quantity', '>=', $qty)
+            ->orderByDesc('quantity')
+            ->first(['location_id']);
+
+        return $row ? (int) $row->location_id : null;
     }
 
     /**

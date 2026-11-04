@@ -96,11 +96,15 @@ function seedQuotationConvertFixture(int $stockQty, float $discount = 0.0): arra
 it('converts a quotation when stock is sufficient and deducts inventory', function () {
     $fx = seedQuotationConvertFixture(5, 25.0);
 
-    $response = $this->postJson('/api/inventory/quotations/'.$fx['quotation']->id.'/convert');
+    $response = $this->postJson('/api/inventory/quotations/'.$fx['quotation']->id.'/convert', [
+        // Client must not be able to force a marketplace channel.
+        'channel_id' => 999999,
+    ]);
 
     $response->assertOk()
         ->assertJsonPath('order.discount_amount', '25.00')
-        ->assertJsonPath('order.total_amount', '175.00');
+        ->assertJsonPath('order.total_amount', '175.00')
+        ->assertJsonPath('order.channel_id', $fx['storeChannel']->id);
 
     $fx['quotation']->refresh();
     expect($fx['quotation']->status)->toBe('converted');
@@ -122,7 +126,110 @@ it('converts a quotation when stock is sufficient and deducts inventory', functi
 
     expect($out)->not->toBeNull()
         ->and((float) $out->quantity)->toBe(2.0)
-        ->and((int) $out->sku_id)->toBe((int) $fx['sku']->id);
+        ->and((int) $out->sku_id)->toBe((int) $fx['sku']->id)
+        ->and((int) $out->location_id)->toBe((int) $fx['shopFloor']->id);
+});
+
+it('does not convert using Amazon warehouse stock — only المحل', function () {
+    ChannelStockResolver::clearCache();
+    $user = User::factory()->create();
+    test()->actingAs($user);
+
+    $storeChannel = Channel::query()->create([
+        'name' => 'المحل',
+        'slug' => 'store-only-'.uniqid(),
+        'type' => 'pos',
+        'is_active' => true,
+        'user_id' => $user->id,
+    ]);
+    $amazonChannel = Channel::query()->create([
+        'name' => 'Amazon EG',
+        'slug' => 'amazon-'.uniqid(),
+        'type' => 'amazon_fba',
+        'is_active' => true,
+        'user_id' => $user->id,
+    ]);
+
+    $shopFloor = InventoryLocation::query()->create([
+        'name' => 'المحل',
+        'type' => 'physical',
+        'is_active' => true,
+        'user_id' => $user->id,
+        'channel_id' => $storeChannel->id,
+    ]);
+    $amazonFloor = InventoryLocation::query()->create([
+        'name' => 'Amazon FBA Warehouse',
+        'type' => 'physical',
+        'is_active' => true,
+        'user_id' => $user->id,
+        'channel_id' => $amazonChannel->id,
+    ]);
+
+    $master = MasterProduct::query()->create([
+        'internal_name' => 'Store Only Product',
+        'is_active' => true,
+        'user_id' => $user->id,
+    ]);
+    $offer = InventoryOffer::query()->create([
+        'master_product_id' => $master->id,
+        'name' => 'Single',
+        'type' => 'single',
+        'user_id' => $user->id,
+    ]);
+    $sku = Sku::query()->create([
+        'offer_id' => $offer->id,
+        'sku' => 'SHOP-ONLY-'.uniqid(),
+        'channel_id' => $storeChannel->id,
+        'cost_price' => 1,
+        'selling_price' => 50,
+        'is_active' => true,
+        'user_id' => $user->id,
+        'name' => 'Store Only Product',
+    ]);
+
+    // Stock exists only in Amazon — must NOT fulfill a quotation.
+    $amazonInv = new SkuInventory([
+        'sku_id' => $sku->id,
+        'location_id' => $amazonFloor->id,
+        'quantity' => 10,
+        'reserved' => 0,
+    ]);
+    $amazonInv->user_id = $user->id;
+    $amazonInv->save();
+
+    $shopInv = new SkuInventory([
+        'sku_id' => $sku->id,
+        'location_id' => $shopFloor->id,
+        'quantity' => 0,
+        'reserved' => 0,
+    ]);
+    $shopInv->user_id = $user->id;
+    $shopInv->save();
+
+    $quotation = Quotation::query()->create([
+        'reference_number' => 'QTN-AMZ'.strtoupper(substr(uniqid(), -5)),
+        'user_id' => $user->id,
+        'customer_name' => 'Walk-in',
+        'quotation_date' => now()->toDateString(),
+        'total_amount' => 50,
+        'tax_amount' => 0,
+        'discount_amount' => 0,
+        'status' => 'draft',
+    ]);
+    QuotationItem::query()->create([
+        'quotation_id' => $quotation->id,
+        'sku_id' => $sku->id,
+        'quantity' => 1,
+        'unit_price' => 50,
+        'total' => 50,
+    ]);
+
+    $response = $this->postJson('/api/inventory/quotations/'.$quotation->id.'/convert');
+    $response->assertStatus(422)->assertJsonPath('code', 'insufficient_stock');
+
+    $quotation->refresh();
+    expect($quotation->status)->toBe('draft');
+    expect((float) SkuInventory::query()->whereKey($amazonInv->id)->value('quantity'))->toBe(10.0);
 });
 
 it('blocks quotation conversion when stock is insufficient', function () {
