@@ -776,53 +776,18 @@ export function QuotationEditor({
                     ) : null}
                 </div>
             </div>
-            <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0 min-w-[11rem]">
-                {isEditable ? (
-                    <div className="flex items-center gap-2 justify-end">
-                        <Label htmlFor="quotation-discount" className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground whitespace-nowrap">
-                            {t('quotations.discountLabel') || t('quotations.printDiscount')}
-                        </Label>
-                        <Input
-                            id="quotation-discount"
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={discountAmount || ''}
-                            onChange={(e) => {
-                                const raw = parseFloat(e.target.value);
-                                const next = Number.isFinite(raw) ? Math.max(0, raw) : 0;
-                                setDiscountAmount(next);
-                            }}
-                            onBlur={() => {
-                                if (discountAmount > lineSubtotal) {
-                                    setDiscountAmount(lineSubtotal);
-                                }
-                            }}
-                            className="h-8 w-28 text-end bg-background"
-                            disabled={items.length === 0}
-                        />
-                    </div>
-                ) : clampedDiscount > 0 ? (
-                    <div className="text-xs text-muted-foreground text-end">
-                        {t('quotations.discountLabel') || t('quotations.printDiscount')}:{' '}
-                        <span className="font-medium text-foreground">
-                            {clampedDiscount.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
-                        </span>
-                    </div>
-                ) : null}
+            <div className="flex flex-col items-start sm:items-end shrink-0">
+                <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
+                <span className="text-2xl font-bold text-foreground tracking-tight leading-none">
+                    {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
+                    <span className="text-sm text-emerald-600 font-normal">EGP</span>
+                </span>
                 {clampedDiscount > 0 ? (
-                    <div className="text-[11px] text-muted-foreground text-end">
-                        {t('quotations.subtotalLabel') || (isAr ? 'قبل الخصم' : 'Subtotal')}:{' '}
-                        {lineSubtotal.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
-                    </div>
+                    <span className="text-[11px] text-muted-foreground mt-0.5">
+                        {t('quotations.discountLabel') || t('quotations.printDiscount')}: −
+                        {clampedDiscount.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
+                    </span>
                 ) : null}
-                <div className="text-end">
-                    <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
-                    <div className="text-2xl font-bold text-foreground tracking-tight leading-none">
-                        {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
-                        <span className="text-sm text-emerald-600 font-normal">EGP</span>
-                    </div>
-                </div>
             </div>
         </div>
     );
@@ -1156,56 +1121,126 @@ export function QuotationEditor({
                             )}
                         </div>
 
-                        <div className="flex-col gap-2 border-t border-border bg-muted/30 px-3 py-2.5 sm:px-4 sm:flex-row sm:items-center sm:justify-between flex shrink-0">
-                            <div className="flex flex-wrap gap-2">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="gap-2 border-border"
-                                    title={t('quotations.printHelp')}
-                                    onClick={() => void handlePrint()}
-                                    disabled={items.length === 0}
-                                >
-                                    <Printer className="h-4 w-4" />
-                                    {t('quotations.print')}
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="gap-2 border-emerald-600/40 bg-emerald-600/5 text-emerald-800 hover:bg-emerald-600/10 dark:text-emerald-400"
-                                    onClick={() => void handleConvert()}
-                                    disabled={!savedQuotation?.id || savedQuotation.status === 'converted' || isConverting}
-                                >
-                                    {isConverting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                                    {t('quotations.convert')}
-                                </Button>
+                        <div className="shrink-0 border-t border-border bg-muted/20 px-3 py-3 sm:px-4 space-y-3">
+                            <div className="rounded-lg border border-border bg-background p-3 sm:p-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                                    <div className="space-y-1.5 min-w-[14rem]">
+                                        <Label htmlFor="quotation-discount" className="text-sm font-semibold text-foreground">
+                                            {t('quotations.discountLabel') || t('quotations.printDiscount')}
+                                            <span className="ms-1 font-normal text-muted-foreground">
+                                                ({isAr ? 'مبلغ بالجنيه' : 'EGP amount'})
+                                            </span>
+                                        </Label>
+                                        {isEditable ? (
+                                            <div className="relative max-w-xs">
+                                                <Input
+                                                    id="quotation-discount"
+                                                    type="number"
+                                                    min={0}
+                                                    step="0.01"
+                                                    inputMode="decimal"
+                                                    placeholder="0"
+                                                    value={discountAmount || ''}
+                                                    onChange={(e) => {
+                                                        const raw = parseFloat(e.target.value);
+                                                        const next = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+                                                        setDiscountAmount(next);
+                                                    }}
+                                                    onBlur={() => {
+                                                        if (discountAmount > lineSubtotal) {
+                                                            setDiscountAmount(lineSubtotal);
+                                                        }
+                                                    }}
+                                                    className="h-11 pe-14 text-base text-end bg-background border-border font-medium"
+                                                    disabled={items.length === 0}
+                                                />
+                                                <span className="pointer-events-none absolute inset-y-0 end-3 flex items-center text-sm text-muted-foreground">
+                                                    EGP
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <p className="text-base font-medium text-foreground">
+                                                {clampedDiscount.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
+                                            </p>
+                                        )}
+                                    </div>
+                                    <div className="text-start sm:text-end space-y-1">
+                                        <div className="flex items-baseline justify-between sm:justify-end gap-6 text-sm text-muted-foreground">
+                                            <span>{t('quotations.subtotalLabel') || (isAr ? 'قبل الخصم' : 'Subtotal')}</span>
+                                            <span className="font-medium text-foreground tabular-nums">
+                                                {lineSubtotal.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
+                                            </span>
+                                        </div>
+                                        {clampedDiscount > 0 ? (
+                                            <div className="flex items-baseline justify-between sm:justify-end gap-6 text-sm text-amber-700 dark:text-amber-400">
+                                                <span>{t('quotations.discountLabel') || t('quotations.printDiscount')}</span>
+                                                <span className="font-medium tabular-nums">
+                                                    −{clampedDiscount.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
+                                                </span>
+                                            </div>
+                                        ) : null}
+                                        <div className="flex items-baseline justify-between sm:justify-end gap-6 pt-1 border-t border-border">
+                                            <span className="text-sm font-semibold text-foreground">{t('quotations.totalLabel')}</span>
+                                            <span className="text-xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                                                {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
+                                                <span className="text-sm font-normal">EGP</span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="flex flex-wrap justify-end gap-2">
-                                <Button type="button" variant="outline" size="sm" className="border-border" onClick={() => void handleClose()}>
-                                    {isPageMode ? (t('quotations.back') || (isAr ? 'رجوع' : 'Back')) : savedQuotation ? t('quotations.close') : t('quotations.cancel')}
-                                </Button>
-                                {isEditable && (
+
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex flex-wrap gap-2">
                                     <Button
                                         type="button"
+                                        variant="outline"
                                         size="sm"
-                                        onClick={() => mutation.mutate()}
-                                        disabled={mutation.isPending || !canSave}
-                                        className="min-w-[120px] bg-emerald-600 hover:bg-emerald-500"
+                                        className="gap-2 border-border"
+                                        title={t('quotations.printHelp')}
+                                        onClick={() => void handlePrint()}
+                                        disabled={items.length === 0}
                                     >
-                                        {mutation.isPending ? (
-                                            <>
-                                                <Loader2 className="me-2 h-4 w-4 animate-spin" />
-                                                {t('quotations.saving')}
-                                            </>
-                                        ) : editingQuotationId ? (
-                                            t('quotations.update') || (isAr ? 'حفظ التعديلات' : 'Save changes')
-                                        ) : (
-                                            t('quotations.save')
-                                        )}
+                                        <Printer className="h-4 w-4" />
+                                        {t('quotations.print')}
                                     </Button>
-                                )}
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="gap-2 border-emerald-600/40 bg-emerald-600/5 text-emerald-800 hover:bg-emerald-600/10 dark:text-emerald-400"
+                                        onClick={() => void handleConvert()}
+                                        disabled={!savedQuotation?.id || savedQuotation.status === 'converted' || isConverting}
+                                    >
+                                        {isConverting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                                        {t('quotations.convert')}
+                                    </Button>
+                                </div>
+                                <div className="flex flex-wrap justify-end gap-2">
+                                    <Button type="button" variant="outline" size="sm" className="border-border" onClick={() => void handleClose()}>
+                                        {isPageMode ? (t('quotations.back') || (isAr ? 'رجوع' : 'Back')) : savedQuotation ? t('quotations.close') : t('quotations.cancel')}
+                                    </Button>
+                                    {isEditable && (
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            onClick={() => mutation.mutate()}
+                                            disabled={mutation.isPending || !canSave}
+                                            className="min-w-[120px] bg-emerald-600 hover:bg-emerald-500"
+                                        >
+                                            {mutation.isPending ? (
+                                                <>
+                                                    <Loader2 className="me-2 h-4 w-4 animate-spin" />
+                                                    {t('quotations.saving')}
+                                                </>
+                                            ) : editingQuotationId ? (
+                                                t('quotations.update') || (isAr ? 'حفظ التعديلات' : 'Save changes')
+                                            ) : (
+                                                t('quotations.save')
+                                            )}
+                                        </Button>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
