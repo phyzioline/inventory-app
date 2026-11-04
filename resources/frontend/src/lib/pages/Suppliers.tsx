@@ -30,10 +30,22 @@ type SupplierAccount = {
   summary: SupplierAccountSummary;
   invoices: any[];
   payments: any[];
+  account_credits?: any[];
   ledger: any[];
   linked_party?: any;
   current_account_ledger?: any[];
 };
+
+function commissionReasonLabel(reason: string, isAr: boolean): string {
+  switch (String(reason || '')) {
+    case 'price_difference':
+      return isAr ? 'فرق سعر' : 'Price difference';
+    case 'other':
+      return isAr ? 'دائن على المورد' : 'Supplier credit';
+    default:
+      return isAr ? 'عمولة' : 'Commission';
+  }
+}
 
 /** Payable to supplier (red) vs credit in our favor (green). */
 function getOutstandingCell(summary: SupplierAccountSummary) {
@@ -878,7 +890,7 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
             >
               <TabsList>
                 <TabsTrigger value="invoices">{isAr ? 'فواتير الشراء' : 'Purchase invoices'}</TabsTrigger>
-                <TabsTrigger value="payments">{isAr ? 'المدفوعات' : 'Payments'}</TabsTrigger>
+                <TabsTrigger value="payments">{isAr ? 'مدفوعات وتسويات' : 'Payments & credits'}</TabsTrigger>
                 <TabsTrigger value="ledger">
                   {selectedAccount.linked_party
                     ? (isAr ? 'كشف الحساب الجاري' : 'Current-account ledger')
@@ -929,18 +941,71 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                 </TabsContent>
 
                 <TabsContent value="payments" className="m-0">
+                  <p className="text-xs text-muted-foreground px-3 pt-3 pb-1">
+                    {isAr
+                      ? 'يشمل المدفوعات النقدية/البنكية + العمولة وفرق السعر (تسوية دفترية بدون خزنة).'
+                      : 'Includes cash/bank payments plus commission / price-difference credits (ledger-only, no treasury).'}
+                  </p>
                   <Table>
-                    <TableHeader><TableRow><TableHead>{isAr ? 'التاريخ' : 'Date'}</TableHead><TableHead className="text-right">{isAr ? 'المبلغ' : 'Amount'}</TableHead><TableHead>{isAr ? 'الطريقة' : 'Method'}</TableHead><TableHead>{isAr ? 'المرجع' : 'Reference'}</TableHead><TableHead>{isAr ? 'الحالة' : 'Status'}</TableHead></TableRow></TableHeader>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{isAr ? 'التاريخ' : 'Date'}</TableHead>
+                        <TableHead className="text-right">{isAr ? 'المبلغ' : 'Amount'}</TableHead>
+                        <TableHead>{isAr ? 'النوع / الطريقة' : 'Type / method'}</TableHead>
+                        <TableHead>{isAr ? 'المرجع / ملاحظة' : 'Reference / note'}</TableHead>
+                        <TableHead>{isAr ? 'الحالة' : 'Status'}</TableHead>
+                      </TableRow>
+                    </TableHeader>
                     <TableBody>
-                      {selectedAccount.payments.map((pay: any) => (
-                        <TableRow key={pay.id}>
-                          <TableCell>{pay.date}</TableCell>
-                          <TableCell className="text-right">{Number(pay.amount).toLocaleString()}</TableCell>
-                          <TableCell>{pay.method || '-'}</TableCell>
-                          <TableCell>{pay.reference || '-'}</TableCell>
-                          <TableCell>{pay.status}</TableCell>
+                      {[
+                        ...(Array.isArray(selectedAccount.payments) ? selectedAccount.payments : []).map((pay: any) => {
+                          const method = String(pay.method || '').toLowerCase();
+                          const isSetOff = method === 'set_off';
+                          return {
+                            key: `pay-${pay.id}`,
+                            date: String(pay.date || ''),
+                            amount: Number(pay.amount || 0),
+                            kindLabel: isSetOff
+                              ? (isAr ? 'مقاصة حساب جاري' : 'Party set-off')
+                              : (pay.method || '-'),
+                            ref: pay.reference || pay.notes || '-',
+                            status: pay.status || '-',
+                            isCredit: isSetOff,
+                            sort: String(pay.date || ''),
+                          };
+                        }),
+                        ...(Array.isArray(selectedAccount.account_credits) ? selectedAccount.account_credits : []).map((c: any) => ({
+                          key: `cc-${c.id}`,
+                          date: String(c.date || ''),
+                          amount: Number(c.amount || 0),
+                          kindLabel: commissionReasonLabel(String(c.reason || ''), isAr),
+                          ref: c.notes || c.reference || `#${c.id}`,
+                          status: isAr ? 'دائن (بدون خزنة)' : 'Credit (no cash)',
+                          isCredit: true,
+                          sort: String(c.date || ''),
+                        })),
+                      ]
+                        .sort((a, b) => (a.sort < b.sort ? 1 : a.sort > b.sort ? -1 : 0))
+                        .map((row) => (
+                          <TableRow key={row.key} className={row.isCredit ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}>
+                            <TableCell>{row.date || '—'}</TableCell>
+                            <TableCell className="text-right tabular-nums font-medium">{row.amount.toLocaleString()}</TableCell>
+                            <TableCell>
+                              <span className={row.isCredit ? 'text-amber-800 dark:text-amber-300 font-medium' : undefined}>
+                                {row.kindLabel}
+                              </span>
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate" title={String(row.ref)}>{row.ref}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{row.status}</TableCell>
+                          </TableRow>
+                        ))}
+                      {(selectedAccount.payments?.length || 0) + (selectedAccount.account_credits?.length || 0) === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            {isAr ? 'لا توجد مدفوعات أو تسويات' : 'No payments or credits'}
+                          </TableCell>
                         </TableRow>
-                      ))}
+                      ) : null}
                     </TableBody>
                   </Table>
                 </TabsContent>
