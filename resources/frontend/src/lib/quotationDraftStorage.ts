@@ -17,6 +17,7 @@ export type QuotationDraft = {
     customerEmail: string;
     customerPhone: string;
     storeId: string;
+    discountAmount?: number;
     items: QuotationDraftItem[];
     editingQuotationId: string | null;
     savedQuotation: { id: string; status: string; reference_number?: string } | null;

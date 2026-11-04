@@ -6,11 +6,9 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Application\Services\ChannelStockResolver;
-use App\Domain\Models\Wms\Channel;
+use App\Application\Services\QuotationConversionException;
+use App\Application\Services\QuotationConversionService;
 use App\Domain\Models\Wms\Customer;
-use App\Domain\Models\Wms\InventoryOrder;
-use App\Domain\Models\Wms\InventoryOrderItem;
 use App\Domain\Models\Wms\Quotation;
 use App\Domain\Models\Wms\Sku;
 
@@ -248,71 +246,27 @@ class QuotationController extends Controller
         });
     }
 
-    public function convertToOrder(Request $request, Quotation $quotation)
+    public function convertToOrder(Request $request, Quotation $quotation, QuotationConversionService $converter)
     {
-        if ($quotation->status === 'converted') {
-            return response()->json(['message' => 'Quotation already converted to order'], 422);
-        }
-
-        return DB::transaction(function () use ($quotation, $request) {
-            $channelId = (int) ($request->input('channel_id') ?: ChannelStockResolver::resolveMainStoreChannelId());
-            if ($channelId <= 0) {
-                $channelId = (int) (Channel::query()->where('is_active', true)->orderBy('id')->value('id') ?? 0);
-            }
-            if ($channelId <= 0) {
-                return response()->json(['message' => 'No sales channel configured for order conversion'], 422);
-            }
-
-            $total = (float) $quotation->total_amount;
-            $platformOrderId = 'QT-'.preg_replace('/[^A-Za-z0-9\-]/', '', (string) $quotation->reference_number);
-            if ($platformOrderId === 'QT-') {
-                $platformOrderId = 'QT-'.strtoupper(Str::random(10));
-            }
-
-            $order = InventoryOrder::create([
-                'channel_id' => $channelId,
-                'platform_order_id' => $platformOrderId,
-                'user_id' => $request->user()?->id,
-                'customer_id' => $quotation->customer_id,
-                'customer_name' => $quotation->customer_name ?? 'Guest',
-                'order_date' => now(),
-                'currency' => 'EGP',
-                'total_amount' => $total,
-                'shipping_amount' => 0,
-                'tax_amount' => (float) ($quotation->tax_amount ?? 0),
-                'discount_amount' => (float) ($quotation->discount_amount ?? 0),
-                'payment_type' => 'credit',
-                'paid_amount' => 0,
-                'remaining_amount' => $total,
-                'status' => 'pending',
-                'financial_status' => 'pending',
-                'settlement_status' => 'pending',
-            ]);
-
-            $quotation->load('items.sku');
-            foreach ($quotation->items as $item) {
-                $sku = $item->sku ?? ($item->sku_id ? Sku::query()->find($item->sku_id) : null);
-                $qty = (int) $item->quantity;
-                $unit = (float) $item->unit_price;
-
-                InventoryOrderItem::create([
-                    'inventory_order_id' => $order->id,
-                    'sku_id' => $item->sku_id,
-                    'sku_code' => $sku?->sku ?? (string) ($item->sku_id ?? 'UNKNOWN'),
-                    'product_name' => $sku?->name ?? $sku?->sku ?? 'Quotation line',
-                    'quantity' => $qty,
-                    'unit_price' => $unit,
-                    'total_price' => (float) ($item->total ?? ($qty * $unit)),
-                ]);
-            }
-
-            $quotation->update(['status' => 'converted']);
+        try {
+            $channelId = $request->filled('channel_id') ? (int) $request->input('channel_id') : null;
+            $result = $converter->convert($quotation, $request->user()?->id, $channelId);
 
             return response()->json([
                 'message' => 'Quotation converted to order successfully',
-                'order' => $order->load('items.sku'),
+                'order' => $result['order'],
             ]);
-        });
+        } catch (QuotationConversionException $e) {
+            $body = [
+                'message' => $e->getMessage(),
+                'code' => $e->errorCode,
+            ];
+            if ($e->insufficient !== []) {
+                $body['insufficient'] = $e->insufficient;
+            }
+
+            return response()->json($body, 422);
+        }
     }
 
     public function destroy(Quotation $quotation)

@@ -138,6 +138,7 @@ export function QuotationEditor({
     const [customerEmail, setCustomerEmail] = useState('');
     const [customerPhone, setCustomerPhone] = useState('');
     const [items, setItems] = useState<QuotationItem[]>([]);
+    const [discountAmount, setDiscountAmount] = useState(0);
     const [savedQuotation, setSavedQuotation] = useState<{ id: string; status: string; reference_number?: string } | null>(null);
     const [editingQuotationId, setEditingQuotationId] = useState<string | null>(null);
     const [loadingQuotation, setLoadingQuotation] = useState(false);
@@ -157,7 +158,7 @@ export function QuotationEditor({
 
     const persistDraftToLocal = useCallback(() => {
         if (quotationId) return;
-        if (!customerName.trim() && items.length === 0 && !storeId) {
+        if (!customerName.trim() && items.length === 0 && !storeId && discountAmount <= 0) {
             clearQuotationDraft();
             return;
         }
@@ -167,12 +168,13 @@ export function QuotationEditor({
             customerEmail,
             customerPhone,
             storeId,
+            discountAmount,
             items,
             editingQuotationId,
             savedQuotation,
             updatedAt: new Date().toISOString(),
         });
-    }, [customerId, customerEmail, customerName, customerPhone, editingQuotationId, items, quotationId, savedQuotation, storeId]);
+    }, [customerId, customerEmail, customerName, customerPhone, discountAmount, editingQuotationId, items, quotationId, savedQuotation, storeId]);
 
     const applyDraft = useCallback((draft: ReturnType<typeof loadQuotationDraft>) => {
         if (!draft) return;
@@ -181,6 +183,7 @@ export function QuotationEditor({
         setCustomerEmail(draft.customerEmail || '');
         setCustomerPhone(draft.customerPhone || '');
         setStoreId(draft.storeId || '');
+        setDiscountAmount(Math.max(0, Number(draft.discountAmount) || 0));
         setItems(Array.isArray(draft.items) ? draft.items : []);
         setEditingQuotationId(draft.editingQuotationId);
         setSavedQuotation(draft.savedQuotation);
@@ -205,6 +208,7 @@ export function QuotationEditor({
         setCustomerEmail('');
         setCustomerPhone('');
         setItems([]);
+        setDiscountAmount(0);
         setSearchQuery('');
         setSearchResults([]);
         setSavedQuotation(null);
@@ -231,6 +235,7 @@ export function QuotationEditor({
             setCustomerName(String(q.customer_name || q.customer?.name || ''));
             setCustomerEmail(String(q.customer?.email || ''));
             setCustomerPhone(String(q.customer?.phone || ''));
+            setDiscountAmount(Math.max(0, Number(q.discount_amount) || 0));
             setItems(
                 (Array.isArray(q.items) ? q.items : []).map((item: any) => {
                     const sku = item.sku || {};
@@ -298,7 +303,7 @@ export function QuotationEditor({
         if (!isActive || quotationId) return;
         const timer = window.setTimeout(() => persistDraftToLocal(), 600);
         return () => window.clearTimeout(timer);
-    }, [isActive, quotationId, persistDraftToLocal, customerId, customerName, customerEmail, customerPhone, items, storeId, editingQuotationId, savedQuotation]);
+    }, [isActive, quotationId, persistDraftToLocal, customerId, customerName, customerEmail, customerPhone, discountAmount, items, storeId, editingQuotationId, savedQuotation]);
 
     const filteredCustomers = useMemo(() => {
         const q = customerPickQuery.trim().toLowerCase();
@@ -444,7 +449,9 @@ export function QuotationEditor({
         setItems(items.filter((i) => i.product_id !== productId));
     };
 
-    const totalAmount = items.reduce((sum, item) => sum + item.total, 0);
+    const lineSubtotal = items.reduce((sum, item) => sum + item.total, 0);
+    const clampedDiscount = Math.min(Math.max(0, discountAmount), lineSubtotal);
+    const totalAmount = Math.max(0, lineSubtotal - clampedDiscount);
 
     const quotationDate = () => new Date().toISOString().slice(0, 10);
 
@@ -575,7 +582,7 @@ export function QuotationEditor({
                 customer_phone: customerPhone,
                 quotation_date: quotationDate(),
                 items: payloadItems,
-                discount_amount: 0,
+                discount_amount: clampedDiscount,
                 tax_amount: 0,
             };
 
@@ -673,7 +680,7 @@ export function QuotationEditor({
                 quotation_date: new Date().toISOString(),
                 customer_name: customerName,
                 status: 'draft',
-                discount_amount: 0,
+                discount_amount: clampedDiscount,
                 tax_amount: 0,
                 total_amount: totalAmount,
                 notes: [customerEmail, customerPhone].filter(Boolean).join(' · ') || '',
@@ -701,6 +708,7 @@ export function QuotationEditor({
                 clearQuotationDraft();
             },
         });
+        // Error toast is handled in useConvertQuotation
     };
 
     const handleClose = async () => {
@@ -768,12 +776,53 @@ export function QuotationEditor({
                     ) : null}
                 </div>
             </div>
-            <div className="flex flex-col items-start sm:items-end shrink-0">
-                <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
-                <span className="text-2xl font-bold text-foreground tracking-tight leading-none">
-                    {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
-                    <span className="text-sm text-emerald-600 font-normal">EGP</span>
-                </span>
+            <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0 min-w-[11rem]">
+                {isEditable ? (
+                    <div className="flex items-center gap-2 justify-end">
+                        <Label htmlFor="quotation-discount" className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground whitespace-nowrap">
+                            {t('quotations.discountLabel') || t('quotations.printDiscount')}
+                        </Label>
+                        <Input
+                            id="quotation-discount"
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={discountAmount || ''}
+                            onChange={(e) => {
+                                const raw = parseFloat(e.target.value);
+                                const next = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+                                setDiscountAmount(next);
+                            }}
+                            onBlur={() => {
+                                if (discountAmount > lineSubtotal) {
+                                    setDiscountAmount(lineSubtotal);
+                                }
+                            }}
+                            className="h-8 w-28 text-end bg-background"
+                            disabled={items.length === 0}
+                        />
+                    </div>
+                ) : clampedDiscount > 0 ? (
+                    <div className="text-xs text-muted-foreground text-end">
+                        {t('quotations.discountLabel') || t('quotations.printDiscount')}:{' '}
+                        <span className="font-medium text-foreground">
+                            {clampedDiscount.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
+                        </span>
+                    </div>
+                ) : null}
+                {clampedDiscount > 0 ? (
+                    <div className="text-[11px] text-muted-foreground text-end">
+                        {t('quotations.subtotalLabel') || (isAr ? 'قبل الخصم' : 'Subtotal')}:{' '}
+                        {lineSubtotal.toLocaleString(rtl ? 'ar-EG' : 'en-US')} EGP
+                    </div>
+                ) : null}
+                <div className="text-end">
+                    <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">{t('quotations.totalLabel')}</span>
+                    <div className="text-2xl font-bold text-foreground tracking-tight leading-none">
+                        {totalAmount.toLocaleString(rtl ? 'ar-EG' : 'en-US')}{' '}
+                        <span className="text-sm text-emerald-600 font-normal">EGP</span>
+                    </div>
+                </div>
             </div>
         </div>
     );

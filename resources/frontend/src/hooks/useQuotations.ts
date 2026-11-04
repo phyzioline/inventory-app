@@ -51,6 +51,25 @@ export function useUpdateQuotation() {
     });
 }
 
+function formatConvertError(error: any): string {
+    const data = error?.response?.data;
+    if (data?.code === 'insufficient_stock' && Array.isArray(data?.insufficient) && data.insufficient.length > 0) {
+        const lines = data.insufficient
+            .slice(0, 5)
+            .map((row: any) => {
+                const code = row?.sku_code || row?.sku_id || '?';
+                const needed = row?.needed ?? '?';
+                const available = row?.available ?? 0;
+                return `${code}: need ${needed}, have ${available}`;
+            })
+            .join(' · ');
+        const more = data.insufficient.length > 5 ? ` (+${data.insufficient.length - 5})` : '';
+        return `${data.message || 'Insufficient stock'}: ${lines}${more}`;
+    }
+    if (typeof data?.message === 'string' && data.message) return data.message;
+    return error?.message || 'Failed to convert quotation';
+}
+
 export function useConvertQuotation() {
     const queryClient = useQueryClient();
     return useMutation({
@@ -59,6 +78,9 @@ export function useConvertQuotation() {
             queryClient.invalidateQueries({ queryKey: ['quotations'] });
             queryClient.invalidateQueries({ queryKey: ['orders'] });
             toast.success('Converted to order successfully');
+        },
+        onError: (error: any) => {
+            toast.error(formatConvertError(error));
         },
     });
 }

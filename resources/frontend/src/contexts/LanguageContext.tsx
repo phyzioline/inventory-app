@@ -75,8 +75,11 @@ const translations: Record<Language, Record<string, string>> = {
     'quotations.printHelp':
         'Opens a formatted document (logo & footer) in a new window. Allow pop-ups for this site. Do not use the browser Print menu on this page.',
     'quotations.convert': 'Convert to order',
+    'quotations.convertInsufficientStock': 'Cannot convert: insufficient stock for one or more items',
     'quotations.dialogTitle': 'Create new quotation',
     'quotations.dialogSubtitle': 'Generate a professional price quotation for your customer.',
+    'quotations.discountLabel': 'Discount',
+    'quotations.subtotalLabel': 'Subtotal',
     'quotations.totalLabel': 'Total amount',
     'quotations.customerSection': 'Customer details',
     'quotations.addProducts': 'Add products',
@@ -1606,8 +1609,11 @@ const translations: Record<Language, Record<string, string>> = {
     'quotations.printHelp':
         'يفتح مستنداً جاهزاً للطباعة (شعار وفوتر) في نافذة جديدة. اسمح بالنوافذ المنبثقة للموقع. لا تستخدم «طباعة» من قائمة المتصفح في هذه الصفحة.',
     'quotations.convert': 'تحويل لطلب / فاتورة بيع',
+    'quotations.convertInsufficientStock': 'لا يمكن التحويل: مخزون غير كافٍ لصنف أو أكثر',
     'quotations.dialogTitle': 'إنشاء عرض سعر جديد',
     'quotations.dialogSubtitle': 'أنشئ عرض سعر احترافي للعميل.',
+    'quotations.discountLabel': 'الخصم',
+    'quotations.subtotalLabel': 'قبل الخصم',
     'quotations.totalLabel': 'الإجمالي',
     'quotations.customerSection': 'بيانات العميل',
     'quotations.addProducts': 'إضافة منتجات',
