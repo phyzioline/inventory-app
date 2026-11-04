@@ -25,4 +25,9 @@ class Customer extends Model
     {
         return $this->hasMany(\App\Domain\Models\Wms\Quotation::class);
     }
+
+    public function linkedSupplier()
+    {
+        return $this->hasOne(Supplier::class, 'linked_customer_id');
+    }
 }

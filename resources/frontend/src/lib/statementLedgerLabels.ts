@@ -63,6 +63,12 @@ export function formatSupplierLedgerRowDescription(
   if (src === 'purchase_return') {
     return rtl ? `مرتجع مشتريات #${ref}` : `Purchase Return #${ref}`;
   }
+  if (src === 'commission_credit') {
+    return raw || (rtl ? `عمولة / فرق سعر #${ref}` : `Commission / price difference #${ref}`);
+  }
+  if (src.startsWith('customer_')) {
+    return raw || (rtl ? 'حركة عميل (حساب جاري)' : 'Customer current-account movement');
+  }
 
   return raw;
 }

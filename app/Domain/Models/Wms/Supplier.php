@@ -12,7 +12,7 @@ class Supplier extends Model
     use IsIsolatedByUser, SoftDeletes;
 
     protected $fillable = [
-        'name', 'email', 'phone', 'address', 'balance',
+        'name', 'email', 'phone', 'address', 'balance', 'linked_customer_id',
     ];
 
     /**
@@ -91,5 +91,15 @@ class Supplier extends Model
     public function purchaseReturns(): HasMany
     {
         return $this->hasMany(\App\Domain\Models\Wms\PurchaseReturn::class);
+    }
+
+    public function linkedCustomer(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'linked_customer_id');
+    }
+
+    public function accountCredits(): HasMany
+    {
+        return $this->hasMany(SupplierAccountCredit::class);
     }
 }

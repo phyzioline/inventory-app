@@ -15,6 +15,7 @@ use App\Domain\Models\Wms\Expense;
 use App\Domain\Models\Wms\Payment;
 use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\Receipt;
+use App\Domain\ValueObjects\NonCashSettlementMethod;
 use App\Domain\ValueObjects\PurchasePaymentMeta;
 use Throwable;
 
@@ -178,9 +179,28 @@ class CashFlowSummaryController extends Controller
             ? Payment::query()
             : Payment::withoutGlobalScopes()->where('user_id', $forUserId);
 
-        return $q->where(function ($sub) {
+        return $this->excludeNonCashSettlementMethods($q->where(function ($sub) {
             $sub->whereNull('notes')
                 ->orWhere('notes', 'not like', '%AUTO_PURCHASE_BATCH:%');
+        }));
+    }
+
+    /**
+     * Ledger-only methods (party set-off) never belong in cash/bank treasury totals.
+     */
+    private function excludeNonCashSettlementMethods(Builder $q): Builder
+    {
+        $methods = NonCashSettlementMethod::all();
+        if ($methods === []) {
+            return $q;
+        }
+
+        return $q->where(function (Builder $w) use ($methods) {
+            $w->whereNull('payment_method')
+                ->orWhereRaw(
+                    'LOWER(TRIM(COALESCE(payment_method, \'\'))) NOT IN ('.implode(',', array_fill(0, count($methods), '?')).')',
+                    array_map(static fn (string $m) => strtolower($m), $methods)
+                );
         });
     }
 
@@ -419,11 +439,16 @@ class CashFlowSummaryController extends Controller
     private function buildCoreCashStatsForUser(int $userId): array
     {
         $totalCapital = (float) (CapitalSource::withoutGlobalScopes()->where('user_id', $userId)->sum('amount') ?? 0);
-        $totalReceipts = (float) (Receipt::withoutGlobalScopes()->where('user_id', $userId)->sum('amount') ?? 0);
+        $totalReceipts = (float) ($this->excludeNonCashSettlementMethods(
+            Receipt::withoutGlobalScopes()->where('user_id', $userId)
+        )->sum('amount') ?? 0);
 
         // Same rows as Payments screen KPI (all completed/confirmed; incl. AUTO_PURCHASE_BATCH mirrors).
-        $paymentsKpiAgg = fn () => $this->applyPaymentCompletedForKpiFilter(
-            Payment::withoutGlobalScopes()->where('user_id', $userId)
+        // Party set-off payments are ledger-only and must not inflate treasury outflow.
+        $paymentsKpiAgg = fn () => $this->excludeNonCashSettlementMethods(
+            $this->applyPaymentCompletedForKpiFilter(
+                Payment::withoutGlobalScopes()->where('user_id', $userId)
+            )
         );
         $totalPaymentsAll = (float) ($paymentsKpiAgg()->sum('amount') ?? 0);
         $totalPayments = max(0.0, round($totalPaymentsAll, 2));
@@ -432,16 +457,20 @@ class CashFlowSummaryController extends Controller
 
         $bankMethods = ['bank_transfer', 'check', 'online', 'card'];
 
-        $bankReceipts = (float) (Receipt::withoutGlobalScopes()->where('user_id', $userId)->where('payment_method', 'bank_transfer')->sum('amount') ?? 0);
+        $bankReceipts = (float) ($this->excludeNonCashSettlementMethods(
+            Receipt::withoutGlobalScopes()->where('user_id', $userId)->where('payment_method', 'bank_transfer')
+        )->sum('amount') ?? 0);
         $cashPaymentsAll = (float) ($this->wherePaymentCountsAsCashForCashBankSplit($paymentsKpiAgg())->sum('amount') ?? 0);
         $bankPayments = max(0.0, round($totalPayments - $cashPaymentsAll, 2));
         $bankExpenses = (float) (Expense::withoutGlobalScopes()->where('user_id', $userId)->whereIn('payment_method', $bankMethods)->sum('amount') ?? 0);
 
-        $cashReceipts = (float) (Receipt::withoutGlobalScopes()->where('user_id', $userId)->where(function ($q) {
-            $q->whereNull('payment_method')
-                ->orWhere('payment_method', 'cash')
-                ->orWhere('payment_method', 'Cash');
-        })->sum('amount') ?? 0);
+        $cashReceipts = (float) ($this->excludeNonCashSettlementMethods(
+            Receipt::withoutGlobalScopes()->where('user_id', $userId)->where(function ($q) {
+                $q->whereNull('payment_method')
+                    ->orWhere('payment_method', 'cash')
+                    ->orWhere('payment_method', 'Cash');
+            })
+        )->sum('amount') ?? 0);
         $cashExpenses = (float) (Expense::withoutGlobalScopes()->where('user_id', $userId)->where(function ($q) {
             $q->whereNull('payment_method')
                 ->orWhere('payment_method', 'cash')

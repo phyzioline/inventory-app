@@ -1134,6 +1134,22 @@ export function printSupplierStatement(params: {
     invoices: SupplierStatementInvoice[];
     payments?: SupplierStatementPayment[];
     includeLineItems: boolean;
+    /**
+     * When the supplier is linked to a customer, pass the merged current-account ledger
+     * (server debit/credit convention). Print flips to the same UI convention as the screen.
+     */
+    currentAccountLedger?: Array<{
+        date?: string | null;
+        description?: string;
+        debit?: number;
+        credit?: number;
+        source?: string;
+        source_id?: string | number | null;
+        balance?: number;
+    }>;
+    /** Optional linked-party caption for the print header. */
+    linkedCustomerName?: string;
+    netPosition?: number | null;
 }): boolean {
     const { rtl, supplierName, supplierCode, dateFrom, dateTo, invoices } = params;
     const b = getDefaultPrintBranding(params.branding);
@@ -1150,12 +1166,16 @@ export function printSupplierStatement(params: {
     }
 
     const L = {
-        docTitle: rtl ? 'كشف حساب مورد' : 'Supplier Account Statement',
+        docTitle: params.currentAccountLedger?.length
+            ? (rtl ? 'كشف حساب جاري (مورد + عميل)' : 'Current-account statement (supplier + customer)')
+            : (rtl ? 'كشف حساب مورد' : 'Supplier Account Statement'),
         supplier: rtl ? 'اسم المورد' : 'Supplier',
         code: rtl ? 'كود المورد' : 'Supplier ref.',
         period: rtl ? 'الفترة' : 'Period',
         printed: rtl ? 'تاريخ الطباعة' : 'Printed at',
         all: rtl ? 'كل الفترات' : 'All dates',
+        linked: rtl ? 'مربوط بعميل' : 'Linked customer',
+        net: rtl ? 'صافي الحساب الجاري' : 'Net current account',
         colSeq: rtl ? 'م' : '#',
         colDesc: rtl ? 'البيان' : 'Description',
         colDebit: rtl ? 'مدين (المدفوع)' : 'Debit (paid)',
@@ -1194,79 +1214,107 @@ export function printSupplierStatement(params: {
 
     const entries: Omit<LedgerEntry, 'seq' | 'balance'>[] = [];
     const includeItems = params.includeLineItems !== false;
+    const ca = Array.isArray(params.currentAccountLedger) ? params.currentAccountLedger : [];
 
-    for (const inv of invoices) {
-        entries.push({
-            date: String(inv.date ?? ''),
-            description: formatSupplierLedgerRowDescription(
-                { source: 'invoice', description: 'Purchase Invoice #' + String(inv.invoice_number ?? inv.id) },
-                supplierName ?? '',
-                rtl
-            ),
-            debit: 0,
-            credit: Number(inv.total ?? 0),
-            source: 'invoice',
-            source_id: String(inv.id),
-            items: includeItems && Array.isArray(inv.items) ? inv.items : [],
-            invoiceTotal: Number(inv.total ?? 0),
-            invoiceRemaining: Number((inv as any).remaining ?? 0),
-        });
-    }
-
-    const payments = Array.isArray(params.payments) ? params.payments : [];
-    if (payments.length > 0) {
-        for (const pay of payments) {
-            if (String(pay.status || '').toLowerCase() === 'cancelled') continue;
+    if (ca.length > 0) {
+        // Server ledger: debit increases what we owe. UI/print: credit increases what we owe.
+        for (const row of ca) {
+            const src = String(row.source ?? 'ledger');
             entries.push({
-                date: String(pay.date ?? ''),
-                description: formatSupplierPaymentDescription(
+                date: String(row.date ?? ''),
+                description: formatSupplierLedgerRowDescription(
+                    { source: src, description: String(row.description ?? '') },
                     supplierName ?? '',
-                    pay.reference,
                     rtl
                 ),
-                debit: Number(pay.amount ?? 0),
-                credit: 0,
-                source: 'payment',
-                source_id: String(pay.id ?? ''),
+                debit: Number(row.credit ?? 0),
+                credit: Number(row.debit ?? 0),
+                source: src.startsWith('customer_invoice') || src === 'invoice' ? 'invoice' : src.startsWith('customer_') ? 'payment' : src,
+                source_id: String(row.source_id ?? ''),
+                items: [],
             });
         }
     } else {
-        for (const row of params.ledger) {
-            const src = String(row.source || '');
-            if (src === 'invoice') continue;
-            const amount = Number(row.credit ?? 0) > 0 ? Number(row.credit ?? 0) : Number(row.debit ?? 0);
-            if (amount <= 0) continue;
+        for (const inv of invoices) {
             entries.push({
-                date: String(row.date ?? ''),
-                description: formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl),
-                debit: amount,
-                credit: 0,
-                source: src === 'purchase_return' ? 'purchase_return' : 'payment',
-                source_id: String(row.source_id ?? ''),
+                date: String(inv.date ?? ''),
+                description: formatSupplierLedgerRowDescription(
+                    { source: 'invoice', description: 'Purchase Invoice #' + String(inv.invoice_number ?? inv.id) },
+                    supplierName ?? '',
+                    rtl
+                ),
+                debit: 0,
+                credit: Number(inv.total ?? 0),
+                source: 'invoice',
+                source_id: String(inv.id),
+                items: includeItems && Array.isArray(inv.items) ? inv.items : [],
+                invoiceTotal: Number(inv.total ?? 0),
+                invoiceRemaining: Number((inv as any).remaining ?? 0),
             });
         }
-    }
 
-    for (const row of params.ledger) {
-        if (String(row.source || '') !== 'purchase_return' || payments.length === 0) continue;
-        const amount = Number(row.credit ?? 0) > 0 ? Number(row.credit ?? 0) : Number(row.debit ?? 0);
-        if (amount <= 0) continue;
-        entries.push({
-            date: String(row.date ?? ''),
-            description: formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl),
-            debit: amount,
-            credit: 0,
-            source: 'purchase_return',
-            source_id: String(row.source_id ?? ''),
+        const payments = Array.isArray(params.payments) ? params.payments : [];
+        if (payments.length > 0) {
+            for (const pay of payments) {
+                if (String(pay.status || '').toLowerCase() === 'cancelled') continue;
+                const method = String((pay as any).method || '').toLowerCase();
+                entries.push({
+                    date: String(pay.date ?? ''),
+                    description: method === 'set_off'
+                        ? (rtl
+                            ? `مقاصة حساب جاري — #${pay.reference || pay.id || ''}`
+                            : `Party set-off — #${pay.reference || pay.id || ''}`)
+                        : formatSupplierPaymentDescription(
+                            supplierName ?? '',
+                            pay.reference,
+                            rtl
+                        ),
+                    debit: Number(pay.amount ?? 0),
+                    credit: 0,
+                    source: 'payment',
+                    source_id: String(pay.id ?? ''),
+                });
+            }
+        } else {
+            for (const row of params.ledger) {
+                const src = String(row.source || '');
+                if (src === 'invoice') continue;
+                const amount = Number(row.credit ?? 0) > 0 ? Number(row.credit ?? 0) : Number(row.debit ?? 0);
+                if (amount <= 0) continue;
+                entries.push({
+                    date: String(row.date ?? ''),
+                    description: formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl),
+                    debit: amount,
+                    credit: 0,
+                    source: src === 'purchase_return' || src === 'commission_credit' ? src : 'payment',
+                    source_id: String(row.source_id ?? ''),
+                });
+            }
+        }
+
+        for (const row of params.ledger) {
+            const src = String(row.source || '');
+            if (payments.length > 0 && (src === 'purchase_return' || src === 'commission_credit')) {
+                const amount = Number(row.credit ?? 0) > 0 ? Number(row.credit ?? 0) : Number(row.debit ?? 0);
+                if (amount <= 0) continue;
+                entries.push({
+                    date: String(row.date ?? ''),
+                    description: formatSupplierLedgerRowDescription(row, supplierName ?? '', rtl),
+                    debit: amount,
+                    credit: 0,
+                    source: src,
+                    source_id: String(row.source_id ?? ''),
+                });
+            }
+        }
+
+        entries.sort((a, b) => {
+            if (a.date < b.date) return -1;
+            if (a.date > b.date) return 1;
+            const order: Record<string, number> = { invoice: 0, purchase_return: 1, commission_credit: 2, payment: 3 };
+            return (order[a.source] ?? 4) - (order[b.source] ?? 4);
         });
     }
-
-    entries.sort((a, b) => {
-        if (a.date < b.date) return -1;
-        if (a.date > b.date) return 1;
-        const order: Record<string, number> = { invoice: 0, purchase_return: 1, payment: 2 };
-        return (order[a.source] ?? 3) - (order[b.source] ?? 3);
-    });
 
     let running = 0;
     let totalDebit = 0;
@@ -1347,12 +1395,16 @@ export function printSupplierStatement(params: {
 
     const periodLabel = dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : L.all;
 
+    const linkedName = String(params.linkedCustomerName ?? '').trim();
+    const netPos = params.netPosition;
     const metaHtml = `
         <div class="meta-grid" style="direction:${direction}; text-align:${align};">
             <div><b>${escapeHtml(L.supplier)}:</b> ${escapeHtml(supplierName)}</div>
             <div><b>${escapeHtml(L.code)}:</b> ${escapeHtml(String(supplierCode ?? '—'))}</div>
             <div><b>${escapeHtml(L.period)}:</b> ${escapeHtml(periodLabel)}</div>
             <div><b>${escapeHtml(L.printed)}:</b> ${escapeHtml(printDate)}</div>
+            ${linkedName !== '' ? `<div><b>${escapeHtml(L.linked)}:</b> ${escapeHtml(linkedName)}</div>` : ''}
+            ${typeof netPos === 'number' ? `<div><b>${escapeHtml(L.net)}:</b> ${formatMoney(netPos, rtl)}</div>` : ''}
         </div>
         <div class="doc-title-centered" style="color:${escapeHtml(b.primaryColor || PHYZIOLINE_BRAND_PRIMARY)};">${escapeHtml(L.docTitle)}</div>
     `;

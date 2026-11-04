@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Loader2, Printer, ArrowDownWideNarrow, ArrowUpWideNarrow, Pencil, Trash2, HandCoins } from 'lucide-react';
+import { Search, Loader2, Printer, ArrowDownWideNarrow, ArrowUpWideNarrow, Pencil, Trash2, HandCoins, Link2, Unlink, Percent } from 'lucide-react';
 import { useCreateSupplier, useSuppliers, useUpdateSupplier, useDeleteSupplier } from '@/hooks/useSuppliers';
+import { useCustomers } from '@/hooks/useCustomers';
 import { useSupplierAccountSummaries, type SupplierAccountSummary } from '@/hooks/useSupplierAccountSummaries';
 import { useLanguage } from '@/contexts/LanguageContext';
 import api from '@/lib/api';
@@ -30,6 +31,8 @@ type SupplierAccount = {
   invoices: any[];
   payments: any[];
   ledger: any[];
+  linked_party?: any;
+  current_account_ledger?: any[];
 };
 
 /** Payable to supplier (red) vs credit in our favor (green). */
@@ -96,13 +99,26 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [isEditSupplierOpen, setIsEditSupplierOpen] = useState(false);
   const [isSettleDialogOpen, setIsSettleDialogOpen] = useState(false);
+  const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
+  const [isCommissionDialogOpen, setIsCommissionDialogOpen] = useState(false);
   const { summaryMap, summariesReady, setSummaryMap } = useSupplierAccountSummaries(suppliers, { startDate, endDate });
+  const { data: customers = [] } = useCustomers();
   const navigate = useNavigate();
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<SupplierAccount | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<any | null>(null);
   const [settlingSupplier, setSettlingSupplier] = useState<any | null>(null);
+  const [linkSupplier, setLinkSupplier] = useState<any | null>(null);
+  const [linkCustomerId, setLinkCustomerId] = useState('');
+  const [linkRunSetOff, setLinkRunSetOff] = useState(true);
+  const [commissionSupplier, setCommissionSupplier] = useState<any | null>(null);
+  const [commissionForm, setCommissionForm] = useState({
+    amount: '',
+    reason: 'commission',
+    credit_date: todayIso,
+    notes: '',
+  });
   const [settleForm, setSettleForm] = useState({
     amount: '',
     payment_method: 'bank_transfer',
@@ -315,6 +331,105 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     }
   };
 
+  const refreshSupplierAccount = async (supplierId: string) => {
+    try {
+      const refreshed = await api.get(`suppliers/${supplierId}/account-summary`, {
+        params: startDate && endDate ? { start_date: startDate, end_date: endDate } : {},
+      });
+      setSummaryMap((prev) => ({ ...prev, [supplierId]: refreshed.summary }));
+      if (selectedSupplierId === supplierId) {
+        setSelectedAccount(refreshed);
+      }
+    } catch {
+      await refetch();
+    }
+    queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+    queryClient.invalidateQueries({ queryKey: ['customers'] });
+  };
+
+  const linkMutation = useMutation({
+    mutationFn: async (payload: { supplierId: string; customer_id: number; run_set_off: boolean }) =>
+      api.post(`suppliers/${payload.supplierId}/link-customer`, {
+        customer_id: payload.customer_id,
+        run_set_off: payload.run_set_off,
+      }),
+    onSuccess: async (_data, variables) => {
+      await refreshSupplierAccount(variables.supplierId);
+      setIsLinkDialogOpen(false);
+      setLinkSupplier(null);
+      setLinkCustomerId('');
+      toast.success(isAr ? 'تم ربط المورد بالعميل' : 'Supplier linked to customer');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || (isAr ? 'فشل الربط' : 'Link failed'));
+    },
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: async (supplierId: string) => api.delete(`suppliers/${supplierId}/link-customer`),
+    onSuccess: async (_data, supplierId) => {
+      await refreshSupplierAccount(String(supplierId));
+      toast.success(isAr ? 'تم فك الربط' : 'Link removed');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || (isAr ? 'فشل فك الربط' : 'Unlink failed'));
+    },
+  });
+
+  const setOffMutation = useMutation({
+    mutationFn: async (supplierId: string) => api.post(`suppliers/${supplierId}/party-set-off`, {}),
+    onSuccess: async (_data, supplierId) => {
+      await refreshSupplierAccount(String(supplierId));
+      toast.success(isAr ? 'تم تنفيذ المقاصة' : 'Set-off recorded');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || (isAr ? 'فشل تنفيذ المقاصة' : 'Set-off failed'));
+    },
+  });
+
+  const commissionMutation = useMutation({
+    mutationFn: async (payload: {
+      supplierId: string;
+      amount: number;
+      reason: string;
+      credit_date: string;
+      notes?: string;
+    }) =>
+      api.post(`suppliers/${payload.supplierId}/commission-credit`, {
+        amount: payload.amount,
+        reason: payload.reason,
+        credit_date: payload.credit_date,
+        notes: payload.notes || null,
+      }),
+    onSuccess: async (_data, variables) => {
+      await refreshSupplierAccount(variables.supplierId);
+      setIsCommissionDialogOpen(false);
+      setCommissionSupplier(null);
+      setCommissionForm({ amount: '', reason: 'commission', credit_date: todayIso, notes: '' });
+      toast.success(isAr ? 'تم خصم العمولة / فرق السعر من حساب المورد' : 'Commission / price difference credited');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || (isAr ? 'فشل تسجيل العمولة' : 'Commission credit failed'));
+    },
+  });
+
+  const openLinkDialog = (supplier: any) => {
+    if (!supplier?.id) return;
+    setLinkSupplier(supplier);
+    const name = String(supplier.name || '').trim().toLowerCase();
+    const match = (customers as any[]).find((c) => String(c.name || '').trim().toLowerCase() === name);
+    setLinkCustomerId(match ? String(match.id) : '');
+    setLinkRunSetOff(true);
+    setIsLinkDialogOpen(true);
+  };
+
+  const openCommissionDialog = (supplier: any) => {
+    if (!supplier?.id) return;
+    setCommissionSupplier(supplier);
+    setCommissionForm({ amount: '', reason: 'commission', credit_date: todayIso, notes: '' });
+    setIsCommissionDialogOpen(true);
+  };
+
   const handleSettleSubmit = () => {
     if (!settlingSupplier?.id) return;
     const outstanding = Math.max(0, getSupplierOutstanding(settlingSupplier, summaryMap));
@@ -354,8 +469,6 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
 
   const buildEnhancedSupplierLedger = (account: SupplierAccount | null) => {
     if (!account) return [];
-    const invoices: any[] = Array.isArray(account.invoices) ? account.invoices : [];
-    const payments: any[] = Array.isArray(account.payments) ? account.payments : [];
 
     type Entry = {
       key: string;
@@ -363,12 +476,38 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       description: string;
       debit: number;
       credit: number;
-      source: 'invoice' | 'payment' | 'purchase_return';
+      source: string;
       source_id: string;
       items?: any[];
       invoiceTotal?: number;
       invoiceRemaining?: number;
     };
+
+    // Linked current-account ledger from the server (AP + AR). UI uses flipped
+    // debit/credit vs server (credit = increases what we owe the party).
+    const ca = Array.isArray(account.current_account_ledger) ? account.current_account_ledger : [];
+    if (ca.length > 0) {
+      let running = 0;
+      return ca.map((row: any, i: number) => {
+        const credit = Number(row.debit ?? 0);
+        const debit = Number(row.credit ?? 0);
+        running += credit - debit;
+        return {
+          key: `ca-${row.source}-${row.source_id}-${i}`,
+          date: row.date ?? '',
+          description: String(row.description ?? ''),
+          debit,
+          credit,
+          source: String(row.source ?? 'ledger'),
+          source_id: String(row.source_id ?? i),
+          balance: Math.round(running * 100) / 100,
+          seq: i + 1,
+        };
+      });
+    }
+
+    const invoices: any[] = Array.isArray(account.invoices) ? account.invoices : [];
+    const payments: any[] = Array.isArray(account.payments) ? account.payments : [];
 
     const entries: Entry[] = [];
 
@@ -417,6 +556,19 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       });
     }
 
+    const credits = Array.isArray((account as any).account_credits) ? (account as any).account_credits : [];
+    for (const c of credits) {
+      entries.push({
+        key: `cc-${c.id}`,
+        date: c.date || '',
+        description: (isAr ? 'عمولة / فرق سعر #' : 'Commission / price diff #') + c.id + (c.notes ? ` — ${c.notes}` : ''),
+        debit: Number(c.amount ?? 0),
+        credit: 0,
+        source: 'commission_credit',
+        source_id: String(c.id),
+      });
+    }
+
     entries.sort((a, b) => {
       if (a.date < b.date) return -1;
       if (a.date > b.date) return 1;
@@ -433,6 +585,9 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
   const handlePrintAccount = () => {
     if (!selectedAccount) return;
     try {
+      const ca = Array.isArray(selectedAccount.current_account_ledger)
+        ? selectedAccount.current_account_ledger
+        : [];
       const ok = printSupplierStatement({
         rtl: isAr,
         branding: getDefaultPrintBranding(),
@@ -444,6 +599,14 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
         invoices: selectedAccount.invoices || [],
         payments: selectedAccount.payments || [],
         includeLineItems: statementIncludeLineItems,
+        currentAccountLedger: ca.length > 0 ? ca : undefined,
+        linkedCustomerName: selectedAccount.linked_party?.customer_name
+          ? String(selectedAccount.linked_party.customer_name)
+          : undefined,
+        netPosition:
+          typeof selectedAccount.linked_party?.net_position === 'number'
+            ? Number(selectedAccount.linked_party.net_position)
+            : null,
       });
       if (!ok) {
         toast.error(isAr ? 'تعذر الطباعة — اسمح بالنوافذ المنبثقة أو أعد المحاولة.' : 'Print failed — allow popups or try again.');
@@ -544,7 +707,16 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                 const status = Number(summary.outstanding) <= 0 ? 'paid' : Number(summary.total_paid) > 0 ? 'partial' : 'unpaid';
                 return (
                   <TableRow key={s.id} className="cursor-pointer" onClick={() => openDetails(String(s.id))}>
-                    <TableCell className="truncate font-medium">{s.name}</TableCell>
+                    <TableCell className="truncate font-medium">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="truncate">{s.name}</span>
+                        {s.linked_customer_id || s.linked_customer ? (
+                          <Badge variant="outline" className="shrink-0 text-[10px] border-emerald-500 text-emerald-700 dark:text-emerald-400">
+                            {isAr ? 'مربوط' : 'Linked'}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{Number(summary.total_purchases).toLocaleString()}</TableCell>
                     <TableCell className="text-right tabular-nums">{Number(summary.total_paid).toLocaleString()}</TableCell>
                     <TableCell className={outstandingCell.className}>{outstandingCell.text}</TableCell>
@@ -556,6 +728,40 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-emerald-600 hover:text-emerald-700"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (s.linked_customer_id || s.linked_customer) {
+                              unlinkMutation.mutate(String(s.id));
+                            } else {
+                              openLinkDialog(s);
+                            }
+                          }}
+                          title={
+                            s.linked_customer_id || s.linked_customer
+                              ? (isAr ? 'فك ربط العميل' : 'Unlink customer')
+                              : (isAr ? 'ربط بعميل' : 'Link to customer')
+                          }
+                        >
+                          {s.linked_customer_id || s.linked_customer ? <Unlink className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-amber-600 hover:text-amber-700"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCommissionDialog(s);
+                          }}
+                          title={isAr ? 'خصم عمولة / فرق سعر' : 'Commission / price difference'}
+                        >
+                          <Percent className="w-4 h-4" />
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"
@@ -611,6 +817,39 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
               <DialogTitle>{selectedAccount?.supplier?.name || (isAr ? 'تفاصيل المورد' : 'Supplier Details')}</DialogTitle>
               {selectedAccount && (
                 <div className="flex flex-wrap items-center gap-2">
+                  {selectedAccount.linked_party ? (
+                    <>
+                      <Badge variant="outline" className="border-emerald-500 text-emerald-700 dark:text-emerald-400">
+                        {isAr ? 'عميل:' : 'Customer:'} {selectedAccount.linked_party.customer_name}
+                        {typeof selectedAccount.linked_party.net_position === 'number'
+                          ? ` · ${isAr ? 'صافي' : 'Net'} ${Number(selectedAccount.linked_party.net_position).toLocaleString()}`
+                          : ''}
+                      </Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-emerald-700 border-emerald-500"
+                        disabled={setOffMutation.isPending}
+                        onClick={() => setOffMutation.mutate(String(selectedAccount.supplier.id))}
+                      >
+                        {isAr ? 'مقاصة' : 'Set-off'}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-emerald-700 border-emerald-500"
+                      onClick={() => openLinkDialog(selectedAccount.supplier)}
+                    >
+                      <Link2 className="w-4 h-4 mr-2" />
+                      {isAr ? 'ربط بعميل' : 'Link customer'}
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => openCommissionDialog(selectedAccount.supplier)}>
+                    <Percent className="w-4 h-4 mr-2" />
+                    {isAr ? 'خصم عمولة' : 'Commission'}
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => openSettleDialog(selectedAccount.supplier)}>
                     <HandCoins className="w-4 h-4 mr-2" />
                     {isAr ? 'تسوية رصيد' : 'Settle Balance'}
@@ -633,12 +872,32 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
           {detailLoading || !selectedAccount ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>
           ) : (
-            <Tabs defaultValue="invoices" className="flex min-h-0 flex-1 flex-col">
+            <Tabs
+              defaultValue={selectedAccount.linked_party ? 'ledger' : 'invoices'}
+              className="flex min-h-0 flex-1 flex-col"
+            >
               <TabsList>
-                <TabsTrigger value="invoices">{isAr ? 'الفواتير' : 'Invoices'}</TabsTrigger>
+                <TabsTrigger value="invoices">{isAr ? 'فواتير الشراء' : 'Purchase invoices'}</TabsTrigger>
                 <TabsTrigger value="payments">{isAr ? 'المدفوعات' : 'Payments'}</TabsTrigger>
-                <TabsTrigger value="ledger">{isAr ? 'دفتر الحساب' : 'Ledger'}</TabsTrigger>
+                <TabsTrigger value="ledger">
+                  {selectedAccount.linked_party
+                    ? (isAr ? 'كشف الحساب الجاري' : 'Current-account ledger')
+                    : (isAr ? 'دفتر الحساب' : 'Ledger')}
+                </TabsTrigger>
               </TabsList>
+              {!selectedAccount.linked_party ? (
+                <p className="text-xs text-muted-foreground px-1 py-1.5">
+                  {isAr
+                    ? 'تبويب الفواتير = مشتريات فقط (PUR). البيع للطرف ده يظهر بعد «ربط بعميل» داخل كشف الحساب الجاري والطباعة.'
+                    : 'Invoices tab = purchases only (PUR). Sales to this party appear after “Link customer” in the current-account ledger and print.'}
+                </p>
+              ) : (
+                <p className="text-xs text-emerald-700 dark:text-emerald-400 px-1 py-1.5">
+                  {isAr
+                    ? 'مربوط بحساب جاري: كشف الحساب والطباعة يشملان الشراء + البيع + المقاصة/العمولة.'
+                    : 'Linked current account: ledger and print include purchases + sales + set-off/commission.'}
+                </p>
+              )}
 
               <div className="min-h-0 flex-1 overflow-auto rounded-md border">
                 <TabsContent value="invoices" className="m-0">
@@ -816,6 +1075,140 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isLinkDialogOpen} onOpenChange={setIsLinkDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{isAr ? 'ربط المورد بعميل (حساب جاري)' : 'Link supplier to customer'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {isAr
+                ? `المورد: ${linkSupplier?.name || '-'} — بعد الربط يظهر البيع والشراء في كشف واحد، ويمكن تنفيذ مقاصة بدون حركة خزنة.`
+                : `Supplier: ${linkSupplier?.name || '-'} — after linking, sales and purchases appear on one statement; set-off does not move treasury cash.`}
+            </p>
+            <div className="space-y-2">
+              <Label>{isAr ? 'العميل' : 'Customer'}</Label>
+              <select
+                className="h-10 rounded-md border bg-background px-3 text-sm w-full"
+                value={linkCustomerId}
+                onChange={(e) => setLinkCustomerId(e.target.value)}
+              >
+                <option value="">{isAr ? 'اختر عميل…' : 'Select customer…'}</option>
+                {(customers as any[]).map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <Checkbox checked={linkRunSetOff} onCheckedChange={(v) => setLinkRunSetOff(v === true)} />
+              {isAr ? 'تنفيذ مقاصة الآن (تصفية المستحقين المتعاكسين)' : 'Run set-off now (clear opposite balances)'}
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsLinkDialogOpen(false)}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </Button>
+            <Button
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={!linkCustomerId || linkMutation.isPending}
+              onClick={() => {
+                if (!linkSupplier?.id || !linkCustomerId) return;
+                linkMutation.mutate({
+                  supplierId: String(linkSupplier.id),
+                  customer_id: Number(linkCustomerId),
+                  run_set_off: linkRunSetOff,
+                });
+              }}
+            >
+              {linkMutation.isPending ? (isAr ? 'جاري الربط…' : 'Linking…') : (isAr ? 'ربط' : 'Link')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isCommissionDialogOpen} onOpenChange={setIsCommissionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{isAr ? 'خصم عمولة / فرق سعر من المورد' : 'Commission / price difference credit'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {isAr
+                ? `المورد: ${commissionSupplier?.name || '-'} — يخصم من المستحق عليه بدون مخزون وبدون خزنة.`
+                : `Supplier: ${commissionSupplier?.name || '-'} — reduces payable; no stock and no treasury cash.`}
+            </p>
+            <div className="space-y-2">
+              <Label>{isAr ? 'المبلغ' : 'Amount'}</Label>
+              <Input
+                type="number"
+                value={commissionForm.amount}
+                onChange={(e) => setCommissionForm((p) => ({ ...p, amount: e.target.value }))}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>{isAr ? 'السبب' : 'Reason'}</Label>
+                <select
+                  className="h-10 rounded-md border bg-background px-3 text-sm w-full"
+                  value={commissionForm.reason}
+                  onChange={(e) => setCommissionForm((p) => ({ ...p, reason: e.target.value }))}
+                >
+                  <option value="commission">{isAr ? 'عمولة' : 'Commission'}</option>
+                  <option value="price_difference">{isAr ? 'فرق سعر' : 'Price difference'}</option>
+                  <option value="other">{isAr ? 'أخرى' : 'Other'}</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>{isAr ? 'التاريخ' : 'Date'}</Label>
+                <Input
+                  type="date"
+                  value={commissionForm.credit_date}
+                  onChange={(e) => setCommissionForm((p) => ({ ...p, credit_date: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{isAr ? 'ملاحظات' : 'Notes'}</Label>
+              <Input
+                value={commissionForm.notes}
+                onChange={(e) => setCommissionForm((p) => ({ ...p, notes: e.target.value }))}
+                placeholder={isAr ? 'مثال: فرق سعر جهاز' : 'e.g. device price difference'}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsCommissionDialogOpen(false)}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </Button>
+            <Button
+              type="button"
+              disabled={commissionMutation.isPending}
+              onClick={() => {
+                if (!commissionSupplier?.id) return;
+                const amount = Number(commissionForm.amount || 0);
+                if (!amount || amount <= 0) {
+                  toast.error(isAr ? 'ادخل مبلغ صحيح' : 'Enter a valid amount');
+                  return;
+                }
+                commissionMutation.mutate({
+                  supplierId: String(commissionSupplier.id),
+                  amount,
+                  reason: commissionForm.reason,
+                  credit_date: commissionForm.credit_date,
+                  notes: commissionForm.notes,
+                });
+              }}
+            >
+              {commissionMutation.isPending ? (isAr ? 'جاري الحفظ…' : 'Saving…') : (isAr ? 'تأكيد الخصم' : 'Confirm credit')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

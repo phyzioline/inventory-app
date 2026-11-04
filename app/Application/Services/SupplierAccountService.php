@@ -9,6 +9,7 @@ use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\PurchaseReturn;
 use App\Domain\Models\Wms\Receipt;
 use App\Domain\Models\Wms\Supplier;
+use App\Domain\Models\Wms\SupplierAccountCredit;
 use App\Domain\Models\Wms\Vendor;
 use App\Domain\ValueObjects\PurchasePaymentMeta;
 use Illuminate\Support\Carbon;
@@ -18,7 +19,8 @@ use Illuminate\Support\Collection;
  * Supplier account (accounts payable) — the single server-side source for the suppliers screen,
  * the supplier statement, the purchase-invoice list's paid column and the correction commands.
  *
- * Balance = purchases − payments − (returns credited − refunds the supplier paid back in cash).
+ * Balance = purchases − payments − (returns credited − refunds the supplier paid back in cash)
+ * − commission / price-difference credits ({@see SupplierAccountCredit}).
  *
  * Per-invoice paid/remaining: what was entered on the invoice and payments linked to it, then every
  * on-account payment and credit fills the open invoices oldest first ("the cup fills"). Allocation is
@@ -87,6 +89,12 @@ class SupplierAccountService
         }
         $payments = $paymentQuery->orderByDesc('payment_date')->get();
 
+        $creditsQuery = SupplierAccountCredit::query()->where('supplier_id', (int) $supplier->id);
+        if ($hasRange) {
+            $creditsQuery->whereBetween('credit_date', [$startDate, $endDate]);
+        }
+        $accountCredits = $creditsQuery->orderByDesc('credit_date')->get();
+
         $batchIdSet = [];
         $cashBatchIds = [];
         foreach ($invoices as $batch) {
@@ -144,17 +152,27 @@ class SupplierAccountService
         $totalReturns = (float) $returns->sum(fn ($r) => (float) ($r->grand_total ?? 0));
         $totalRefunds = (float) $refunds->sum(fn ($r) => (float) ($r->amount ?? 0));
         $returnCredit = max(0.0, $totalReturns - $totalRefunds);
+        $commissionCredit = round((float) $accountCredits->sum(fn ($c) => (float) ($c->amount ?? 0)), 2);
         $alloc = $this->allocateCompletedPaymentsByBatch($invoiceRows, $payments);
         // KPI: do not add invoice [PAYMENT] / received totals + batch-linked Payment rows twice.
         $totalPaid = $this->computeDedupedTotalPaid($invoiceRows, $alloc);
         // Open AP: avoid subtracting the full payment sum from global remaining (double-count vs batch-linked rows).
-        $outstanding = $this->computeOutstandingFromInvoiceLines($invoiceRows, $alloc, $returnCredit);
+        $outstanding = $this->computeOutstandingFromInvoiceLines(
+            $invoiceRows,
+            $alloc,
+            $returnCredit + $commissionCredit
+        );
         // When no invoice window / no batches, fall back to supplier.balance (legacy).
-        if ($totalPurchases <= 0 && $totalPaid <= 0 && $invoiceRows->isEmpty()) {
+        if ($totalPurchases <= 0 && $totalPaid <= 0 && $invoiceRows->isEmpty() && $commissionCredit <= 0) {
             $outstanding = (float) ($supplier->balance ?? 0);
         }
 
-        $invoiceRows = $this->allocateOldestFirst($invoiceRows, $alloc, $this->returnCreditByBatch($returns, $refunds), $returnCredit);
+        $invoiceRows = $this->allocateOldestFirst(
+            $invoiceRows,
+            $alloc,
+            $this->returnCreditByBatch($returns, $refunds),
+            $returnCredit + $commissionCredit
+        );
 
         $ledgerRows = collect();
         foreach ($invoiceRows as $inv) {
@@ -191,15 +209,28 @@ class SupplierAccountService
         }
         foreach ($paymentRows as $pay) {
             if ($pay['status'] !== 'cancelled') {
+                $method = strtolower(trim((string) ($pay['method'] ?? '')));
                 $ledgerRows->push([
                     'date' => $pay['date'],
-                    'description' => $this->supplierPaymentLedgerDescription((string) $supplier->name, $pay['reference'] ?? null),
+                    'description' => $method === 'set_off'
+                        ? ('مقاصة حساب جاري — Set-off #'.($pay['reference'] ?? $pay['id']))
+                        : $this->supplierPaymentLedgerDescription((string) $supplier->name, $pay['reference'] ?? null),
                     'debit' => 0.0,
                     'credit' => $pay['amount'],
                     'source' => 'payment',
                     'source_id' => $pay['id'],
                 ]);
             }
+        }
+        foreach ($accountCredits as $credit) {
+            $ledgerRows->push([
+                'date' => optional($credit->credit_date)->toDateString(),
+                'description' => $this->commissionCreditLedgerDescription((string) $credit->reason, $credit->notes, $credit->id),
+                'debit' => 0.0,
+                'credit' => (float) $credit->amount,
+                'source' => 'commission_credit',
+                'source_id' => $credit->id,
+            ]);
         }
 
         $running = 0.0;
@@ -237,17 +268,40 @@ class SupplierAccountService
                 'total_paid' => round($totalPaid, 2),
                 'outstanding' => round($outstanding, 2),
                 // Signed: negative = the supplier holds a credit of yours (paid above purchases).
-                'net_balance' => round($totalPurchases - $totalPaid - $returnCredit, 2),
+                'net_balance' => round($totalPurchases - $totalPaid - $returnCredit - $commissionCredit, 2),
+                'commission_credit' => round($commissionCredit, 2),
                 'invoice_count' => (int) $invoiceRows->count(),
                 'avg_payment_days' => $avgPaymentDays,
+                'linked_customer_id' => $supplier->linked_customer_id ? (int) $supplier->linked_customer_id : null,
             ],
             'invoices' => $invoiceRows,
             'payments' => $paymentRows,
             'returns' => $returns,
             'refunds' => $refunds,
+            'account_credits' => $accountCredits->map(fn (SupplierAccountCredit $c) => [
+                'id' => $c->id,
+                'date' => optional($c->credit_date)->toDateString(),
+                'amount' => (float) $c->amount,
+                'reason' => $c->reason,
+                'notes' => $c->notes,
+                'reference' => $c->reference,
+            ])->values(),
             'ledger' => $ledger,
         ];
     }
+
+    private function commissionCreditLedgerDescription(string $reason, ?string $notes, int|string $id): string
+    {
+        $label = match ($reason) {
+            SupplierAccountCredit::REASON_PRICE_DIFFERENCE => 'فرق سعر',
+            SupplierAccountCredit::REASON_OTHER => 'دائن على المورد',
+            default => 'عمولة',
+        };
+        $extra = trim((string) $notes);
+
+        return $label.($extra !== '' ? ' — '.$extra : '').' #'.$id;
+    }
+
 
     /**
      * Allocated paid/remaining/status for every non-cancelled purchase invoice of the tenant's suppliers.

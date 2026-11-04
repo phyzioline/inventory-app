@@ -153,6 +153,10 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::apiResource('vendors', VendorController::class);
         Route::post('suppliers/{id}/pay', [SupplierController::class, 'pay']);
         Route::get('suppliers/{id}/account-summary', [SupplierController::class, 'accountSummary']);
+        Route::post('suppliers/{id}/link-customer', [SupplierController::class, 'linkCustomer']);
+        Route::delete('suppliers/{id}/link-customer', [SupplierController::class, 'unlinkCustomer']);
+        Route::post('suppliers/{id}/party-set-off', [SupplierController::class, 'partySetOff']);
+        Route::post('suppliers/{id}/commission-credit', [SupplierController::class, 'commissionCredit']);
         Route::post('suppliers/bulk-upload', [SupplierController::class, 'bulkUpload']);
         Route::get('suppliers/template/download', [SupplierController::class, 'downloadTemplate']);
         Route::apiResource('suppliers', SupplierController::class);

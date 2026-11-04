@@ -845,6 +845,14 @@ export default function CustomersPage({ embedded = false }: CustomersPageProps) 
           <DialogHeader>
             <div className="flex items-center justify-between gap-3">
               <DialogTitle>{selectedAccount?.customer?.name || t('customers.detailsTitle')}</DialogTitle>
+              {selectedAccount?.linked_party ? (
+                <Badge variant="outline" className="border-emerald-500 text-emerald-700 dark:text-emerald-400 me-auto">
+                  {language === 'ar' ? 'مورد:' : 'Supplier:'} {selectedAccount.linked_party.supplier_name}
+                  {typeof selectedAccount.linked_party.net_position === 'number'
+                    ? ` · ${language === 'ar' ? 'صافي' : 'Net'} ${Number(selectedAccount.linked_party.net_position).toLocaleString()}`
+                    : ''}
+                </Badge>
+              ) : null}
               {selectedAccount && (
                 <Button variant="outline" size="sm" onClick={handlePrintAccount}>
                   <Printer className="w-4 h-4 me-2" />

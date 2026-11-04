@@ -5,7 +5,10 @@ namespace App\Presentation\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use App\Application\Services\PartyLinkService;
 use App\Application\Services\SupplierAccountService;
+use App\Application\Services\SupplierCommissionCreditService;
+use App\Domain\Models\Wms\Customer;
 use App\Domain\Models\Wms\Payment;
 use App\Domain\Models\Wms\Supplier;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -19,7 +22,7 @@ class SupplierController extends Controller
      */
     public function index()
     {
-        $suppliers = Supplier::orderBy('name')->get();
+        $suppliers = Supplier::query()->with('linkedCustomer:id,name')->orderBy('name')->get();
 
         return response()->json($suppliers);
     }
@@ -361,14 +364,122 @@ class SupplierController extends Controller
     /**
      * Accounting view for supplier: KPIs + invoices + payments + ledger ({@see SupplierAccountService}).
      */
-    public function accountSummary(Request $request, $id, SupplierAccountService $accounts)
+    public function accountSummary(Request $request, $id, SupplierAccountService $accounts, PartyLinkService $partyLink)
     {
-        $supplier = Supplier::findOrFail($id);
-
-        return response()->json($accounts->summarize(
+        $supplier = Supplier::with('linkedCustomer')->findOrFail($id);
+        $payload = $accounts->summarize(
             $supplier,
             $request->query('start_date'),
             $request->query('end_date'),
-        ));
+        );
+
+        $linked = $supplier->linkedCustomer;
+        $party = null;
+        $currentAccountLedger = null;
+        if ($linked) {
+            $customerOutstanding = $partyLink->customerOutstanding($linked);
+            $supplierOutstanding = (float) ($payload['summary']['outstanding'] ?? 0);
+            $net = $partyLink->netPosition($supplierOutstanding, $customerOutstanding);
+            $party = [
+                'customer_id' => (int) $linked->id,
+                'customer_name' => $linked->name,
+                'supplier_outstanding' => $supplierOutstanding,
+                'customer_outstanding' => $customerOutstanding,
+                'net_position' => $net,
+            ];
+            $payload['summary']['net_position'] = $net;
+            $payload['summary']['linked_customer_id'] = (int) $linked->id;
+
+            // Build a light customer ledger for merge (sales + collections only).
+            $customerSummary = app(\App\Presentation\Http\Controllers\Api\CustomerController::class)
+                ->accountSummary($request, $linked);
+            $customerJson = $customerSummary->getData(true);
+            $currentAccountLedger = $partyLink->mergeCurrentAccountLedger(
+                collect($payload['ledger'])->all(),
+                collect($customerJson['ledger'] ?? [])->all()
+            );
+        }
+
+        $payload['linked_party'] = $party;
+        $payload['current_account_ledger'] = $currentAccountLedger;
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Link this supplier to a customer (1:1) for current-account netting.
+     */
+    public function linkCustomer(Request $request, $id, PartyLinkService $partyLink)
+    {
+        $validated = $request->validate([
+            'customer_id' => 'required|integer|exists:customers,id',
+            'run_set_off' => 'nullable|boolean',
+        ]);
+
+        $supplier = Supplier::findOrFail($id);
+        $customer = Customer::findOrFail((int) $validated['customer_id']);
+        $result = $partyLink->link(
+            $supplier,
+            $customer,
+            (bool) ($validated['run_set_off'] ?? false)
+        );
+
+        return response()->json([
+            'message' => 'Supplier linked to customer',
+            'supplier' => $result['supplier'],
+            'customer' => $result['customer'],
+            'set_off' => $result['set_off'],
+        ]);
+    }
+
+    public function unlinkCustomer($id, PartyLinkService $partyLink)
+    {
+        $supplier = Supplier::findOrFail($id);
+        $supplier = $partyLink->unlink($supplier);
+
+        return response()->json([
+            'message' => 'Supplier unlinked from customer',
+            'supplier' => $supplier,
+        ]);
+    }
+
+    public function partySetOff(Request $request, $id, PartyLinkService $partyLink)
+    {
+        $validated = $request->validate([
+            'amount' => 'nullable|numeric|min:0.01',
+        ]);
+
+        $supplier = Supplier::findOrFail($id);
+        $amount = array_key_exists('amount', $validated) ? (float) $validated['amount'] : null;
+        $result = $partyLink->setOff($supplier, $amount);
+
+        return response()->json([
+            'message' => $result ? 'Party set-off recorded' : 'Nothing to set off',
+            'set_off' => $result,
+            'supplier' => $supplier->fresh(['linkedCustomer']),
+        ]);
+    }
+
+    /**
+     * Deduct commission / price difference from supplier payable (no stock, no treasury).
+     */
+    public function commissionCredit(Request $request, $id, SupplierCommissionCreditService $credits)
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:0.01',
+            'reason' => 'nullable|string|in:commission,price_difference,other',
+            'notes' => 'nullable|string|max:500',
+            'credit_date' => 'nullable|date',
+            'reference' => 'nullable|string|max:100',
+        ]);
+
+        $supplier = Supplier::findOrFail($id);
+        $credit = $credits->post($supplier, $validated);
+
+        return response()->json([
+            'message' => 'Commission / price-difference credit recorded',
+            'credit' => $credit,
+            'supplier' => $supplier->fresh(),
+        ], 201);
     }
 }

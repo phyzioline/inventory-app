@@ -145,7 +145,9 @@ class CustomerController extends Controller
     {
         $this->ensureLegacyCustomersLinkedToUser();
 
-        return response()->json(Customer::orderBy('name')->get());
+        return response()->json(
+            Customer::query()->with('linkedSupplier:id,name,linked_customer_id')->orderBy('name')->get()
+        );
     }
 
     /**
@@ -449,9 +451,13 @@ class CustomerController extends Controller
 
         // Extra customer receipts (not linked to an inventory order) should reduce outstanding.
         // This is the "on-account" collection the UI records from the customer list.
+        // Party set-off receipts already update order paid_amount — never count them again as orphans.
         $orphanReceiptsTotal = 0.0;
         foreach ($receipts as $receipt) {
             if ($this->receiptReferencesInventoryOrder($receipt)) {
+                continue;
+            }
+            if ($this->receiptIsNonCashSetOff($receipt)) {
                 continue;
             }
             $orphanReceiptsTotal += (float) $receipt->amount;
@@ -566,15 +572,42 @@ class CustomerController extends Controller
             }
         }
 
+        $linkedSupplier = $customer->linkedSupplier;
+        $party = null;
+        $currentAccountLedger = null;
+        if ($linkedSupplier) {
+            $supplierPayload = app(\App\Application\Services\SupplierAccountService::class)
+                ->summarize($linkedSupplier, $startDate, $endDate, false);
+            $supplierOutstanding = (float) ($supplierPayload['summary']['outstanding'] ?? 0);
+            $net = app(\App\Application\Services\PartyLinkService::class)
+                ->netPosition($supplierOutstanding, (float) $outstandingAfterReceipts);
+            $party = [
+                'supplier_id' => (int) $linkedSupplier->id,
+                'supplier_name' => $linkedSupplier->name,
+                'supplier_outstanding' => $supplierOutstanding,
+                'customer_outstanding' => round((float) $outstandingAfterReceipts, 2),
+                'net_position' => $net,
+            ];
+            $currentAccountLedger = app(\App\Application\Services\PartyLinkService::class)
+                ->mergeCurrentAccountLedger(
+                    $supplierPayload['ledger']->all(),
+                    $ledger->all()
+                );
+        }
+
         return response()->json([
-            'customer' => $customer,
+            'customer' => $customer->loadMissing('linkedSupplier'),
             'summary' => [
                 'total_sales' => $totalSales,
                 'total_received' => $totalReceived,
                 'outstanding' => $outstandingAfterReceipts,
                 'invoice_count' => (int) $invoiceRows->count(),
                 'avg_collection_days' => $avgCollectionDays,
+                'linked_supplier_id' => $linkedSupplier?->id ? (int) $linkedSupplier->id : null,
+                'net_position' => $party['net_position'] ?? null,
             ],
+            'linked_party' => $party,
+            'current_account_ledger' => $currentAccountLedger,
             'invoices' => $invoiceRows,
             'receipts' => $receiptRows,
             'returns' => $returns->map(fn ($r) => [
@@ -600,6 +633,15 @@ class CustomerController extends Controller
         return $type === InventoryOrder::class
             || Str::endsWith($type, '\\InventoryOrder')
             || Str::endsWith($type, 'InventoryOrder');
+    }
+
+    private function receiptIsNonCashSetOff(Receipt $receipt): bool
+    {
+        return \App\Domain\ValueObjects\NonCashSettlementMethod::isNonCash($receipt->payment_method)
+            || (
+                (string) ($receipt->reference_type ?? '') === Payment::class
+                || Str::endsWith((string) ($receipt->reference_type ?? ''), '\\Payment')
+            );
     }
 
     private function customerCollectionLedgerDescription(string $customerName, mixed $reference): string
