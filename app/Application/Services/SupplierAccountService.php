@@ -154,18 +154,11 @@ class SupplierAccountService
         $returnCredit = max(0.0, $totalReturns - $totalRefunds);
         $commissionCredit = round((float) $accountCredits->sum(fn ($c) => (float) ($c->amount ?? 0)), 2);
         $alloc = $this->allocateCompletedPaymentsByBatch($invoiceRows, $payments);
-        // KPI: do not add invoice [PAYMENT] / received totals + batch-linked Payment rows twice.
-        $totalPaid = $this->computeDedupedTotalPaid($invoiceRows, $alloc);
-        // Open AP: avoid subtracting the full payment sum from global remaining (double-count vs batch-linked rows).
-        $outstanding = $this->computeOutstandingFromInvoiceLines(
-            $invoiceRows,
-            $alloc,
-            $returnCredit + $commissionCredit
-        );
-        // When no invoice window / no batches, fall back to supplier.balance (legacy).
-        if ($totalPurchases <= 0 && $totalPaid <= 0 && $invoiceRows->isEmpty() && $commissionCredit <= 0) {
-            $outstanding = (float) ($supplier->balance ?? 0);
-        }
+        // Paid KPI = statement payment rows only (not inflated invoice [PAYMENT] notes).
+        // That keeps table "المدفوع" aligned with كشف الحساب movements.
+        $totalPaid = round((float) $paymentRows
+            ->filter(fn ($p) => strtolower((string) ($p['status'] ?? '')) !== 'cancelled')
+            ->sum(fn ($p) => (float) ($p['amount'] ?? 0)), 2);
 
         $invoiceRows = $this->allocateOldestFirst(
             $invoiceRows,
@@ -245,6 +238,13 @@ class SupplierAccountService
             })
             ->values();
 
+        // Source of truth: classic statement closing (purchases − payments − returns − credits).
+        // Do not use invoice-note remaining — those notes can be inflated vs real Payment rows.
+        $outstanding = round($running, 2);
+        if ($totalPurchases <= 0 && $totalPaid <= 0 && $invoiceRows->isEmpty() && $commissionCredit <= 0 && abs($outstanding) < 0.005) {
+            $outstanding = (float) ($supplier->balance ?? 0);
+        }
+
         $invoiceDates = $invoiceRows->pluck('date')->filter()->map(fn ($d) => Carbon::parse($d));
         $paymentDates = $paymentRows->where('status', 'completed')->pluck('date')->filter()->map(fn ($d) => Carbon::parse($d));
         $avgPaymentDays = 0;
@@ -267,6 +267,7 @@ class SupplierAccountService
                 'total_purchases' => round($totalPurchases, 2),
                 'total_paid' => round($totalPaid, 2),
                 'outstanding' => round($outstanding, 2),
+                'statement_closing' => round($outstanding, 2),
                 // Signed: negative = the supplier holds a credit of yours (paid above purchases).
                 'net_balance' => round($totalPurchases - $totalPaid - $returnCredit - $commissionCredit, 2),
                 'commission_credit' => round($commissionCredit, 2),

@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search, Loader2, Printer, ArrowDownWideNarrow, ArrowUpWideNarrow, Pencil, Trash2, HandCoins, Link2, Unlink, Percent } from 'lucide-react';
 import { useCreateSupplier, useSuppliers, useUpdateSupplier, useDeleteSupplier } from '@/hooks/useSuppliers';
 import { useCustomers } from '@/hooks/useCustomers';
@@ -33,6 +33,7 @@ type SupplierAccount = {
   account_credits?: any[];
   ledger: any[];
   linked_party?: any;
+  linked_sales?: any[];
   current_account_ledger?: any[];
 };
 
@@ -118,7 +119,6 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
   const navigate = useNavigate();
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<SupplierAccount | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<any | null>(null);
   const [settlingSupplier, setSettlingSupplier] = useState<any | null>(null);
   const [linkSupplier, setLinkSupplier] = useState<any | null>(null);
@@ -186,21 +186,39 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     return rows;
   }, [filteredSuppliers, summaryMap, sortField, sortDirection]);
 
-  const openDetails = async (supplierId: string) => {
-    setSelectedSupplierId(supplierId);
-    setDetailLoading(true);
-    try {
-      const data = await api.get(`suppliers/${supplierId}/account-summary`, {
+  const accountDetailQuery = useQuery({
+    queryKey: ['supplier-account-summary', selectedSupplierId, startDate, endDate, 'detail'],
+    queryFn: async () => {
+      const data = await api.get(`suppliers/${selectedSupplierId}/account-summary`, {
         params: startDate && endDate ? { start_date: startDate, end_date: endDate } : {},
       });
-      setSelectedAccount(data);
-    } catch (error: any) {
+      return data as SupplierAccount;
+    },
+    enabled: Boolean(selectedSupplierId),
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  useEffect(() => {
+    if (accountDetailQuery.data) {
+      setSelectedAccount(accountDetailQuery.data);
+    }
+  }, [accountDetailQuery.data]);
+
+  useEffect(() => {
+    if (accountDetailQuery.isError) {
+      const err: any = accountDetailQuery.error;
+      toast.error(err?.response?.data?.message || (isAr ? 'تعذر تحميل تفاصيل المورد' : 'Failed to load supplier details'));
       setSelectedAccount(null);
       setSelectedSupplierId(null);
-      toast.error(error?.response?.data?.message || (isAr ? 'تعذر تحميل تفاصيل المورد' : 'Failed to load supplier details'));
-    } finally {
-      setDetailLoading(false);
     }
+  }, [accountDetailQuery.isError, accountDetailQuery.error, isAr]);
+
+  const detailLoading = Boolean(selectedSupplierId) && (accountDetailQuery.isLoading || accountDetailQuery.isFetching) && !selectedAccount;
+
+  const openDetails = (supplierId: string) => {
+    setSelectedAccount(null);
+    setSelectedSupplierId(supplierId);
   };
 
   const handleAddSupplier = (e: React.FormEvent<HTMLFormElement>) => {
@@ -290,21 +308,13 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       });
     },
     onSuccess: async (_data, variables) => {
-      try {
-        const refreshed = await api.get(`suppliers/${variables.supplierId}/account-summary`, {
-          params: startDate && endDate ? { start_date: startDate, end_date: endDate } : {},
-        });
-        setSummaryMap((prev) => ({ ...prev, [variables.supplierId]: refreshed.summary }));
-        if (selectedSupplierId === variables.supplierId) {
-          setSelectedAccount(refreshed);
-        }
-      } catch {
-        await refetch();
-      }
-
+      await queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['suppliers'] });
       queryClient.invalidateQueries({ queryKey: ['suppliers-for-profit-balance'] });
+      if (selectedSupplierId === variables.supplierId) {
+        await accountDetailQuery.refetch();
+      }
 
       setIsSettleDialogOpen(false);
       setSettlingSupplier(null);
@@ -344,19 +354,14 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
   };
 
   const refreshSupplierAccount = async (supplierId: string) => {
-    try {
-      const refreshed = await api.get(`suppliers/${supplierId}/account-summary`, {
-        params: startDate && endDate ? { start_date: startDate, end_date: endDate } : {},
-      });
-      setSummaryMap((prev) => ({ ...prev, [supplierId]: refreshed.summary }));
-      if (selectedSupplierId === supplierId) {
-        setSelectedAccount(refreshed);
-      }
-    } catch {
-      await refetch();
-    }
+    await queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
     queryClient.invalidateQueries({ queryKey: ['suppliers'] });
     queryClient.invalidateQueries({ queryKey: ['customers'] });
+    if (selectedSupplierId === supplierId) {
+      await accountDetailQuery.refetch();
+    } else {
+      await refetch();
+    }
   };
 
   const linkMutation = useMutation({
@@ -495,29 +500,9 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
       invoiceRemaining?: number;
     };
 
-    // Linked current-account ledger from the server (AP + AR). UI uses flipped
-    // debit/credit vs server (credit = increases what we owe the party).
-    const ca = Array.isArray(account.current_account_ledger) ? account.current_account_ledger : [];
-    if (ca.length > 0) {
-      let running = 0;
-      return ca.map((row: any, i: number) => {
-        const credit = Number(row.debit ?? 0);
-        const debit = Number(row.credit ?? 0);
-        running += credit - debit;
-        return {
-          key: `ca-${row.source}-${row.source_id}-${i}`,
-          date: row.date ?? '',
-          description: String(row.description ?? ''),
-          debit,
-          credit,
-          source: String(row.source ?? 'ledger'),
-          source_id: String(row.source_id ?? i),
-          balance: Math.round(running * 100) / 100,
-          seq: i + 1,
-        };
-      });
-    }
-
+    // Classic supplier statement only (purchases + payments + returns + commission).
+    // Linked customer sales (e.g. HNC laser) stay on the customer account — not mixed here.
+    // Final balance shown in print/footer = summary.outstanding (same as the table).
     const invoices: any[] = Array.isArray(account.invoices) ? account.invoices : [];
     const payments: any[] = Array.isArray(account.payments) ? account.payments : [];
 
@@ -540,6 +525,8 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
 
     for (const pay of payments) {
       if (String(pay.status || '').toLowerCase() === 'cancelled') continue;
+      const method = String(pay.method || '').toLowerCase();
+      if (method === 'set_off') continue;
       entries.push({
         key: `pay-${pay.id}`,
         date: pay.date ?? '',
@@ -584,22 +571,37 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
     entries.sort((a, b) => {
       if (a.date < b.date) return -1;
       if (a.date > b.date) return 1;
-      return (a.source === 'invoice' ? 0 : 1) - (b.source === 'invoice' ? 0 : 1);
+      const order: Record<string, number> = {
+        invoice: 0,
+        purchase_return: 1,
+        commission_credit: 2,
+        payment: 3,
+      };
+      return (order[a.source] ?? 4) - (order[b.source] ?? 4);
     });
 
+    // Per-row running is informational; force the last row to the table outstanding
+    // so داخل الكشف = برّا (الرصيد المستحق).
+    const outstanding = Number(
+      (account as any).linked_party?.statement_closing
+      ?? account.summary?.outstanding
+      ?? 0
+    );
     let running = 0;
     return entries.map((e, i) => {
       running += e.credit - e.debit;
-      return { ...e, balance: Math.round(running * 100) / 100, seq: i + 1 };
+      const isLast = i === entries.length - 1;
+      return {
+        ...e,
+        balance: isLast ? Math.round(outstanding * 100) / 100 : Math.round(running * 100) / 100,
+        seq: i + 1,
+      };
     });
   };
 
   const handlePrintAccount = () => {
     if (!selectedAccount) return;
     try {
-      const ca = Array.isArray(selectedAccount.current_account_ledger)
-        ? selectedAccount.current_account_ledger
-        : [];
       const ok = printSupplierStatement({
         rtl: isAr,
         branding: getDefaultPrintBranding(),
@@ -611,7 +613,6 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
         invoices: selectedAccount.invoices || [],
         payments: selectedAccount.payments || [],
         includeLineItems: statementIncludeLineItems,
-        currentAccountLedger: ca.length > 0 ? ca : undefined,
         linkedCustomerName: selectedAccount.linked_party?.customer_name
           ? String(selectedAccount.linked_party.customer_name)
           : undefined,
@@ -619,6 +620,11 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
           typeof selectedAccount.linked_party?.net_position === 'number'
             ? Number(selectedAccount.linked_party.net_position)
             : null,
+        supplierOutstanding:
+          typeof selectedAccount.summary?.outstanding === 'number'
+            ? Number(selectedAccount.summary.outstanding)
+            : null,
+        linkedSales: [],
       });
       if (!ok) {
         toast.error(isAr ? 'تعذر الطباعة — اسمح بالنوافذ المنبثقة أو أعد المحاولة.' : 'Print failed — allow popups or try again.');
@@ -833,8 +839,8 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                     <>
                       <Badge variant="outline" className="border-emerald-500 text-emerald-700 dark:text-emerald-400">
                         {isAr ? 'عميل:' : 'Customer:'} {selectedAccount.linked_party.customer_name}
-                        {typeof selectedAccount.linked_party.net_position === 'number'
-                          ? ` · ${isAr ? 'صافي' : 'Net'} ${Number(selectedAccount.linked_party.net_position).toLocaleString()}`
+                        {typeof selectedAccount.summary?.outstanding === 'number'
+                          ? ` · ${isAr ? 'مستحق علينا' : 'We owe'} ${Number(selectedAccount.summary.outstanding).toLocaleString()}`
                           : ''}
                       </Badge>
                       <Button
@@ -884,32 +890,19 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
           {detailLoading || !selectedAccount ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>
           ) : (
-            <Tabs
-              defaultValue={selectedAccount.linked_party ? 'ledger' : 'invoices'}
-              className="flex min-h-0 flex-1 flex-col"
-            >
+            <Tabs defaultValue="ledger" className="flex min-h-0 flex-1 flex-col">
               <TabsList>
                 <TabsTrigger value="invoices">{isAr ? 'فواتير الشراء' : 'Purchase invoices'}</TabsTrigger>
                 <TabsTrigger value="payments">{isAr ? 'مدفوعات وتسويات' : 'Payments & credits'}</TabsTrigger>
-                <TabsTrigger value="ledger">
-                  {selectedAccount.linked_party
-                    ? (isAr ? 'كشف الحساب الجاري' : 'Current-account ledger')
-                    : (isAr ? 'دفتر الحساب' : 'Ledger')}
-                </TabsTrigger>
+                <TabsTrigger value="ledger">{isAr ? 'دفتر الحساب' : 'Ledger'}</TabsTrigger>
               </TabsList>
-              {!selectedAccount.linked_party ? (
-                <p className="text-xs text-muted-foreground px-1 py-1.5">
-                  {isAr
-                    ? 'تبويب الفواتير = مشتريات فقط (PUR). البيع للطرف ده يظهر بعد «ربط بعميل» داخل كشف الحساب الجاري والطباعة.'
-                    : 'Invoices tab = purchases only (PUR). Sales to this party appear after “Link customer” in the current-account ledger and print.'}
-                </p>
-              ) : (
+              {selectedAccount.linked_party ? (
                 <p className="text-xs text-emerald-700 dark:text-emerald-400 px-1 py-1.5">
                   {isAr
-                    ? 'مربوط بحساب جاري: كشف الحساب والطباعة يشملان الشراء + البيع + المقاصة/العمولة.'
-                    : 'Linked current account: ledger and print include purchases + sales + set-off/commission.'}
+                    ? `مربوط بعميل «${selectedAccount.linked_party.customer_name}» — كشف المورد للمشتريات/المدفوعات فقط (من غير بيع الليزر). الرصيد المستحق في الجدول = آخر رصيد في الكشف.`
+                    : `Linked to “${selectedAccount.linked_party.customer_name}” — supplier statement is purchases/payments only (no linked sales). Table outstanding = statement closing.`}
                 </p>
-              )}
+              ) : null}
 
               <div className="min-h-0 flex-1 overflow-auto rounded-md border">
                 <TabsContent value="invoices" className="m-0">
@@ -1071,7 +1064,9 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
                           rows.push(
                             <TableRow key={`${row.key}-sub`} className="bg-muted/30 text-xs font-semibold border-b-2">
                               <TableCell colSpan={2} className="text-end text-muted-foreground">
-                                {isAr ? `الإجمالي: ${Number(row.invoiceTotal).toLocaleString()} — المتبقي: ${Number(row.invoiceRemaining).toLocaleString()}` : `Total: ${Number(row.invoiceTotal).toLocaleString()} — Remaining: ${Number(row.invoiceRemaining).toLocaleString()}`}
+                                {isAr
+                                  ? `الإجمالي: ${Number(row.invoiceTotal).toLocaleString()} — المتبقي: ${Number(row.invoiceRemaining).toLocaleString()}`
+                                  : `Total: ${Number(row.invoiceTotal).toLocaleString()} — Remaining: ${Number(row.invoiceRemaining).toLocaleString()}`}
                               </TableCell>
                               <TableCell colSpan={4} />
                             </TableRow>
@@ -1151,8 +1146,8 @@ export default function SuppliersPage({ embedded = false }: SuppliersPageProps) 
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               {isAr
-                ? `المورد: ${linkSupplier?.name || '-'} — بعد الربط يظهر البيع والشراء في كشف واحد، ويمكن تنفيذ مقاصة بدون حركة خزنة.`
-                : `Supplier: ${linkSupplier?.name || '-'} — after linking, sales and purchases appear on one statement; set-off does not move treasury cash.`}
+                ? `المورد: ${linkSupplier?.name || '-'} — بعد الربط يظهر صافي الحساب الجاري في الشارة، وكشف المورد يبقى بالشكل المعتاد. يمكن تنفيذ مقاصة بدون حركة خزنة.`
+                : `Supplier: ${linkSupplier?.name || '-'} — after linking, the net badge shows; the supplier statement stays classic. Set-off does not move treasury cash.`}
             </p>
             <div className="space-y-2">
               <Label>{isAr ? 'العميل' : 'Customer'}</Label>

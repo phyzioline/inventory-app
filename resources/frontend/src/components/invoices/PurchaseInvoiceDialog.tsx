@@ -277,6 +277,7 @@ export function PurchaseInvoiceDialog({ open, onOpenChange }: PurchaseInvoiceDia
             queryClient.invalidateQueries({ queryKey: ['purchase-invoice-store-channel-skus'] });
             queryClient.invalidateQueries({ queryKey: ['payments'] });
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
             invalidateInventoryLiveQueries(queryClient, { scope: 'purchase', immediate: true });
             toast.success(isAr ? 'تم إنشاء فاتورة الشراء بنجاح' : 'Purchase invoice created successfully');
             onOpenChange(false);

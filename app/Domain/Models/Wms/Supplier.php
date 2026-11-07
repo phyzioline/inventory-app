@@ -49,7 +49,15 @@ class Supplier extends Model
         $email = trim((string) ($supplier->email ?? ''));
 
         if ($name !== '') {
-            $byName = \App\Domain\Models\Wms\Vendor::query()->where('name', $name)->first();
+            // Prefer the vendor in the same tenant (user_id) when duplicate names exist.
+            $byNameQuery = \App\Domain\Models\Wms\Vendor::query()->where('name', $name);
+            if ($supplier->user_id) {
+                $scoped = (clone $byNameQuery)->where('user_id', (int) $supplier->user_id)->first();
+                if ($scoped) {
+                    return $scoped;
+                }
+            }
+            $byName = $byNameQuery->orderByDesc('user_id')->first();
             if ($byName) {
                 return $byName;
             }

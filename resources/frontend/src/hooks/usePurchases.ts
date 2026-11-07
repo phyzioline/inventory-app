@@ -40,6 +40,7 @@ export function useCreatePurchaseInvoice() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchase-invoices'] });
       queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
       invalidateInventoryLiveQueries(queryClient, { scope: 'purchase', immediate: true });
       toast.success('Purchase invoice created successfully');
     },

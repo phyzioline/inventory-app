@@ -19,7 +19,7 @@ beforeEach(function () {
     TenantContext::clearOverride();
 });
 
-it('links supplier to customer, set-off clears opposite balances without treasury cash, and sale appears on merged ledger', function () {
+it('links supplier to customer, set-off clears opposite balances without treasury cash, and linked sale is listed on companion CA strip', function () {
     $user = User::factory()->create();
     $this->actingAs($user);
 
@@ -73,15 +73,29 @@ it('links supplier to customer, set-off clears opposite balances without treasur
         ->and((float) $supplierSummary['linked_party']['customer_outstanding'])->toBe(17100.0)
         ->and((float) $supplierSummary['linked_party']['net_position'])->toBe(17100.0);
 
+    // Sales stay on the customer / merged CA strip — not mixed into classic supplier linked_sales.
     $merged = collect($supplierSummary['current_account_ledger'] ?? []);
     expect($merged->contains(fn ($row) => str_contains((string) ($row['description'] ?? ''), 'اشترى منّي')))->toBeTrue();
+    expect(collect($supplierSummary['linked_sales'] ?? []))->toBeEmpty();
+    expect((float) ($supplierSummary['summary']['statement_closing'] ?? -1))
+        ->toBe((float) $supplierSummary['summary']['outstanding']);
 
     expect(
-        Payment::query()->where('payment_method', NonCashSettlementMethod::SET_OFF)->where('payee_id', $supplier->id)->exists()
+        Payment::query()->where('payment_method', NonCashSettlementMethod::SET_OFF)->where('payee_id', $supplier->id)->where('status', 'completed')->exists()
     )->toBeTrue();
     expect(
         Receipt::query()->where('payment_method', NonCashSettlementMethod::SET_OFF)->where('payer_name', 'pt shop')->exists()
     )->toBeTrue();
+
+    $setOffPay = Payment::query()
+        ->where('payment_method', NonCashSettlementMethod::SET_OFF)
+        ->where('payee_id', $supplier->id)
+        ->where('status', 'completed')
+        ->first();
+    expect($setOffPay)->not->toBeNull();
+    $reversed = app(\App\Application\Services\PartyLinkService::class)->reverseSetOff($setOffPay);
+    expect((float) $reversed['amount'])->toBe(11900.0);
+    expect($setOffPay->fresh()->status)->toBe('cancelled');
 
     $after = app(CashFlowSummaryController::class)->getCoreStatsForUser((int) $user->id);
     expect((float) ($after['total_receipts'] ?? 0))->toBe($receiptsBefore)

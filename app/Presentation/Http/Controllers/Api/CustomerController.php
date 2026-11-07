@@ -496,6 +496,11 @@ class CustomerController extends Controller
             if ($this->receiptReferencesInventoryOrder($receipt)) {
                 continue;
             }
+            // Party set-off already updates order paid_amount (and has a supplier Payment twin).
+            // Never list it again as a cash collection line — that double-counts in statements.
+            if ($this->receiptIsNonCashSetOff($receipt)) {
+                continue;
+            }
             $rcp = [
                 'id' => $receipt->id,
                 'date' => optional($receipt->receipt_date)->toDateString(),

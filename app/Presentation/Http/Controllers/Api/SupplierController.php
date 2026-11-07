@@ -376,21 +376,26 @@ class SupplierController extends Controller
         $linked = $supplier->linkedCustomer;
         $party = null;
         $currentAccountLedger = null;
+        // Supplier statement closing = same figure as the suppliers-table "الرصيد المستحق".
+        // Sales to a linked customer stay on the customer account only (not mixed into this statement).
+        $supplierOutstanding = (float) ($payload['summary']['outstanding'] ?? 0);
+        $statementClosing = round($supplierOutstanding, 2);
+        $payload['summary']['statement_closing'] = $statementClosing;
+
         if ($linked) {
             $customerOutstanding = $partyLink->customerOutstanding($linked);
-            $supplierOutstanding = (float) ($payload['summary']['outstanding'] ?? 0);
             $net = $partyLink->netPosition($supplierOutstanding, $customerOutstanding);
             $party = [
                 'customer_id' => (int) $linked->id,
                 'customer_name' => $linked->name,
                 'supplier_outstanding' => $supplierOutstanding,
                 'customer_outstanding' => $customerOutstanding,
+                'statement_closing' => $statementClosing,
                 'net_position' => $net,
             ];
             $payload['summary']['net_position'] = $net;
             $payload['summary']['linked_customer_id'] = (int) $linked->id;
 
-            // Build a light customer ledger for merge (sales + collections only).
             $customerSummary = app(\App\Presentation\Http\Controllers\Api\CustomerController::class)
                 ->accountSummary($request, $linked);
             $customerJson = $customerSummary->getData(true);
@@ -401,6 +406,7 @@ class SupplierController extends Controller
         }
 
         $payload['linked_party'] = $party;
+        $payload['linked_sales'] = [];
         $payload['current_account_ledger'] = $currentAccountLedger;
 
         return response()->json($payload);

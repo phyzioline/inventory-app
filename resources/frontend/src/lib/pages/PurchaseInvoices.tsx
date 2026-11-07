@@ -584,6 +584,7 @@ export default function PurchaseInvoicesPage() {
             await refetch();
             queryClient.invalidateQueries({ queryKey: ['payments'] });
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
             queryClient.invalidateQueries({ queryKey: ['master-products'] });
             queryClient.invalidateQueries({ queryKey: ['purchase-invoice-store-inventory'] });
             queryClient.invalidateQueries({ queryKey: ['purchase-invoice-store-channel-skus'] });
@@ -672,6 +673,7 @@ export default function PurchaseInvoicesPage() {
             await refetch();
             queryClient.invalidateQueries({ queryKey: ['payments'] });
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
             toast.success(t('purchases.details.paymentUpdated'));
         } catch (error: any) {
             toast.error(error?.response?.data?.message || t('purchases.details.paymentUpdateFailed'));

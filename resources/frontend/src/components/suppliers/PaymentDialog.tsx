@@ -29,6 +29,7 @@ export function PaymentDialog({ open, onOpenChange, supplier, onSuccess }: Payme
         onSuccess: () => {
             toast.success('Payment recorded successfully');
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['supplier-account-summary'] });
             if (onSuccess) onSuccess();
             onOpenChange(false);
             setAmount('');

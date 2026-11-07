@@ -210,6 +210,134 @@ class PartyLinkService
     }
 
     /**
+     * Reverse a party set-off payment (and its twin receipt). Restores supplier balance and
+     * unwinds order paid_amount that this set-off applied. Idempotent if already cancelled.
+     *
+     * @return array{payment_id: int, receipt_id: int|null, amount: float}
+     */
+    public function reverseSetOff(Payment $payment): array
+    {
+        if (! NonCashSettlementMethod::isNonCash($payment->payment_method)) {
+            throw ValidationException::withMessages([
+                'payment' => ['Not a party set-off payment.'],
+            ]);
+        }
+        if (strtolower((string) ($payment->status ?? '')) === 'cancelled') {
+            return [
+                'payment_id' => (int) $payment->id,
+                'receipt_id' => null,
+                'amount' => (float) $payment->amount,
+            ];
+        }
+
+        return DB::transaction(function () use ($payment) {
+            $amount = round((float) $payment->amount, 2);
+            $supplier = null;
+            if ((int) ($payment->payee_id ?? 0) > 0) {
+                $supplier = Supplier::query()->find((int) $payment->payee_id);
+            }
+
+            $receipt = Receipt::query()
+                ->where('payment_method', NonCashSettlementMethod::SET_OFF)
+                ->where(function ($q) use ($payment) {
+                    $q->where('reference_id', $payment->id)
+                        ->where(function ($q2) {
+                            $q2->where('reference_type', Payment::class)
+                                ->orWhere('reference_type', 'like', '%Payment');
+                        });
+                })
+                ->first();
+
+            // Unwind AR only for the portion still reflected on orders (oldest open first, reverse of apply).
+            if ($supplier && (int) ($supplier->linked_customer_id ?? 0) > 0) {
+                $customer = Customer::query()->find((int) $supplier->linked_customer_id);
+                if ($customer) {
+                    $this->unwindSetOffFromCustomerOrders($customer, $amount);
+                }
+            }
+
+            if ($supplier) {
+                $supplier->balance = round((float) ($supplier->balance ?? 0) + $amount, 2);
+                $supplier->save();
+                $linkedVendor = $supplier->resolveLinkedVendor();
+                if ($linkedVendor) {
+                    $linkedVendor->updateBalance($amount, 'add');
+                }
+            }
+
+            $payment->cancel();
+            $receiptId = $receipt ? (int) $receipt->id : null;
+            if ($receipt) {
+                $receipt->delete();
+            }
+
+            app(InventoryAuditLogService::class)->record(
+                'party.set_off.reverse',
+                Supplier::class,
+                (int) ($supplier?->id ?? $payment->payee_id ?? 0),
+                [
+                    'payment_id' => (int) $payment->id,
+                    'receipt_id' => $receiptId,
+                    'amount' => $amount,
+                    'notes' => (string) ($payment->notes ?? ''),
+                ],
+            );
+
+            return [
+                'payment_id' => (int) $payment->id,
+                'receipt_id' => $receiptId,
+                'amount' => $amount,
+            ];
+        });
+    }
+
+    /**
+     * Undo set-off applied to customer orders (reduce paid / increase remaining), newest first.
+     */
+    private function unwindSetOffFromCustomerOrders(Customer $customer, float $amount): void
+    {
+        $left = round($amount, 2);
+        if ($left < 0.01) {
+            return;
+        }
+
+        $nameTrim = trim((string) $customer->name);
+        $orders = InventoryOrder::query()
+            ->where(function ($q) use ($customer, $nameTrim) {
+                $q->where('customer_id', $customer->id);
+                if ($nameTrim !== '') {
+                    $q->orWhere('customer_name', $customer->name)
+                        ->orWhere('customer_name', $nameTrim);
+                }
+            })
+            ->whereNotIn('status', ['cancelled', 'rejected'])
+            ->orderByDesc('order_date')
+            ->orderByDesc('id')
+            ->get();
+
+        foreach ($orders as $order) {
+            if ($left < 0.01) {
+                break;
+            }
+            $paid = (float) ($order->paid_amount ?? 0);
+            if ($paid < 0.01) {
+                continue;
+            }
+            $take = min($paid, $left);
+            $newPaid = round($paid - $take, 2);
+            $total = (float) $order->total_amount;
+            $order->paid_amount = $newPaid;
+            $order->remaining_amount = round(max(0.0, $total - $newPaid), 2);
+            if ($order->remaining_amount > 0.0001) {
+                $order->financial_status = 'pending';
+                $order->settlement_status = 'pending';
+            }
+            $order->save();
+            $left = round($left - $take, 2);
+        }
+    }
+
+    /**
      * Customer AR remaining (positive = they owe us), using the same rules as account-summary KPIs.
      */
     public function customerOutstanding(Customer $customer): float
@@ -344,7 +472,8 @@ class PartyLinkService
     }
 
     /**
-     * Merge supplier AP ledger with linked customer AR lines for a current-account statement.
+     * Informational companion strip only (supplier rows + linked sales invoices).
+     * UI/print use the classic supplier statement; set-off customer twins are omitted.
      *
      * @param  array<int, array<string, mixed>>  $supplierLedger
      * @param  array<int, array<string, mixed>>  $customerLedger
@@ -361,19 +490,18 @@ class PartyLinkService
         }
         foreach ($customerLedger as $row) {
             $source = (string) ($row['source'] ?? '');
-            $desc = (string) ($row['description'] ?? '');
-            if ($source === 'invoice') {
-                $desc = 'بيع / اشترى منّي — '.$desc;
-            } elseif ($source === 'receipt' || $source === 'order_payment') {
-                $desc = 'تحصيل عميل — '.$desc;
+            // Sales only in the companion strip — collections/set-off stay on each side's own books
+            // so a merged running balance does not double-count party set-off.
+            if ($source !== 'invoice') {
+                continue;
             }
-            // Flip AR signs onto the shared running balance: customer debit (they owe) is credit for our AP view.
             $rows[] = [
                 'date' => $row['date'] ?? null,
-                'description' => $desc,
-                'debit' => (float) ($row['credit'] ?? 0),
+                'description' => 'بيع / اشترى منّي — '.(string) ($row['description'] ?? ''),
+                // Flip AR sale onto AP view: sale reduces what we owe / increases what they owe us.
+                'debit' => 0.0,
                 'credit' => (float) ($row['debit'] ?? 0),
-                'source' => 'customer_'.$source,
+                'source' => 'customer_invoice',
                 'source_id' => $row['source_id'] ?? null,
                 'party_side' => 'customer',
             ];
@@ -399,3 +527,4 @@ class PartyLinkService
         return array_values($rows);
     }
 }
+
