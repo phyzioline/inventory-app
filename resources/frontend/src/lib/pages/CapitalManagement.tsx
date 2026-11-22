@@ -148,7 +148,8 @@ export default function CapitalManagement() {
 
   const { data: orders = [], isPending: ordersCapitalPending } = useQuery({
     queryKey: ['orders-capital'],
-    queryFn: () => api.getArray('/orders'),
+    // Header columns only — the full payload (items + purchase costs) for every order exhausts server memory.
+    queryFn: () => api.getArray('/orders', { params: { view: 'summary' } }),
   });
 
   const { data: purchases = [], isPending: purchasesCapitalPending } = useQuery({

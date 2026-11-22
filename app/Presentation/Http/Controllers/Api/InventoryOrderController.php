@@ -17,15 +17,42 @@ class InventoryOrderController extends Controller
         private readonly InventoryOrderMutationService $mutations
     ) {}
 
+    /**
+     * Order header columns returned by `?view=summary`: what whole-history
+     * screens (capital / receivables / channel breakdown) read. No line items
+     * and no purchase-cost hydration — loading those for every order exhausts
+     * the 512M PHP memory limit once history passes ~30k orders.
+     */
+    private const SUMMARY_COLUMNS = [
+        'id',
+        'platform_order_id',
+        'channel_id',
+        'status',
+        'financial_status',
+        'settlement_status',
+        'order_date',
+        'currency',
+        'total_amount',
+        'shipping_amount',
+        'tax_amount',
+        'discount_amount',
+        'payment_type',
+        'paid_amount',
+        'remaining_amount',
+    ];
+
     public function index(Request $request)
     {
         $forProfit = $request->boolean('for_profit');
+        $summary = $request->query('view') === 'summary';
 
         $with = [
             'channel:id,name,slug',
-            'items.sku.offer.masterProduct',
         ];
-        if (! $forProfit) {
+        if (! $summary) {
+            $with[] = 'items.sku.offer.masterProduct';
+        }
+        if (! $forProfit && ! $summary) {
             $with['user'] = fn ($q) => $q->select('id', 'name', 'email');
             $with['costs'] = fn ($q) => $q->select(
                 'id',
@@ -40,6 +67,9 @@ class InventoryOrderController extends Controller
         }
 
         $query = InventoryOrder::with($with)->orderBy('order_date', 'desc');
+        if ($summary) {
+            $query->select(self::SUMMARY_COLUMNS);
+        }
 
         if ($forProfit) {
             $query->whereIn('status', ['completed', 'processing', 'shipped', 'sold', 'delivered'])
@@ -89,9 +119,11 @@ class InventoryOrderController extends Controller
         }
 
         if ($paginate) {
-            $paginator = $query->paginate($perPage, ['*'], 'page', max(1, $page ?: 1));
+            $paginator = $query->paginate($perPage, $summary ? self::SUMMARY_COLUMNS : ['*'], 'page', max(1, $page ?: 1));
             $orders = $paginator->getCollection();
-            app(ProfitEngineService::class)->hydrateOrderCollectionWithEffectivePurchaseCosts($orders);
+            if (! $summary) {
+                app(ProfitEngineService::class)->hydrateOrderCollectionWithEffectivePurchaseCosts($orders);
+            }
 
             return response()->json([
                 'data' => $orders->values()->all(),
@@ -104,7 +136,9 @@ class InventoryOrderController extends Controller
 
         $orders = $query->get();
 
-        app(ProfitEngineService::class)->hydrateOrderCollectionWithEffectivePurchaseCosts($orders);
+        if (! $summary) {
+            app(ProfitEngineService::class)->hydrateOrderCollectionWithEffectivePurchaseCosts($orders);
+        }
 
         return response()->json($orders);
     }

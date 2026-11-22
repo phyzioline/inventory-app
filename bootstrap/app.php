@@ -5,6 +5,7 @@ use App\Http\Middleware\EnsureSuperAdmin;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withBroadcasting(
@@ -36,6 +37,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/v1/inventory/desktop/sync/*',
         ]);
 
+        // The app has no named `login` route (login lives in the SPA), so the
+        // framework default `route('login')` turned every guest hit into a 500.
+        $middleware->redirectGuestsTo('/app/#/login');
+
         $middleware->alias([
             'super.admin' => EnsureSuperAdmin::class,
             'check.subscription.limit' => CheckSubscriptionLimit::class,
@@ -43,5 +48,10 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        // pusher-js posts /broadcasting/auth as a form (no JSON Accept header):
+        // answer guests with 401/403 JSON instead of a redirect page.
+        $exceptions->shouldRenderJsonWhen(
+            fn (Request $request) => $request->expectsJson()
+                || $request->is('api/*', 'broadcasting/*')
+        );
     })->create();
