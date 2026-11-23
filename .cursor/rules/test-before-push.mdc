@@ -1,0 +1,16 @@
+---
+description: Verify the real user path before any push — php -l is not enough
+alwaysApply: true
+---
+
+# Test before push (adapted from laravel-phyzio)
+
+Never `git push` (or ask the owner to refresh production) until the change is verified.
+
+1. Name the user path that breaks if the change is wrong (API route / SPA screen).
+2. Run the smallest real check on the **test DB** (`phyzioline_inventory_test`):
+   the Pest file for that path (`./vendor/bin/pest tests/... --filter=...`).
+3. Stock/money paths also follow `inventory-critical-paths.mdc`.
+4. Only then push — and only when the owner asks (`no-git-push-without-request.mdc`).
+
+Forbidden: push after only `php -l`; claim "done" on production without a local check.

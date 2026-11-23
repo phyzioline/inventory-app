@@ -1,6 +1,6 @@
 ---
-description: Revenue-critical web flows must never break — clinic booking, home visits, ecommerce checkout, courses enrollment
-alwaysApply: true
+description: Apply when touching clinic/home-visit booking, cart/checkout, payments, or course enrollment
+alwaysApply: false
 ---
 
 # Revenue-Critical Paths (Red Lines)

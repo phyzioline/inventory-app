@@ -1,0 +1,27 @@
+---
+description: Do not confuse Cursor UI, other chats, or stale branches with production/server truth.
+alwaysApply: true
+---
+
+# Workspace truth vs Cursor noise
+
+## Never treat as production state
+
+- Cursor **Settings** overlay, **Graph** of old branches, **other chat** cards, or a floating “recent commit on branch X” bubble.
+- Local status bar showing `feature/…` while SSH/server may already be on `main`.
+- Parallel worktrees/chats for ERP, mail bounce, AI, Team OS, etc. in one screenshot.
+
+## Before claiming deploy / merge status
+
+1. `git fetch origin main` (and the branch if needed).
+2. Check **server/checkout** only if the user asked about production — use their SSH/session facts or `origin/main` SHA, not the Graph.
+3. Separate: **this chat’s branch** vs **origin/main** vs **what is running on the VPS**.
+
+## One chat = one task
+
+- Do not pull in unrelated dirty files from another path (clinic-link, Google audiences, bounce mail) into the current feature commit unless the user asked for that commit.
+- If the working tree has leftovers: say so in one line; commit them only on request, preferably a **separate** commit.
+
+## When the UI looks “معجن”
+
+Tell the user in one short line: UI noise ≠ failed merge. Then verify `origin/main`. Do not start a panic refactor or re-do the merge.

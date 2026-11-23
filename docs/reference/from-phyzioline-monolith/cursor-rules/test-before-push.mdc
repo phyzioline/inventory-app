@@ -1,0 +1,43 @@
+---
+description: Mandatory verify/smoke before git push — no untested production deploys
+alwaysApply: true
+---
+
+# Test Before Push (mandatory)
+
+## Rule
+
+**Never `git push` (or ask the user to refresh production) until the change has been verified locally.**
+
+A green `php -l` alone is **not** enough for Blade, routes, or revenue-critical paths.
+
+## Before every push that touches runtime code
+
+1. Identify the **user path** that will break if the change is wrong (e.g. `/dashboard/orders/{id}`).
+2. Run the **smallest real check** that exercises that path:
+   - Prefer existing Feature/Pest tests in the owning module.
+   - If Pest/`vendor/bin/pest` is unavailable on the host: use `php artisan` route/url generation, a one-off render/smoke script, or HTTP against local — still **must** hit the failing surface (view compile + route params), not only syntax.
+3. For seller/dashboard Blade: confirm `route()` parameter names match the registered route (`{order}` vs `{id}`).
+4. Only then push.
+
+## Minimum smoke examples
+
+```bash
+# Module feature tests when available
+./vendor/bin/pest Modules/Ecommerce/tests --filter=Order --no-coverage
+
+# Route param sanity (catches UrlGenerationException before prod)
+php artisan tinker --execute="echo route('dashboard.orders.show', ['order' => 1, 'tab' => 'tracking']);"
+```
+
+## Forbidden
+
+- Push Blade/`route()`/controller changes after only `php -l`
+- Claim “done” on a production URL without a local smoke of that same URL/path
+- Skip verification because “small UI change”
+
+## Relation to other rules
+
+- Still respect `no-git-push-without-request.mdc` (push only when the user asks).
+- Revenue paths also follow `revenue-critical-paths.mdc` smoke list.
+- This rule adds the **hard gate**: verify → then push.

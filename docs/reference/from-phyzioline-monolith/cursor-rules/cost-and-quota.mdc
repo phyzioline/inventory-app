@@ -1,0 +1,59 @@
+---
+description: Cost & quota — smallest reads/edits, one task per chat, never run full Pest suite
+alwaysApply: true
+---
+
+# Cost & quota rules for this repo (follow strictly)
+
+## Reading
+- Never read a whole large file. Grep first, then read only the line range you need (±30 lines).
+- Do not re-read a file you already read in this chat unless it changed.
+- Do not scan docs/ broadly. Read only the doc the task names. Ignore docs/features/*_COMPLETE.md and *_SUMMARY.md (stale).
+- Before creating anything, one grep for an existing equivalent (RULE 2) — not a full repo tour.
+
+## Editing
+- Make the smallest edit that solves the task. Use targeted edits, never rewrite a whole file.
+- No refactors, renames, formatting or "improvements" outside the task.
+- Do NOT create new .md files (summaries, reports, plans, *_COMPLETE.md). Update the one existing status table/doc for that feature, in 1–3 lines.
+- No new folders. New files only inside Modules/{Name}/app/{Layer}/ and only if no existing file fits.
+
+## Tests (the full suite takes 4–6 hours — never run it)
+- Run ONLY the test files for what you changed:
+  php vendor/bin/pest path/to/ThatTest.php   (or --filter=name)
+- PHP is not on PATH: use C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe
+- Run each test file once; if it passes, do not run it again. If it fails, fix and re-run only that file.
+- If a failure is unrelated to your change, check with `git stash` once, report it in one line, do not fix it.
+- Write tests only for the new behaviour (1 happy path + the main failure case). No duplicate test files.
+- Sign-up/login changes: also run Modules/Authentication/tests/Feature/SignupCriticalPathTest.php (RULE 16).
+- Never run migrate:fresh. Never run npm build unless asked.
+
+## Git
+- Default: work on **`main` only**. No feature/fix/chore side branches and no PRs unless the user explicitly asks for that named step.
+- Commit / push / PR / merge each only when the user clearly asks in that turn. Never invent a PR after push.
+- Do not run git log/diff on the whole history; limit with -n 5 or a path.
+- Production deploys are **manual** (GitHub CI is unreliable) — give the user pull/migrate commands; do not assume auto-deploy.
+
+## Process
+- One task per chat. If the task is unclear, ask ONE question before starting, not after building.
+- No long plans or explanations. Act, then report.
+- Final reply: short, in Egyptian Arabic: what's done / what's left / what you need from me. No code dumps, no file-by-file lists.
+- Stop when the task is done. Do not suggest or start extra work.
+- Prefer cheaper / Auto model for trivial wraps, docs, config, commits. Never Max / Opus / strong models for housekeeping. Save strong models for architecture, money bugs, or hard debug only.
+
+## How to open a new chat (paste this)
+
+```
+المهمة: <بند واحد من الطابور>
+الفرع: main
+الملفات: @path1 @path2
+معيار النجاح: <اختبار واحد أو مسار مستخدم واحد>
+قيود: cost-and-quota — شغل على main — مفيش PR/فروع إلا بطلب صريح — مفيش شغل إضافي بعد النجاح — مفيش Max
+```
+
+## Month queue (do not invent new priorities)
+
+1. Wave 0 cost (this rule + slim CLAUDE) — done on `integration/month-deploy-queue`.
+2. Manual-server pull **one** branch: `integration/month-deploy-queue` (already merges: phone-upload fix + program-template-library + finance-hub + auth-social + bosta + lang-json + claude-md-slim). Migrate first, then code. patient-clinic-linking already live 2026-10-27.
+3. Therapist wallet user 27 — **blocked** until `Modules/Therapists/docs/wallet_check_user27.sql` result; never double-credit.
+4. AI only in dedicated chats: API credits + D16 decision → one of T2/T3/S1 remote — flag stays off; never mix with money bugs.
+5. Deferred until user inputs/server: Vodafone SMS, WhatsApp Meta review, KVM/memory/engine Docker, marketplace B2–B8, social SOC-6/8, Merchant Center, PDPL lawyer, GitHub CI fix.

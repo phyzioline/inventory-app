@@ -23,6 +23,24 @@ Original monolith rules (reference only): `docs/reference/from-phyzioline-monoli
 
 ---
 
+## Shared rules from laravel-phyzio (loaded automatically — owner, 2026-11-23)
+
+Claude Code reads only this file, not `.cursor/rules/`. The rules below are the main site's
+general rules adapted to this app; one copy each, shared by Cursor and Claude:
+
+@.cursor/rules/security-first.mdc
+@.cursor/rules/workspace-truth.mdc
+@.cursor/rules/test-before-push.mdc
+@.cursor/rules/main-only-git.mdc
+@.cursor/rules/cost-and-quota.mdc
+@.cursor/rules/inventory-critical-paths.mdc
+
+When touching SPA UI, also read `.cursor/rules/arabic-rtl-ui.mdc`.
+Not adopted (main-site only): Modules placement, Flutter web/app parity (RULE 19), AI engine
+(RULE 17/18), FCM push (RULE 14), clinic UI.
+
+---
+
 ## Structure
 
 ```

@@ -1,0 +1,27 @@
+---
+description: Work on main only; never invent PRs or side branches.
+alwaysApply: true
+---
+
+# Main-only git (mandatory)
+
+## Default
+
+- All product work lands on **`main`**.
+- Do **not** create `feature/*`, `fix/*`, `chore/*`, `backup/*`, or `docs/*` branches unless the user explicitly asks for a named side branch.
+- Do **not** open a GitHub PR (`gh pr create`) unless the user explicitly says PR / افتح PR.
+- Do **not** treat «كومت» or «ارفع» as permission to open a PR or create a side branch.
+
+## Separate asks only
+
+| User said | Do | Do not |
+|---|---|---|
+| كومت / commit | `git commit` on current branch (normally `main`) | push, PR, new branch |
+| ارفع / push | `git push` current branch | open a PR |
+| PR / افتح PR | open PR only then | invent merge |
+| ادمج / على main | merge/land on `main` as asked | invent a PR first |
+
+## Remote hygiene
+
+- Keep remote heads at **`origin/main`** unless the user asked to keep another branch.
+- Do not recreate deleted side branches «for cleanliness» or «best practice».

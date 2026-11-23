@@ -1,0 +1,24 @@
+---
+description: Apply when editing Arabic/RTL UI, Blade dir=rtl, or dashboard CSS layout that must flip
+alwaysApply: false
+---
+
+# Arabic RTL (dashboard & patient/clinic portals)
+
+When `html[dir="rtl"]` (Arabic locale via LaravelLocalization):
+
+## Required
+
+- All user-facing Arabic copy is **right-aligned**; reading/layout starts from the **right**.
+- Prefer **logical CSS**: `margin-inline-start/end`, `padding-inline-*`, `border-inline-start`, `inset-inline-*`, `text-align: start/end` — not hard-coded `left`/`right` for layout that should flip.
+- Forms: labels and text inputs `text-align: right` + `direction: rtl` under RTL (except email/tel/IBAN/number where LTR digits are clearer with `unicode-bidi: plaintext`).
+- Do **not** force `text-align: left` or `direction: ltr` on Arabic prose containers.
+- UI strings via `__('English key')` + `en.json` / `ar.json` — never `app()->getLocale() === 'ar' ? '…' : '…'` (RULE 13).
+
+## Global stylesheet
+
+Dashboard loads `public/dashboard/css/rtl-content.css` from `dashboard_master`. Extend that file for new global RTL fixes; keep page-specific overrides scoped.
+
+## Tabs / nav
+
+Under RTL, first tab appears on the **right**; do not reverse DOM order with JS to “look LTR”.

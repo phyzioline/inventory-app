@@ -1,0 +1,16 @@
+---
+description: Do not confuse IDE noise, other chats, or other repos with production truth
+alwaysApply: true
+---
+
+# Workspace truth (adapted from laravel-phyzio)
+
+- IDE graph, other chat cards, or a status-bar branch are not production state.
+- Before claiming deploy/merge status: `git fetch origin main`, compare with `origin/main`;
+  separate this chat's tree vs `origin/main` vs what runs on the VPS.
+- Three repos share this server (inventory / laravel-phyzio / marketplace). Confirm `pwd` and
+  `git remote -v` before any commit or `php artisan inventory:*`.
+- Files here are owned by `phyzioline-inventory`. If you edit as root, `chown` them back.
+- GitHub on the server is SSH deploy keys only (`github-inventory-app` alias): never put a
+  token in a remote URL, never print remotes/credentials unmasked.
+- One chat = one task. Leftover dirty files: say so in one line, commit only on request.

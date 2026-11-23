@@ -1,6 +1,6 @@
 ---
-description: What may remain in app/ after module migration — protected contracts vs forbidden new code
-alwaysApply: true
+description: Apply when adding/moving files under app/ or deciding module vs app placement after migration
+alwaysApply: false
 ---
 
 # App Footprint After Migration (2026-06-17)

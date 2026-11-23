@@ -33,7 +33,7 @@ Act as Principal Architect + Senior Backend/Flutter/UX + DevOps/Security/Perform
 
 ## Mobile (Flutter)
 
-- Feature-based layout, Riverpod, reusable widgets; no business logic in UI.
+- Feature-based layout; Flutter mobile uses Cubit/get_it/go_router/dio (see mobile repo `AGENTS.md`) — not Riverpod; reusable widgets; no business logic in UI.
 - Every screen: loading, error, empty, success states.
 - Optimize rebuilds, memory, navigation.
 

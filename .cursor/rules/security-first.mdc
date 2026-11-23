@@ -1,0 +1,20 @@
+---
+description: Security first on every task — inventory holds money, stock and customer data
+alwaysApply: true
+---
+
+# Security first (mandatory, adapted from laravel-phyzio)
+
+Before writing, changing or reviewing any code, config, migration or deploy step, follow the
+`phyzioline-security-guardian` skill (user-level skill, same as the main site).
+
+Treat this app as a bank ledger: assume breach, secure by default, never ship "insecure for now".
+
+- Never commit secrets or `.env`; no API keys in the React SPA or the Tauri client.
+- Every API route authenticated and authorized on the server; every query scoped to the
+  owner's data. Never trust the SPA for permissions or totals.
+- Heavy or bulk routes (imports, previews, bulk-link/delete, regenerate) need a throttle.
+- Stock and money writes: DB transaction + row lock (`lockForUpdate`) — no lost updates.
+- `APP_DEBUG=false` in production; DB/Redis never exposed publicly.
+- Live production DB diagnosis: SELECT / EXPLAIN only (no EXPLAIN ANALYZE on writes).
+- End every technical answer with a short "🔒 Security Notes" (Critical/High/Medium/Low).

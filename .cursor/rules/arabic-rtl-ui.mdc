@@ -1,0 +1,14 @@
+---
+description: Apply when editing SPA UI — Arabic RTL first, strings through LanguageContext
+alwaysApply: false
+---
+
+# Arabic RTL + no hardcoded strings (adapted from laravel-phyzio RULE 13)
+
+- SPA is `lang="ar" dir="rtl"`. Prefer logical CSS / Tailwind (`ms-*`, `me-*`, `ps-*`,
+  `text-start`) over hard `left`/`right`.
+- New UI copy goes through `t('key')` from `contexts/LanguageContext.tsx` with both `en` and
+  `ar` entries. Do not add new `language === 'ar' ? '…' : '…'` ternaries (legacy ones exist;
+  convert the ones you touch).
+- Digits/IBAN/phone/SKU fields stay LTR (`dir="ltr"` / `unicode-bidi: plaintext`).
+- Every data screen: loading + empty + error states.

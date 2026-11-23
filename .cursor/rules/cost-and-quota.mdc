@@ -1,0 +1,22 @@
+---
+description: Cost & quota — small reads/edits, only touched tests, short Egyptian Arabic replies
+alwaysApply: true
+---
+
+# Cost & quota (adapted from laravel-phyzio)
+
+## Reading / editing
+- Grep first, then read only the lines needed. Do not re-read unchanged files.
+- Smallest edit that solves the task; no refactors or "improvements" outside it.
+- No new summary/report `.md` files in the repo; update the existing doc in 1–3 lines.
+  (A diagnosis report the owner asks for goes in chat or an artifact, not the repo.)
+
+## Tests
+- Run only the test files for what changed, on `phyzioline_inventory_test`.
+- Unrelated failure: check once with `git stash`, report in one line, do not fix it.
+- New behaviour: 1 happy path + the main failure case.
+
+## Process
+- One task per chat. Unclear? ask ONE question before starting.
+- Final reply: short, Egyptian Arabic — what's done / what's left / what I need from the owner.
+- Stop when done; production deploys are manual — give the owner the commands.

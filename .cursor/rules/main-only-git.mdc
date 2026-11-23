@@ -1,0 +1,14 @@
+---
+description: Work on main only; no side branches or PRs unless asked
+alwaysApply: true
+---
+
+# Main-only git (adapted from laravel-phyzio)
+
+| Owner said | Do | Do not |
+|---|---|---|
+| كومت / commit | commit on `main` | push, PR, new branch |
+| ارفع / push | push `main` | open a PR |
+| PR / افتح PR | open PR only then | invent a merge |
+
+No `feature/*`, `fix/*`, `chore/*` branches unless explicitly asked.

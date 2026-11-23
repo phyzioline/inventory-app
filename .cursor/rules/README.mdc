@@ -17,6 +17,12 @@ alwaysApply: false
 | `clean-architecture-placement.mdc` | Where files go |
 | `inventory-critical-paths.mdc` | Stock / money red lines |
 | `inventory-qa-audit-team.mdc` | QA & Audit AI team artifacts / next runs |
+| `security-first.mdc` | Security first + 🔒 notes (from monolith) |
+| `workspace-truth.mdc` | IDE noise ≠ production; 3 repos on one server |
+| `test-before-push.mdc` | Verify real path on test DB before push |
+| `main-only-git.mdc` | main only; no branches/PRs unless asked |
+| `cost-and-quota.mdc` | Small reads/edits, touched tests only, short Arabic replies |
+| `arabic-rtl-ui.mdc` | SPA RTL + strings via LanguageContext |
 | `CURSOR.md` | Short agent brief |
 | `CLAUDE.md` (repo root) | Full agent context + 12 execution rules |
 
