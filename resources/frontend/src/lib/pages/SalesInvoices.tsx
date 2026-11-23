@@ -39,6 +39,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { CreateSalesOrderDialog } from '@/components/sales/CreateSalesOrderDialog';
 import { QuickShopSaleDialog } from '@/components/sales/QuickShopSaleDialog';
 import { OrderInvoiceDetailDialog } from '@/components/sales/OrderInvoiceDetailDialog';
+import { OrdersWindowNotice } from '@/components/shared/OrdersWindowNotice';
 
 /** Badge + filters: financial settlement without lifecycle status still reads as a completed sale. */
 function resolveSalesOrderDisplayStatus(order: {
@@ -299,6 +300,7 @@ export default function SalesInvoicesPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">{t('sales.title')}</h1>
+          <OrdersWindowNotice />
           <p className="text-muted-foreground">{t('sales.subtitle')}</p>
         </div>
         <div className="flex gap-2">

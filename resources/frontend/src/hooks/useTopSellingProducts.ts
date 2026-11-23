@@ -25,7 +25,10 @@ export function useTopSellingProducts(options: UseTopSellingOptions = {}) {
     queryKey: ['top-selling-products', options.dateFrom, options.dateTo, options.warehouseFilter],
     queryFn: async () => {
       try {
-        const orders = await salesOrderService.getAll();
+        const orders = await salesOrderService.getAll({
+          start_date: options.dateFrom?.slice(0, 10),
+          end_date: options.dateTo?.slice(0, 10),
+        });
         // Basic aggregation from order data
         const aggregation = new Map<string, TopSellingProduct>();
         

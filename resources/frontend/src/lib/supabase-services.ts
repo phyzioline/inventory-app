@@ -742,9 +742,12 @@ export const purchaseInvoiceService = {
 };
 
 
+/** Date range for order lists. With none, the server returns its default window (X-Orders-Window-Days). */
+export type OrderDateRange = { start_date?: string; end_date?: string };
+
 export const salesOrderService = {
-    async getAll() {
-        return await api.getArray('orders');
+    async getAll(range: OrderDateRange = {}) {
+        return await api.getArray('orders', { params: range });
     },
     async getById(id: string) {
         return await api.get(`orders/${id}`);
@@ -783,8 +786,8 @@ export const stockMovementService = {
 
 // ========== SALES INVOICE SERVICE ==========
 export const salesInvoiceService = {
-    async getAll() {
-        return await api.getArray('orders');
+    async getAll(range: OrderDateRange = {}) {
+        return await api.getArray('orders', { params: range });
     },
     async getById(id: string) {
         return await api.get(`orders/${id}`);

@@ -22,11 +22,6 @@ export default function ReturnAnalytics() {
   const isAr = language === 'ar';
   const { data: returnsPayload, isLoading: returnsLoading } = useReturns({ perPage: 500 });
   const returns = returnsPayload?.data ?? [];
-  const { data: orders = [], isLoading: ordersLoading } = useQuery({
-    queryKey: ['orders-for-return-analytics'],
-    queryFn: () => salesOrderService.getAll(),
-  });
-
   const [datePreset, setDatePreset] = useState('30d');
   const [channelFilter, setChannelFilter] = useState('all');
   const [reasonFilter, setReasonFilter] = useState('all');
@@ -42,8 +37,16 @@ export default function ReturnAnalytics() {
     if (datePreset === '7d') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     if (datePreset === '30d') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     if (datePreset === '90d') return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    if (datePreset === '365d') return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
     return null;
   }, [datePreset]);
+
+  // Orders only for the selected window — loading every order (~30k with lines) exhausted server memory.
+  const ordersFrom = startDate ? startDate.toISOString().slice(0, 10) : undefined;
+  const { data: orders = [], isLoading: ordersLoading } = useQuery({
+    queryKey: ['orders-for-return-analytics', ordersFrom],
+    queryFn: () => salesOrderService.getAll({ start_date: ordersFrom }),
+  });
 
   const enrichedReturns = useMemo(() => {
     return (Array.isArray(returns) ? returns : []).map((r: ReturnRow) => {
@@ -303,7 +306,7 @@ export default function ReturnAnalytics() {
               <SelectItem value="7d">{t('returns.analytics.filters.last7d') || (isAr ? 'آخر 7 أيام' : 'Last 7 days')}</SelectItem>
               <SelectItem value="30d">{t('returns.analytics.filters.last30d') || (isAr ? 'آخر 30 يوم' : 'Last 30 days')}</SelectItem>
               <SelectItem value="90d">{t('returns.analytics.filters.last90d') || (isAr ? 'آخر 90 يوم' : 'Last 90 days')}</SelectItem>
-              <SelectItem value="all">{t('returns.analytics.filters.allTime') || (isAr ? 'كل الوقت' : 'All time')}</SelectItem>
+              <SelectItem value="365d">{t('returns.analytics.filters.last365d')}</SelectItem>
             </SelectContent>
           </Select>
 

@@ -49,6 +49,7 @@ import {
 import { cn } from '@/lib/utils';
 import { exportToExcel } from '@/lib/excelUtils';
 import { DateRange } from 'react-day-picker';
+import { OrdersWindowNotice } from '@/components/shared/OrdersWindowNotice';
 
 type TransactionType = 'all' | 'purchase' | 'sale' | 'transfer' | 'return' | 'adjustment';
 type OrderStatus = 'all' | 'pending' | 'shipped' | 'delivered' | 'returned';
@@ -485,6 +486,7 @@ export default function InventoryTransactions() {
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold">{t('transactions.title')}</h1>
+          <OrdersWindowNotice />
           <p className="text-muted-foreground">
             {t('transactions.subtitle')}
           </p>

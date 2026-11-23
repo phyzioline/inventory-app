@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { ProfitBreakdown } from '@/components/orders/ProfitBreakdown';
+import { OrdersWindowNotice } from '@/components/shared/OrdersWindowNotice';
 
 export default function OrderProfitView() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -55,6 +56,7 @@ export default function OrderProfitView() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Order Profit Analysis</h1>
+          <OrdersWindowNotice />
           <p className="text-gray-400">Analyze gross profit and margins per individual order</p>
         </div>
 

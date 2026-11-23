@@ -37,6 +37,7 @@ import { useReturnRates } from '@/hooks/useReturnRates';
 import { useReturns } from '@/hooks/useReturns';
 import { useDeadStock as getDeadStock } from '@/hooks/useDeadStock';
 import { exportToExcel } from '@/lib/excelUtils';
+import { OrdersWindowNotice } from '@/components/shared/OrdersWindowNotice';
 
 type ReportType = 'sales' | 'purchases' | 'inventory' | 'returns' | 'profit' | 'dead-stock' | 'margin-alerts' | 'return-rates';
 type DateRange = { from: Date | undefined; to: Date | undefined };
@@ -332,6 +333,7 @@ export default function Reports() {
           </div>
           <div>
             <h1 className="text-2xl font-bold">{t('reports.title')}</h1>
+            <OrdersWindowNotice />
             <p className="text-muted-foreground">{t('reports.subtitle')}</p>
           </div>
         </div>

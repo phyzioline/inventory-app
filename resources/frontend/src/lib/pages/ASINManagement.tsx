@@ -76,6 +76,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { format } from 'date-fns';
+import { OrdersWindowNotice } from '@/components/shared/OrdersWindowNotice';
+import { useNavigate } from 'react-router-dom';
 
 interface ProductWithASINs extends Product {
   asins: ASIN[];
@@ -101,6 +103,7 @@ const statusConfig = {
 };
 
 export default function ASINManagement() {
+  const navigate = useNavigate();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
@@ -438,6 +441,7 @@ export default function ASINManagement() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold">ASIN Management</h1>
+            <OrdersWindowNotice />
             <p className="text-muted-foreground">Manage product ASINs and detailed reports</p>
           </div>
         </div>
@@ -456,6 +460,7 @@ export default function ASINManagement() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">ASIN Management</h1>
+          <OrdersWindowNotice />
           <p className="text-muted-foreground">Manage ASINs with detailed reports & analytics</p>
         </div>
         <div className="flex gap-2">
