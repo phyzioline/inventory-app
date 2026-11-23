@@ -367,35 +367,18 @@ class SupplierController extends Controller
     public function accountSummary(Request $request, $id, SupplierAccountService $accounts, PartyLinkService $partyLink)
     {
         $supplier = Supplier::with('linkedCustomer')->findOrFail($id);
-        $payload = $accounts->summarize(
+        [$payload, $party] = $this->summarizeWithClosing(
             $supplier,
             $request->query('start_date'),
             $request->query('end_date'),
+            $accounts,
+            $partyLink,
         );
 
         $linked = $supplier->linkedCustomer;
-        $party = null;
         $currentAccountLedger = null;
-        // Supplier statement closing = same figure as the suppliers-table "الرصيد المستحق".
-        // Sales to a linked customer stay on the customer account only (not mixed into this statement).
-        $supplierOutstanding = (float) ($payload['summary']['outstanding'] ?? 0);
-        $statementClosing = round($supplierOutstanding, 2);
-        $payload['summary']['statement_closing'] = $statementClosing;
 
         if ($linked) {
-            $customerOutstanding = $partyLink->customerOutstanding($linked);
-            $net = $partyLink->netPosition($supplierOutstanding, $customerOutstanding);
-            $party = [
-                'customer_id' => (int) $linked->id,
-                'customer_name' => $linked->name,
-                'supplier_outstanding' => $supplierOutstanding,
-                'customer_outstanding' => $customerOutstanding,
-                'statement_closing' => $statementClosing,
-                'net_position' => $net,
-            ];
-            $payload['summary']['net_position'] = $net;
-            $payload['summary']['linked_customer_id'] = (int) $linked->id;
-
             $customerSummary = app(\App\Presentation\Http\Controllers\Api\CustomerController::class)
                 ->accountSummary($request, $linked);
             $customerJson = $customerSummary->getData(true);
@@ -410,6 +393,82 @@ class SupplierController extends Controller
         $payload['current_account_ledger'] = $currentAccountLedger;
 
         return response()->json($payload);
+    }
+
+    /**
+     * KPI block of every supplier in one request — the same figures as each
+     * `suppliers/{id}/account-summary` → `summary`, without invoices or ledgers.
+     * The suppliers table used to send one request per supplier (132 in a few
+     * minutes on 2026-11-23), filling the 8-worker fpm pool.
+     */
+    public function accountSummaries(Request $request, SupplierAccountService $accounts, PartyLinkService $partyLink)
+    {
+        $validated = $request->validate([
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+            'ids' => 'nullable|array|max:500',
+            'ids.*' => 'integer',
+        ]);
+
+        $query = Supplier::query()->with('linkedCustomer')->orderBy('name');
+        if (! empty($validated['ids'])) {
+            $query->whereIn('id', $validated['ids']);
+        }
+
+        $summaries = [];
+        foreach ($query->get() as $supplier) {
+            [$payload] = $this->summarizeWithClosing(
+                $supplier,
+                $validated['start_date'] ?? null,
+                $validated['end_date'] ?? null,
+                $accounts,
+                $partyLink,
+            );
+            $summaries[(string) $supplier->id] = $payload['summary'];
+        }
+
+        return response()->json(['summaries' => $summaries]);
+    }
+
+    /**
+     * Supplier account payload plus statement closing / linked-customer netting.
+     * Single source for both the per-supplier and the batch summary endpoints.
+     *
+     * @return array{0: array<string, mixed>, 1: array<string, mixed>|null}
+     */
+    private function summarizeWithClosing(
+        Supplier $supplier,
+        ?string $startDate,
+        ?string $endDate,
+        SupplierAccountService $accounts,
+        PartyLinkService $partyLink,
+    ): array {
+        $payload = $accounts->summarize($supplier, $startDate, $endDate);
+
+        // Supplier statement closing = same figure as the suppliers-table "الرصيد المستحق".
+        // Sales to a linked customer stay on the customer account only (not mixed into this statement).
+        $supplierOutstanding = (float) ($payload['summary']['outstanding'] ?? 0);
+        $statementClosing = round($supplierOutstanding, 2);
+        $payload['summary']['statement_closing'] = $statementClosing;
+
+        $party = null;
+        $linked = $supplier->linkedCustomer;
+        if ($linked) {
+            $customerOutstanding = $partyLink->customerOutstanding($linked);
+            $net = $partyLink->netPosition($supplierOutstanding, $customerOutstanding);
+            $party = [
+                'customer_id' => (int) $linked->id,
+                'customer_name' => $linked->name,
+                'supplier_outstanding' => $supplierOutstanding,
+                'customer_outstanding' => $customerOutstanding,
+                'statement_closing' => $statementClosing,
+                'net_position' => $net,
+            ];
+            $payload['summary']['net_position'] = $net;
+            $payload['summary']['linked_customer_id'] = (int) $linked->id;
+        }
+
+        return [$payload, $party];
     }
 
     /**

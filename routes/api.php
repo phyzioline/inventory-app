@@ -152,6 +152,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('vendors/{id}/sync-crm', [VendorController::class, 'syncCrm']);
         Route::apiResource('vendors', VendorController::class);
         Route::post('suppliers/{id}/pay', [SupplierController::class, 'pay']);
+        Route::get('suppliers/account-summaries', [SupplierController::class, 'accountSummaries']);
         Route::get('suppliers/{id}/account-summary', [SupplierController::class, 'accountSummary']);
         Route::post('suppliers/{id}/link-customer', [SupplierController::class, 'linkCustomer']);
         Route::delete('suppliers/{id}/link-customer', [SupplierController::class, 'unlinkCustomer']);

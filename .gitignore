@@ -29,3 +29,4 @@ resources/frontend/dist
 # Tauri desktop shell
 tauri-inventory-app/node_modules
 tauri-inventory-app/src-tauri/target
+/storage/app/baselines/

@@ -1,4 +1,4 @@
-import { useQueries } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 
 export type SupplierAccountSummary = {
@@ -19,12 +19,16 @@ function fallbackSummary(balance?: number | null): SupplierAccountSummary {
   };
 }
 
-async function fetchSupplierSummary(
-  id: string | number,
+/**
+ * All supplier KPI blocks in one request (`suppliers/account-summaries`) — the same
+ * figures as each `suppliers/:id/account-summary` → `summary`. One request per supplier
+ * used to fill the server's worker pool (2026-11-23).
+ */
+async function fetchSupplierSummaries(
   params: Record<string, string>
-): Promise<SupplierAccountSummary> {
-  const data = await api.get(`suppliers/${id}/account-summary`, { params });
-  return data.summary as SupplierAccountSummary;
+): Promise<Record<string, SupplierAccountSummary>> {
+  const data = await api.get('suppliers/account-summaries', { params });
+  return (data?.summaries ?? {}) as Record<string, SupplierAccountSummary>;
 }
 
 export function useSupplierAccountSummaries(
@@ -40,24 +44,22 @@ export function useSupplierAccountSummaries(
       Boolean(s && s.id !== null && s.id !== undefined && String(s.id).trim() !== '')
   );
 
-  const results = useQueries({
-    queries: list.map((s) => ({
-      queryKey: ['supplier-account-summary', String(s.id), startDate, endDate],
-      queryFn: () => fetchSupplierSummary(s.id, params),
-      staleTime: 2 * 60 * 1000,
-      gcTime: 30 * 60 * 1000,
-      placeholderData: fallbackSummary(s.balance),
-      retry: 1,
-    })),
+  const result = useQuery({
+    queryKey: ['supplier-account-summary', 'all', startDate, endDate],
+    queryFn: () => fetchSupplierSummaries(params),
+    enabled: list.length > 0,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    retry: 1,
   });
 
   const summaryMap: Record<string, SupplierAccountSummary> = {};
-  results.forEach((result, i) => {
-    const id = String(list[i].id);
-    summaryMap[id] = (result.data as SupplierAccountSummary) ?? fallbackSummary(list[i].balance);
+  list.forEach((s) => {
+    const id = String(s.id);
+    summaryMap[id] = result.data?.[id] ?? fallbackSummary(s.balance);
   });
 
-  const summariesReady = list.length === 0 || results.every((r) => !r.isLoading);
+  const summariesReady = list.length === 0 || !result.isLoading;
 
   return {
     summaryMap,
