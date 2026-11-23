@@ -46,8 +46,11 @@ use App\Domain\Models\Wms\PurchaseBatch;
 use App\Domain\Models\Wms\Settlement;
 use App\Domain\Models\Wms\Supplier;
 use App\Domain\Models\Wms\TreasurySulfa;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -93,6 +96,10 @@ class AppServiceProvider extends ServiceProvider
         // Single super-admin bypass — see database/migrations/*_add_is_super_admin_to_users_table.php.
         // Never mass-assignable (not in User::$fillable); only set via the admin:grant-super command.
         Gate::before(fn ($user, string $ability) => $user->is_super_admin ? true : null);
+
+        // File imports / previews parse whole sheets and hold an fpm worker for a long time;
+        // one account must not be able to occupy the whole pool (8 workers, 2026-11-23).
+        RateLimiter::for('inventory-imports', fn (Request $request) => Limit::perMinute(20)->by('inv-import:'.($request->user()?->id ?: $request->ip())));
 
         Gate::define('cancel-inventory-order', [\App\Domain\Policies\DestructiveInventoryPolicy::class, 'cancelOrder']);
         Gate::define('approve-withdrawal', [\App\Domain\Policies\DestructiveInventoryPolicy::class, 'approveWithdrawal']);

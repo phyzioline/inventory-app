@@ -111,12 +111,12 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
 
         // ── Channel SKU Import ────────────────────────────────────────
         Route::prefix('channels/{channelId}/import')->group(function () {
-            Route::post('upload', [ChannelSkuImportController::class, 'upload']);
+            Route::post('upload', [ChannelSkuImportController::class, 'upload'])->middleware('throttle:inventory-imports');
             Route::post('confirm', [ChannelSkuImportController::class, 'confirm']);
             Route::get('template', [ChannelSkuImportController::class, 'template']);
         });
 
-        Route::post('adjustments/import', [InventoryAdjustmentImportController::class, 'import']);
+        Route::post('adjustments/import', [InventoryAdjustmentImportController::class, 'import'])->middleware('throttle:inventory-imports');
         Route::get('adjustments/template', [InventoryAdjustmentImportController::class, 'template']);
         Route::apiResource('adjustments', InventoryAdjustmentController::class);
 
@@ -133,18 +133,18 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::apiResource('transactions', InventoryTransactionController::class);
 
         // ── Sales & Orders ──────────────────────────────────────────
-        Route::post('orders/import', [InventoryOrderController::class, 'import']);
+        Route::post('orders/import', [InventoryOrderController::class, 'import'])->middleware('throttle:inventory-imports');
         Route::get('orders/{id}/profitability', [InventoryOrderController::class, 'profitability']);
         Route::post('orders/{id}/cancel', [InventoryOrderController::class, 'cancel']);
         Route::put('orders/{id}/financial-edit', [InvoiceEditController::class, 'edit']);
         Route::get('orders/{id}/edit-history', [InvoiceEditController::class, 'history']);
         Route::apiResource('orders', InventoryOrderController::class);
-        Route::post('marketplace/import/preview', [MarketplaceOrderController::class, 'preview']);
-        Route::post('marketplace/import', [MarketplaceOrderController::class, 'import']);
+        Route::post('marketplace/import/preview', [MarketplaceOrderController::class, 'preview'])->middleware('throttle:inventory-imports');
+        Route::post('marketplace/import', [MarketplaceOrderController::class, 'import'])->middleware('throttle:inventory-imports');
         Route::get('marketplace/import/jobs/{jobKey}', [MarketplaceOrderController::class, 'importJobStatus']);
         Route::get('marketplace/import/last-batch', [MarketplaceOrderController::class, 'lastBatch']);
-        Route::post('marketplace/import/rollback-last', [MarketplaceOrderController::class, 'rollbackLast']);
-        Route::post('marketplace/import/retry-stock-deductions', [MarketplaceOrderController::class, 'retryStockDeductions']);
+        Route::post('marketplace/import/rollback-last', [MarketplaceOrderController::class, 'rollbackLast'])->middleware('throttle:inventory-imports');
+        Route::post('marketplace/import/retry-stock-deductions', [MarketplaceOrderController::class, 'retryStockDeductions'])->middleware('throttle:inventory-imports');
 
         // ── Contacts & CRM ───────────────────────────────────────────
         Route::post('vendors/{id}/balance', [VendorController::class, 'adjustBalance']);
@@ -157,7 +157,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::delete('suppliers/{id}/link-customer', [SupplierController::class, 'unlinkCustomer']);
         Route::post('suppliers/{id}/party-set-off', [SupplierController::class, 'partySetOff']);
         Route::post('suppliers/{id}/commission-credit', [SupplierController::class, 'commissionCredit']);
-        Route::post('suppliers/bulk-upload', [SupplierController::class, 'bulkUpload']);
+        Route::post('suppliers/bulk-upload', [SupplierController::class, 'bulkUpload'])->middleware('throttle:inventory-imports');
         Route::get('suppliers/template/download', [SupplierController::class, 'downloadTemplate']);
         Route::apiResource('suppliers', SupplierController::class);
         Route::get('customers/paginated-with-summary', [CustomerController::class, 'paginatedWithSummary']);
@@ -235,7 +235,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
             ->middleware('inventory.ability:withdrawal.approve');
 
         // ── Channel Tools ────────────────────────────────────────────
-        Route::post('asins/bulk-upload', [ASINController::class, 'bulkUpload']);
+        Route::post('asins/bulk-upload', [ASINController::class, 'bulkUpload'])->middleware('throttle:inventory-imports');
         Route::get('asins/template/download', [ASINController::class, 'downloadTemplate']);
         Route::get('asins/{id}/price-history', [ASINController::class, 'priceHistory']);
         Route::apiResource('asins', ASINController::class);
@@ -250,26 +250,26 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         });
 
         Route::middleware(['inventory.ability:settlements.write'])->group(function (): void {
-            Route::post('settlements/import', [SettlementController::class, 'import']);
+            Route::post('settlements/import', [SettlementController::class, 'import'])->middleware('throttle:inventory-imports');
             Route::post('settlements/{id}/reconcile', [SettlementController::class, 'reconcile']);
             Route::post('settlements', [SettlementController::class, 'store']);
             Route::put('settlements/{settlement}', [SettlementController::class, 'update']);
             Route::patch('settlements/{settlement}', [SettlementController::class, 'update']);
             Route::delete('settlements/{settlement}', [SettlementController::class, 'destroy']);
         });
-        Route::post('returns/import', [ReturnController::class, 'import']);
-        Route::post('returns/import-inventory-ledger', [ReturnController::class, 'importInventoryLedger']);
+        Route::post('returns/import', [ReturnController::class, 'import'])->middleware('throttle:inventory-imports');
+        Route::post('returns/import-inventory-ledger', [ReturnController::class, 'importInventoryLedger'])->middleware('throttle:inventory-imports');
         Route::post('returns/{id}/process', [ReturnController::class, 'process']);
         Route::post('returns/{id}/receive', [ReturnController::class, 'receive']);
         Route::apiResource('returns', ReturnController::class);
 
         // ── Amazon Removal Orders ─────────────────────────────────────
         Route::get('removals', [RemovalController::class, 'index']);
-        Route::post('removals/import', [RemovalController::class, 'import']);
+        Route::post('removals/import', [RemovalController::class, 'import'])->middleware('throttle:inventory-imports');
         Route::post('removals/items/{id}/receive', [RemovalController::class, 'receive']);
 
         // ── Bulk Transfers ───────────────────────────────────────────
-        Route::post('transfers/bulk-upload', [TransferController::class, 'bulkUpload']);
+        Route::post('transfers/bulk-upload', [TransferController::class, 'bulkUpload'])->middleware('throttle:inventory-imports');
         Route::post('transfers/execute', [TransferController::class, 'executeBulkTransfer']);
         Route::get('transfers/template/download', [TransferController::class, 'downloadTemplate']);
         Route::get('transfers', [TransferController::class, 'index']);
@@ -295,7 +295,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
             Route::get('reports/profit-by-sku', [ProfitReportController::class, 'bySku']);
             Route::get('reports/roi-metrics', [ProfitReportController::class, 'roiMetrics']);
             Route::get('reports/profit-fee-dimensions', [ProfitReportController::class, 'feeDimensions']);
-            Route::post('reports/platform-fees/import', [ProfitReportController::class, 'importPlatformFees']);
+            Route::post('reports/platform-fees/import', [ProfitReportController::class, 'importPlatformFees'])->middleware('throttle:inventory-imports');
             Route::get('reports/dead-stock', [InventoryReportController::class, 'deadStock']);
             Route::get('reports/margin-alerts', [InventoryReportController::class, 'marginAlerts']);
             Route::get('reports/return-rates', [InventoryReportController::class, 'returnRates']);
@@ -303,7 +303,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
 
         // ── Imports ──────────────────────────────────────────────────
         Route::prefix('import/products')->group(function () {
-            Route::post('upload', [ProductImportController::class, 'upload']);
+            Route::post('upload', [ProductImportController::class, 'upload'])->middleware('throttle:inventory-imports');
             Route::post('confirm', [ProductImportController::class, 'confirm']);
             Route::get('template', [ProductImportController::class, 'template']);
             Route::get('drafts', [DraftProductReviewController::class, 'index']);
@@ -313,9 +313,9 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         });
 
         Route::prefix('purchases/smart-import')->group(function () {
-            Route::post('upload', [PurchaseImportController::class, 'upload']);
-            Route::post('upload-only', [PurchaseImportController::class, 'uploadOnly']);
-            Route::post('{uploadId}/process', [PurchaseImportController::class, 'process']);
+            Route::post('upload', [PurchaseImportController::class, 'upload'])->middleware('throttle:inventory-imports');
+            Route::post('upload-only', [PurchaseImportController::class, 'uploadOnly'])->middleware('throttle:inventory-imports');
+            Route::post('{uploadId}/process', [PurchaseImportController::class, 'process'])->middleware('throttle:inventory-imports');
             Route::get('uploads', [PurchaseImportController::class, 'listUploads']);
             Route::get('summary/by-location', [PurchaseImportController::class, 'summaryByLocation']);
             Route::get('batches', [PurchaseImportController::class, 'listBatches']);
