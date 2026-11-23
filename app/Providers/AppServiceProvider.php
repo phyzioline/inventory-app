@@ -136,6 +136,7 @@ class AppServiceProvider extends ServiceProvider
                 ReconcileSettlementsCommand::class,
                 ReconcileSettlementReturnsCommand::class,
                 \App\Presentation\Console\Commands\DedupeSettlementLinesCommand::class,
+                \App\Presentation\Console\Commands\RepairSettlementTotalsCommand::class,
                 \App\Presentation\Console\Commands\ReverseExcessReturnStockCommand::class,
                 \App\Presentation\Console\Commands\VoidAssumedPurchasePaymentsCommand::class,
                 \App\Presentation\Console\Commands\ReconcileSupplierStatementCommand::class,

@@ -7,7 +7,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Domain\Models\Wms\Channel;
-use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\Receipt;
 use App\Domain\Models\Wms\Settlement;
@@ -482,7 +481,7 @@ class SettlementController extends Controller
                     }
                     if ($settlement) {
                         $matchedOrders = $this->service->reconcile($settlement);
-                        $this->upsertSettlementReceipt($settlement);
+                        app(\App\Application\Services\ReceiptApplicationService::class)->upsertForSettlement($settlement);
                         $reconciliation = $this->service->buildReconciliationSummary($settlement->fresh());
                     }
                 }
@@ -516,7 +515,7 @@ class SettlementController extends Controller
         try {
             $payload = DB::transaction(function () use ($settlement) {
                 $matched = $this->service->reconcile($settlement);
-                $this->upsertSettlementReceipt($settlement);
+                app(\App\Application\Services\ReceiptApplicationService::class)->upsertForSettlement($settlement);
 
                 $summary = $this->service->buildReconciliationSummary($settlement->fresh());
 
@@ -537,47 +536,6 @@ class SettlementController extends Controller
      * Create or update incoming receipt row for settled payout.
      * Uses morph reference (Settlement) to avoid duplicate receipts for same report.
      */
-    private function upsertSettlementReceipt(Settlement $settlement): void
-    {
-        $settlement = $settlement->fresh() ?? $settlement;
-
-        $amount = (float) ($settlement->total_amount ?? 0);
-        if ($amount <= 0) {
-            return;
-        }
-
-        $settlement->loadMissing('channel');
-        $channelName = (string) ($settlement->channel->name ?? 'Channel');
-        $reportId = (string) ($settlement->report_id ?? ('SET-'.$settlement->id));
-        $date = $settlement->end_date ?: $settlement->start_date ?: now();
-        $warehouseId = InventoryLocation::query()
-            ->where('channel_id', (int) $settlement->channel_id)
-            ->value('id');
-
-        $payload = [
-            'type' => 'settlement',
-            'category' => 'channel_collection',
-            'amount' => $amount,
-            'description' => "Auto receipt from payment sheet settlement #{$reportId}",
-            'receipt_date' => $date,
-            'payment_method' => 'bank_transfer',
-            'payer_name' => $channelName,
-            'external_reference' => $reportId,
-            'warehouse_id' => $warehouseId,
-            'user_id' => $settlement->user_id ?: Auth::id(),
-            'receipt_number' => 'SET-'.$settlement->id,
-        ];
-
-        // Match by morph only so a pre-linked manual receipt is upgraded instead of duplicating rows.
-        Receipt::updateOrCreate(
-            [
-                'reference_type' => Settlement::class,
-                'reference_id' => $settlement->id,
-            ],
-            $payload
-        );
-    }
-
     /**
      * Display the specified resource.
      */
@@ -780,7 +738,7 @@ class SettlementController extends Controller
 
             // Delete the auto-created receipt linked by morph reference.
             Receipt::withoutGlobalScopes()
-                ->where('reference_type', Settlement::class)
+                ->whereIn('reference_type', \App\Infrastructure\Support\InventoryMorphTypes::settlementReferenceTypes())
                 ->where('reference_id', $settlement->id)
                 ->delete();
 

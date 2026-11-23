@@ -24,6 +24,31 @@ class SettlementService
     /** @var array<int, array<string, true>> */
     private array $seenLineFingerprintsBySettlement = [];
 
+    /**
+     * How often each base fingerprint occurred in the current import of a settlement. Two real lines can be
+     * identical in every stored field (two units of one SKU in one order differ only by order-item-code);
+     * without this the second overwrote the first and its money vanished.
+     *
+     * @var array<int, array<string, int>>
+     */
+    private array $fingerprintOccurrencesBySettlement = [];
+
+    /** @var array<int, array<int, true>> settlement_items already matched by a line of the current import */
+    private array $claimedItemIdsBySettlement = [];
+
+    /** Amazon V2 flat-file money columns: each row fills one of them. */
+    private const AMAZON_V2_AMOUNT_COLUMNS = [
+        'price-amount',
+        'item-related-fee-amount',
+        'shipment-fee-amount',
+        'order-fee-amount',
+        'misc-fee-amount',
+        'other-fee-amount',
+        'other-amount',
+        'promotion-amount',
+        'direct-payment-amount',
+    ];
+
     public function __construct(
         private readonly SettlementLineClassifier $lineClassifier
     ) {}
@@ -76,6 +101,7 @@ class SettlementService
         try {
             $settlement = null;
             $settlementReportId = null;
+            $headerTotal = null;
             $linesBuffer = [];
             // Exact duplicate lines in the same file (common with copy/paste or merged exports)
             // must not create duplicate settlement_items.
@@ -115,6 +141,15 @@ class SettlementService
                     );
                     $stats['settlement_id'] = $settlement->id;
                     $stats['merchant_identifier'] = $merchantIdentifier ?: null;
+                    $this->resetImportTracking((int) $settlement->id);
+                }
+
+                // Amazon flat files open with one summary row (settlement-id, dates, total-amount, no
+                // transaction). It is the transfer total, not a line: storing it doubled the sheet total.
+                if ($this->isSettlementSummaryRow($data)) {
+                    $headerTotal = $this->toFloat($this->pickValue($data, ['total-amount', 'total amount']));
+
+                    continue;
                 }
 
                 $line = $this->mapDelimitedRowToSettlementLine($data);
@@ -131,6 +166,10 @@ class SettlementService
                     $raw['import_line_seq'] = $lineSeq;
                     $line['raw_data'] = $raw;
                     $line = $this->withSettlementItemDefaults($line);
+                    $line['line_fingerprint'] = $this->disambiguateRepeatedFingerprint(
+                        (int) $settlement->id,
+                        (string) ($line['line_fingerprint'] ?? '')
+                    );
 
                     $decision = $this->resolveDeduplicationDecision($settlement, $line);
                     if (($decision['action'] ?? 'create') === 'skip_duplicate') {
@@ -164,12 +203,14 @@ class SettlementService
                             'line_fingerprint' => $line['line_fingerprint'] ?? $existing->line_fingerprint,
                         ]);
                         $stats['updated_lines'] = (int) ($stats['updated_lines'] ?? 0) + 1;
+                        $this->claimedItemIdsBySettlement[(int) $settlement->id][(int) $existing->id] = true;
                     } else {
-                        SettlementItem::create(array_merge([
+                        $created = SettlementItem::create(array_merge([
                             'settlement_id' => $settlement->id,
                             'raw_data' => $line['raw_data'] ?? [],
                         ], $line));
                         $stats['new_lines'] = (int) ($stats['new_lines'] ?? 0) + 1;
+                        $this->claimedItemIdsBySettlement[(int) $settlement->id][(int) $created->id] = true;
                     }
 
                     $fp = (string) ($line['line_fingerprint'] ?? '');
@@ -196,8 +237,10 @@ class SettlementService
             }
 
             if ($settlement) {
+                $stats['header_total'] = $headerTotal;
                 $settlement->update([
-                    'total_amount' => $stats['amount'],
+                    // The platform's own transfer total wins; the line sum is only a fallback.
+                    'total_amount' => $headerTotal ?? $stats['amount'],
                     'status' => 'draft',
                 ]);
                 $this->pruneUnseenSettlementLines((int) $settlement->id);
@@ -268,6 +311,7 @@ class SettlementService
             }
 
             $stats['settlement_id'] = $settlement->id;
+            $this->resetImportTracking((int) $settlement->id);
 
             foreach ($this->xmlList($report->Order ?? null) as $orderNode) {
                 $this->consumeOrderNode($settlement, $orderNode, $merchantIdentifier, $stats);
@@ -537,6 +581,10 @@ class SettlementService
     private function createSettlementLine(Settlement $settlement, array $payload, array &$stats, string $bucket): void
     {
         $payload = $this->withSettlementItemDefaults(array_merge(['settlement_id' => $settlement->id], $payload));
+        $payload['line_fingerprint'] = $this->disambiguateRepeatedFingerprint(
+            (int) $settlement->id,
+            (string) ($payload['line_fingerprint'] ?? '')
+        );
         $fp = (string) ($payload['line_fingerprint'] ?? '');
         $existing = $fp !== ''
             ? SettlementItem::query()
@@ -823,7 +871,18 @@ class SettlementService
             $summaryEn .= " | Orders in sheet missing from system: {$unmatchedOrders} ({$unmatchedLines} lines)";
         }
 
+        // Transfer total (sheet header) vs what the stored lines add up to. A gap means lines are missing,
+        // a reserve was held/released, or a line was double-posted — show it, never force it to zero.
+        $linesTotal = round((float) SettlementItem::query()->where('settlement_id', $settlementId)->sum('amount'), 2);
+        $totalGap = round((float) $settlement->total_amount - $linesTotal, 2);
+        if (abs($totalGap) >= 1) {
+            $summaryAr .= " | فرق بين إجمالي الشيت ومجموع السطور: {$totalGap}";
+            $summaryEn .= " | Sheet total vs lines gap: {$totalGap}";
+        }
+
         return [
+            'lines_total' => $linesTotal,
+            'total_gap' => $totalGap,
             'matched_lines' => $matchedLines,
             'unmatched_lines' => $unmatchedLines,
             'unmatched_orders' => $unmatchedOrders,
@@ -1891,6 +1950,11 @@ class SettlementService
      */
     private function resolveDelimitedRowAmountAndFee(array $data): array
     {
+        $v2Amount = $this->amazonV2RowAmount($data);
+        if ($v2Amount !== null) {
+            return ['amount' => $v2Amount, 'fee_amount' => 0.0];
+        }
+
         $structuredNet = $this->computeStructuredSellerCentralNetAmount($data);
 
         $explicitNetRaw = $this->pickValue($data, [
@@ -1951,6 +2015,28 @@ class SettlementService
     }
 
     /**
+     * Amazon V2 flat file has no single "amount" column: price, fee, promotion and other money sit in
+     * their own *-amount columns. Reading only "amount" stored every V2 line as 0.
+     */
+    private function amazonV2RowAmount(array $data): ?float
+    {
+        if (! array_key_exists('price-amount', $data) && ! array_key_exists('item-related-fee-amount', $data)) {
+            return null;
+        }
+        $sum = 0.0;
+        $found = false;
+        foreach (self::AMAZON_V2_AMOUNT_COLUMNS as $col) {
+            $v = $data[$col] ?? null;
+            if ($v !== null && trim((string) $v) !== '') {
+                $sum += $this->toFloat((string) $v);
+                $found = true;
+            }
+        }
+
+        return $found ? $sum : null;
+    }
+
+    /**
      * Same rules as MarketplaceImportService::normalizeMarketplaceOrderId so orders ↔ settlement lines align.
      */
     private function normalizeImportedPlatformOrderId(?string $raw): ?string
@@ -2008,6 +2094,9 @@ class SettlementService
         $description = trim((string) ($this->pickValue($data, [
             'description', 'title', 'amount-description', 'amount-description', 'amount type', 'amount-type', 'details',
             'transaction comment', 'comment', 'remarks',
+            // Amazon V2 flat file: the filled *-type column names the line (Principal, Commission, …).
+            'price-type', 'item-related-fee-type', 'shipment-fee-type', 'order-fee-type', 'promotion-type',
+            'direct-payment-type', 'other-fee-reason-description',
         ]) ?? ''));
 
         $descLower = strtolower($description);
@@ -2122,9 +2211,56 @@ class SettlementService
         ]));
     }
 
+    private function resetImportTracking(int $settlementId): void
+    {
+        unset(
+            $this->seenLineFingerprintsBySettlement[$settlementId],
+            $this->fingerprintOccurrencesBySettlement[$settlementId],
+            $this->claimedItemIdsBySettlement[$settlementId]
+        );
+    }
+
+    /**
+     * First occurrence keeps the stable fingerprint (re-imports still match legacy rows);
+     * the n-th identical line of the same file gets its own.
+     */
+    private function disambiguateRepeatedFingerprint(int $settlementId, string $fingerprint): string
+    {
+        if ($fingerprint === '') {
+            return $fingerprint;
+        }
+        $n = ($this->fingerprintOccurrencesBySettlement[$settlementId][$fingerprint] ?? 0) + 1;
+        $this->fingerprintOccurrencesBySettlement[$settlementId][$fingerprint] = $n;
+
+        return $n === 1 ? $fingerprint : hash('sha256', $fingerprint.'#'.$n);
+    }
+
+    /**
+     * Amazon flat-file summary row: carries settlement-id and total-amount but no transaction of its own.
+     */
+    public function isSettlementSummaryRow(array $data): bool
+    {
+        if ($this->pickValue($data, ['total-amount', 'total amount']) === null) {
+            return false;
+        }
+        if ($this->pickValue($data, ['settlement-id', 'settlement id']) === null) {
+            return false;
+        }
+
+        return $this->pickValue($data, [
+            'transaction-type', 'order-id', 'amount-type', 'amount-description', 'price-type',
+            'posted-date', 'posted-date-time', 'sku', 'amount',
+            ...self::AMAZON_V2_AMOUNT_COLUMNS,
+        ]) === null;
+    }
+
     private function pruneUnseenSettlementLines(int $settlementId): void
     {
         $seen = $this->seenLineFingerprintsBySettlement[$settlementId] ?? [];
+        unset(
+            $this->fingerprintOccurrencesBySettlement[$settlementId],
+            $this->claimedItemIdsBySettlement[$settlementId]
+        );
         if ($seen === []) {
             return;
         }
@@ -2277,6 +2413,8 @@ class SettlementService
 
     private function resolveDeduplicationDecision(Settlement $settlement, array $line): array
     {
+        // A row already matched by an earlier line of this file is that line's, never this one's.
+        $claimedIds = array_keys($this->claimedItemIdsBySettlement[(int) $settlement->id] ?? []);
         $fingerprint = (string) ($line['line_fingerprint'] ?? '');
         if ($fingerprint === '') {
             $fingerprint = $this->buildLineFingerprint($line);
@@ -2285,6 +2423,7 @@ class SettlementService
             $byFp = SettlementItem::query()
                 ->where('settlement_id', $settlement->id)
                 ->where('line_fingerprint', $fingerprint)
+                ->whereNotIn('id', $claimedIds)
                 ->first();
             if ($byFp) {
                 return ['action' => 'update_existing', 'item' => $byFp];
@@ -2325,6 +2464,7 @@ class SettlementService
             ->where('fee_amount', $incomingFee)
             ->where('quantity', $incomingQty)
             ->whereRaw('LOWER(COALESCE(transaction_status, \''.self::STATUS_RELEASED.'\')) = ?', [$incomingStatus])
+            ->whereNotIn('id', $claimedIds)
             ->orderByDesc('id')
             ->first();
 

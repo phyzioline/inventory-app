@@ -7,9 +7,11 @@ namespace App\Application\Services;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Domain\Models\Wms\InventoryLocation;
 use App\Domain\Models\Wms\InventoryOrder;
 use App\Domain\Models\Wms\Receipt;
 use App\Domain\Models\Wms\Settlement;
+use App\Infrastructure\Support\InventoryMorphTypes;
 
 class ReceiptApplicationService
 {
@@ -53,7 +55,7 @@ class ReceiptApplicationService
             }
 
             if ($settlementId && Receipt::query()
-                ->where('reference_type', Settlement::class)
+                ->whereIn('reference_type', InventoryMorphTypes::settlementReferenceTypes())
                 ->where('reference_id', $settlementId)
                 ->exists()) {
                 throw ValidationException::withMessages([
@@ -184,5 +186,59 @@ class ReceiptApplicationService
         }
 
         $order->save();
+    }
+
+    /**
+     * The one auto receipt of a payment sheet: the sheet's transfer total, matched by morph so a
+     * pre-linked manual receipt is upgraded instead of duplicated.
+     */
+    public function upsertForSettlement(Settlement $settlement): void
+    {
+        $settlement = $settlement->fresh() ?? $settlement;
+
+        $amount = (float) ($settlement->total_amount ?? 0);
+        if ($amount <= 0) {
+            return;
+        }
+
+        $settlement->loadMissing('channel');
+        $channelName = (string) ($settlement->channel->name ?? 'Channel');
+        $reportId = (string) ($settlement->report_id ?? ('SET-'.$settlement->id));
+        $date = $settlement->end_date ?: $settlement->start_date ?: now();
+        $warehouseId = InventoryLocation::query()
+            ->where('channel_id', (int) $settlement->channel_id)
+            ->value('id');
+
+        $payload = [
+            'type' => 'settlement',
+            'category' => 'channel_collection',
+            'amount' => $amount,
+            'description' => "Auto receipt from payment sheet settlement #{$reportId}",
+            'receipt_date' => $date,
+            'payment_method' => 'bank_transfer',
+            'payer_name' => $channelName,
+            'external_reference' => $reportId,
+            'warehouse_id' => $warehouseId,
+            'user_id' => $settlement->user_id ?: Auth::id(),
+            'receipt_number' => 'SET-'.$settlement->id,
+        ];
+
+        // Match by morph only so a pre-linked manual receipt is upgraded instead of duplicating rows.
+        // Receipts migrated from the monolith carry the legacy class name: matching only the current
+        // one booked a second receipt on re-upload (5 sheets, 91.6k EGP, 2026-08-06).
+        $existing = Receipt::withoutGlobalScopes()
+            ->whereIn('reference_type', InventoryMorphTypes::settlementReferenceTypes())
+            ->where('reference_id', $settlement->id)
+            ->orderBy('id')
+            ->first();
+
+        $payload['reference_type'] = Settlement::class;
+        $payload['reference_id'] = $settlement->id;
+
+        if ($existing) {
+            $existing->update($payload);
+        } else {
+            Receipt::create($payload);
+        }
     }
 }
