@@ -24,6 +24,17 @@ use App\Infrastructure\Support\InventoryMorphTypes;
 class ProfitEngineService
 {
     /**
+     * Days after the order date during which a fees-only settlement (sale amount not released yet,
+     * no return or cancellation) is treated as "awaiting platform payment": the order counts at list
+     * price minus its known fees. Older fees-only orders keep their settlement net and are reported
+     * as unpaid for investigation (owner decision, 2026-11-23).
+     */
+    public const AWAITING_PLATFORM_PAYMENT_DAYS = 45;
+
+    /** @var array<string, array{awaiting: array<string, true>, unpaid: array<string, true>}> */
+    private array $platformPaymentStateMemo = [];
+
+    /**
      * Weighted average purchase unit cost from received (or ordered) quantities in purchase_batch_items.
      *
      * @param  array<int>  $masterProductIds
@@ -320,7 +331,7 @@ class ProfitEngineService
             ];
         }
 
-        return $map;
+        return array_diff_key($map, $this->platformPaymentState($filters)['awaiting']);
     }
 
     /**
@@ -541,7 +552,76 @@ class ProfitEngineService
             $byOrderId[$key] = (float) ($row->net_total ?? 0);
         }
 
-        return $byOrderId;
+        // A fees-only settlement of a recent order is not the order's cash outcome yet: leave it out so
+        // the order is priced at list minus fees until the sale line is released.
+        return array_diff_key($byOrderId, $this->platformPaymentState($filters)['awaiting']);
+    }
+
+    /**
+     * Orders whose released settlement lines are charges only — no positive line and nothing that
+     * says cancel / refund / return — and that have no live return record. Recent ones (order date
+     * within AWAITING_PLATFORM_PAYMENT_DAYS) are awaiting the platform's sale payment; older ones
+     * never got paid and need investigation. Keys use normalizePlatformOrderKey (with and without dashes).
+     *
+     * @return array{awaiting: array<string, true>, unpaid: array<string, true>}
+     */
+    public function platformPaymentState(array $filters = []): array
+    {
+        // Keyed on the day and the newest settlement line so a long-lived worker never reuses a stale state.
+        $memoKey = md5(json_encode([
+            $filters, TenantContext::id(), Auth::id(), now()->toDateString(),
+            SettlementItem::query()->withoutGlobalScopes()->max('id'),
+        ]));
+        if (isset($this->platformPaymentStateMemo[$memoKey])) {
+            return $this->platformPaymentStateMemo[$memoKey];
+        }
+
+        $compactSql = $this->compactPlatformOrderIdSql('platform_order_id');
+        $text = "LOWER(COALESCE(transaction_type,'') || ' ' || COALESCE(description,''))";
+        $unsalePattern = "'(cancel|refund|return|reimburs|استرداد|إلغاء|الغاء|مرتجع)'";
+
+        $query = SettlementItem::query()
+            ->whereIn('settlement_id', $this->settlementIdsSubquery($filters))
+            ->whereNotNull('platform_order_id')
+            ->where('platform_order_id', '!=', '');
+        $this->applyReleasedSettlementItemScope($query);
+        $this->applyOrderCohortSettlementFilter($query, $filters);
+
+        $chargesOnlyKeys = $query
+            ->selectRaw("{$compactSql} as k")
+            ->groupBy(DB::raw($compactSql))
+            ->havingRaw('SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END) = 0')
+            ->havingRaw("SUM(CASE WHEN {$text} ~ {$unsalePattern} THEN 1 ELSE 0 END) = 0")
+            ->pluck('k')
+            ->filter()
+            ->values()
+            ->all();
+
+        $state = ['awaiting' => [], 'unpaid' => []];
+        if ($chargesOnlyKeys !== []) {
+            $cutoff = now()->subDays(self::AWAITING_PLATFORM_PAYMENT_DAYS)->startOfDay();
+            $orders = InventoryOrder::query()
+                ->whereIn(DB::raw($compactSql), $chargesOnlyKeys)
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('inventory_returns as r')
+                        ->whereColumn('r.inventory_order_id', 'inventory_orders.id')
+                        ->where(fn ($w) => $w->whereNull('r.status')->orWhere('r.status', '<>', 'void'));
+                })
+                ->get(['id', 'platform_order_id', 'order_date']);
+
+            foreach ($orders as $order) {
+                $bucket = $order->order_date !== null && $order->order_date >= $cutoff ? 'awaiting' : 'unpaid';
+                $k = $this->normalizePlatformOrderKey($order->platform_order_id);
+                if ($k === '') {
+                    continue;
+                }
+                $state[$bucket][$k] = true;
+                $state[$bucket][str_replace('-', '', $k)] = true;
+            }
+        }
+
+        return $this->platformPaymentStateMemo[$memoKey] = $state;
     }
 
     /**
@@ -981,6 +1061,11 @@ class ProfitEngineService
         $orderProfitSum = 0.0;
         $uncostedLines = 0;
         $uncostedRevenue = 0.0;
+        $paymentState = $this->platformPaymentState($filters);
+        $awaitingOrders = 0;
+        $awaitingRevenue = 0.0;
+        $unpaidOrders = 0;
+        $unpaidListValue = 0.0;
 
         foreach ($ordersCollection as $order) {
             $listSum = (float) $order->items->sum(fn ($i) => (float) $i->total_price);
@@ -1042,6 +1127,14 @@ class ProfitEngineService
                 $totalRefunds += $nonSettlementRefunds;
             }
 
+            if ($orderKey !== '' && isset($paymentState['awaiting'][$orderKey])) {
+                $awaitingOrders++;
+                $awaitingRevenue += $listSum;
+            } elseif ($orderKey !== '' && isset($paymentState['unpaid'][$orderKey])) {
+                $unpaidOrders++;
+                $unpaidListValue += $listSum;
+            }
+
             $totalCogs += $orderCogs;
         }
 
@@ -1065,6 +1158,13 @@ class ProfitEngineService
             // Lines with no purchase cost on file. Their revenue is NOT profit; the P&L is incomplete by this much.
             'uncosted_lines' => $uncostedLines,
             'uncosted_revenue' => round($uncostedRevenue, 2),
+            // Shipped orders whose sale amount the platform has not released yet (fees only so far):
+            // priced at list minus fees, not yet cash-confirmed.
+            'awaiting_platform_payment_orders' => $awaitingOrders,
+            'awaiting_platform_payment_revenue' => round($awaitingRevenue, 2),
+            // Older than AWAITING_PLATFORM_PAYMENT_DAYS with fees only and no return: never paid — investigate.
+            'unpaid_platform_orders' => $unpaidOrders,
+            'unpaid_platform_order_value' => round($unpaidListValue, 2),
         ];
     }
 
