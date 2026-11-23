@@ -319,11 +319,7 @@ class InventoryReturnImportService
      */
     private function parseInventoryLedgerCsv(string $filePath): array
     {
-        $probe = @file_get_contents($filePath, false, null, 0, 65536);
-        $delimiter = ',';
-        if ($probe !== false && substr_count($probe, "\t") > substr_count($probe, ',')) {
-            $delimiter = "\t";
-        }
+        $delimiter = $this->detectSheetDelimiter($filePath);
 
         $handle = fopen($filePath, 'r');
         if (! $handle) {
@@ -520,14 +516,33 @@ class InventoryReturnImportService
         return $records;
     }
 
+    /**
+     * Amazon reports download as tab-separated .txt or comma-separated .csv. Decide from the
+     * header line (free-text columns such as customer comments contain commas).
+     */
+    private function detectSheetDelimiter(string $filePath): string
+    {
+        $handle = @fopen($filePath, 'r');
+        $headerLine = $handle ? (string) fgets($handle, 65536) : '';
+        if ($handle) {
+            fclose($handle);
+        }
+
+        return substr_count($headerLine, "\t") > substr_count($headerLine, ',') ? "\t" : ',';
+    }
+
     private function parseReturnsCsv(string $filePath): array
     {
+        // Tab-separated .txt (Amazon's FBA customer returns download) was read as one column,
+        // so every row lost order-id / sku and nothing was imported (2026-11-23).
+        $delimiter = $this->detectSheetDelimiter($filePath);
+
         $handle = fopen($filePath, 'r');
         if (! $handle) {
             return [];
         }
 
-        $header = fgetcsv($handle);
+        $header = fgetcsv($handle, 0, $delimiter);
         if (! $header) {
             fclose($handle);
 
@@ -543,7 +558,7 @@ class InventoryReturnImportService
         }, $header);
         $records = [];
 
-        while (($row = fgetcsv($handle)) !== false) {
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
             if (! is_array($row) || empty(array_filter($row))) {
                 continue;
             }
