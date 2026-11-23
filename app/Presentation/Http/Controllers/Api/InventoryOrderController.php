@@ -17,6 +17,9 @@ class InventoryOrderController extends Controller
         private readonly InventoryOrderMutationService $mutations
     ) {}
 
+    /** Days a detailed order list covers when the caller sends no date range. */
+    public const DEFAULT_WINDOW_DAYS = 90;
+
     /**
      * Order header columns returned by `?view=summary`: what whole-history
      * screens (capital / receivables / channel breakdown) read. No line items
@@ -114,8 +117,16 @@ class InventoryOrderController extends Controller
         $paginate = $request->boolean('paginate', false) || $page > 0;
         $perPage = max(1, min((int) $request->query('per_page', 50), 200));
 
-        if ($paginate && $startDate === '' && $endDate === '') {
-            $query->where('order_date', '>=', now()->subDays(90)->startOfDay());
+        // A detailed list with no date range (and no order lookup) is capped to the last
+        // DEFAULT_WINDOW_DAYS, like the paginated list. Loading every order with lines, SKUs
+        // and costs (~30k orders) exhausted 512M and held fpm workers (2026-11-22/23).
+        // The cap is announced in X-Orders-Window-Days so screens can say so; whole-history
+        // screens use view=summary or a server report instead.
+        $windowDays = null;
+        $noDates = $startDate === '' && $endDate === '';
+        if ($noDates && ($paginate || (! $summary && $orderIdNeedle === ''))) {
+            $windowDays = self::DEFAULT_WINDOW_DAYS;
+            $query->where('order_date', '>=', now()->subDays($windowDays)->startOfDay());
         }
 
         if ($paginate) {
@@ -131,7 +142,7 @@ class InventoryOrderController extends Controller
                 'last_page' => $paginator->lastPage(),
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
-            ]);
+            ], 200, $this->windowHeaders($windowDays));
         }
 
         $orders = $query->get();
@@ -140,7 +151,15 @@ class InventoryOrderController extends Controller
             app(ProfitEngineService::class)->hydrateOrderCollectionWithEffectivePurchaseCosts($orders);
         }
 
-        return response()->json($orders);
+        return response()->json($orders, 200, $this->windowHeaders($windowDays));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function windowHeaders(?int $windowDays): array
+    {
+        return $windowDays === null ? [] : ['X-Orders-Window-Days' => (string) $windowDays];
     }
 
     public function store(Request $request)

@@ -21,11 +21,40 @@ class ChannelStockResolver
     private static ?int $mainStoreChannelIdCache = null;
 
     /**
+     * channel_id => first location id, only while a list page is being priced (see withListingMemo).
+     * Null outside that scope, so long-lived queue workers never reuse a stale location.
+     *
+     * @var array<int, int|null>|null
+     */
+    private static ?array $firstLocationMemo = null;
+
+    /**
      * Clear static channel-resolution caches (required after RefreshDatabase in tests).
      */
     public static function clearCache(): void
     {
         self::$mainStoreChannelIdCache = null;
+        self::$firstLocationMemo = null;
+    }
+
+    /**
+     * Run a read-only list computation with the channel → first-location lookup memoized,
+     * so pricing N SKUs costs one location query per channel instead of one per SKU.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    public static function withListingMemo(callable $callback): mixed
+    {
+        $outer = self::$firstLocationMemo;
+        self::$firstLocationMemo = $outer ?? [];
+        try {
+            return $callback();
+        } finally {
+            self::$firstLocationMemo = $outer;
+        }
     }
 
     /**
@@ -326,6 +355,19 @@ class ChannelStockResolver
 
     public static function resolveFirstLocationIdForChannel(int $channelId): ?int
     {
+        if (self::$firstLocationMemo !== null) {
+            if (! array_key_exists($channelId, self::$firstLocationMemo)) {
+                self::$firstLocationMemo[$channelId] = self::queryFirstLocationIdForChannel($channelId);
+            }
+
+            return self::$firstLocationMemo[$channelId];
+        }
+
+        return self::queryFirstLocationIdForChannel($channelId);
+    }
+
+    private static function queryFirstLocationIdForChannel(int $channelId): ?int
+    {
         $channelLocation = InventoryLocation::query()
             ->where('channel_id', $channelId)
             ->where(function ($q) {
@@ -468,24 +510,11 @@ class ChannelStockResolver
         /** @var Collection<int, SkuInventory> $invs */
         $invs = $sku->relationLoaded('inventory') ? $sku->inventory : collect();
 
-        // Eager-loaded but empty: query DB here. ForSkuListing / ForSkuAtChannelLocations
-        // would call back into this method and recurse until stack overflow (master-products 500).
+        // Eager-loaded but empty means the SKU has no stock rows (same scope as a fresh query),
+        // so its stock is 0. Re-querying here cost 1–3 queries per SKU on list pages — ~10k
+        // queries per full catalog load with 3,500 stockless SKUs (fpm max_children, 2026-11-23).
         if ($sku->relationLoaded('inventory') && $invs->isEmpty()) {
-            if ($listingChannelId <= 0) {
-                return max(0.0, (float) SkuInventory::query()
-                    ->where('sku_id', (int) $sku->id)
-                    ->sum('quantity'));
-            }
-
-            $locationIds = self::resolveChannelStockLocationIdsForSku($sku, $listingChannelId);
-            if ($locationIds === []) {
-                return 0.0;
-            }
-
-            return max(0.0, (float) SkuInventory::query()
-                ->where('sku_id', (int) $sku->id)
-                ->whereIn('location_id', $locationIds)
-                ->sum('quantity'));
+            return 0.0;
         }
 
         if ($listingChannelId <= 0) {

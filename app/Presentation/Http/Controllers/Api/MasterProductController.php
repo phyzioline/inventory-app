@@ -294,6 +294,17 @@ class MasterProductController extends Controller
             return $products;
         }
 
+        return ChannelStockResolver::withListingMemo(
+            fn () => $this->enrichMasterProductsCollectionMemoized($products, $locationId)
+        );
+    }
+
+    /**
+     * @param  Collection<int, MasterProduct>  $products
+     * @return Collection<int, MasterProduct>
+     */
+    private function enrichMasterProductsCollectionMemoized(Collection $products, int $locationId): Collection
+    {
         $purchaseBalances = DB::table('purchase_batch_items as pbi')
             ->join('purchase_batches as pb', 'pb.id', '=', 'pbi.purchase_batch_id')
             ->whereIn('pbi.master_product_id', $products->pluck('id')->all())

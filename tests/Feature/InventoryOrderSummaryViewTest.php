@@ -110,3 +110,29 @@ it('still returns line items in the default list view', function () {
 it('requires authentication for the summary view', function () {
     $this->getJson('/api/inventory/orders?view=summary')->assertUnauthorized();
 });
+
+it('caps an undated detailed list to the default window and says so', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    $channel = Channel::query()->create([
+        'name' => 'Noon', 'slug' => 'noon-'.uniqid(), 'type' => 'noon', 'is_active' => true, 'user_id' => $user->id,
+    ]);
+    $recent = makeSummaryOrder($user, $channel, ['order_date' => now()->subDays(5)]);
+    $old = makeSummaryOrder($user, $channel, ['order_date' => now()->subDays(200)]);
+
+    $response = $this->getJson('/api/inventory/orders')->assertOk()
+        ->assertHeader('X-Orders-Window-Days', '90');
+    expect(collect($response->json())->pluck('id')->all())->toBe([$recent->id]);
+
+    // An explicit range or an order lookup reaches older orders.
+    $ranged = $this->getJson('/api/inventory/orders?start_date='.now()->subDays(365)->toDateString())->assertOk();
+    expect($ranged->headers->has('X-Orders-Window-Days'))->toBeFalse()
+        ->and(collect($ranged->json())->pluck('id')->sort()->values()->all())->toBe(collect([$recent->id, $old->id])->sort()->values()->all());
+
+    $lookup = $this->getJson('/api/inventory/orders?order_id='.$old->platform_order_id)->assertOk();
+    expect(collect($lookup->json())->pluck('id')->all())->toBe([$old->id]);
+
+    // Summary view stays whole-history.
+    expect($this->getJson('/api/inventory/orders?view=summary')->json())->toHaveCount(2);
+});
