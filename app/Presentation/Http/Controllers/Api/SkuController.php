@@ -731,16 +731,14 @@ class SkuController extends Controller
             ->lockForUpdate()
             ->get();
 
+        // Each move is written to the movements ledger (TRANSFER/IN pair) — moving balances
+        // silently here is what split the ledger from sku_inventory (2026-11-23 audit).
         foreach ($badRows as $row) {
-            $qty = (int) ($row->quantity ?? 0);
-            $dest = SkuInventory::query()->firstOrCreate(
-                ['sku_id' => $storeSku->id, 'location_id' => $row->location_id],
-                ['quantity' => 0, 'reserved' => 0, 'user_id' => $userId]
+            $this->stockRehome->mergeInventoryRowIntoSku(
+                $row,
+                $storeSku,
+                'Store re-home on SKU link: listing SKU #'.$linkedChannelSku->id.' → store SKU '.$storeSku->sku
             );
-            if ($qty !== 0) {
-                $dest->update(['quantity' => (int) $dest->quantity + $qty]);
-            }
-            $row->delete();
         }
     }
 

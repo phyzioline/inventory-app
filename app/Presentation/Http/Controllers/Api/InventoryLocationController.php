@@ -9,7 +9,9 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use App\Application\Services\InventoryValuationService;
 use App\Domain\Models\Wms\InventoryLocation;
+use App\Domain\Models\Wms\InventoryTransaction;
 use App\Domain\Models\Wms\SkuInventory;
+use Illuminate\Support\Facades\DB;
 
 class InventoryLocationController extends Controller
 {
@@ -151,16 +153,53 @@ class InventoryLocationController extends Controller
         }
 
         if ($clearStock && $stockRows->isNotEmpty()) {
-            foreach ($stockRows as $row) {
-                $payload = ['quantity' => 0];
-                if ($hasReservedQuantityColumn) {
-                    $payload['reserved_quantity'] = 0;
+            // Write each cleared balance to the movements ledger so the stock leaves through a
+            // traceable row instead of disappearing (2026-11-23 audit: silent balance writes).
+            DB::transaction(function () use ($stockRows, $location, $hasReservedQuantityColumn, $hasReservedColumn) {
+                foreach ($stockRows as $row) {
+                    $row = SkuInventory::query()->whereKey($row->id)->lockForUpdate()->first();
+                    if (! $row) {
+                        continue;
+                    }
+                    $qty = (int) $row->quantity;
+                    $payload = ['quantity' => 0];
+                    if ($hasReservedQuantityColumn) {
+                        $payload['reserved_quantity'] = 0;
+                    }
+                    if ($hasReservedColumn) {
+                        $payload['reserved'] = 0;
+                    }
+                    $row->update($payload);
+
+                    if ($qty !== 0) {
+                        $tx = InventoryTransaction::create([
+                            'sku_id' => (int) $row->sku_id,
+                            'location_id' => (int) $location->id,
+                            'type' => $qty > 0 ? 'OUT' : 'IN',
+                            'quantity' => abs($qty),
+                            'balance_after' => 0,
+                            'reference_type' => 'LocationClear',
+                            'reference_id' => (string) $location->id,
+                            'notes' => 'Stock cleared on deleting warehouse "'.$location->name.'" (was '.$qty.')',
+                        ]);
+                        if (! $tx->user_id && $row->user_id) {
+                            $tx->forceFill(['user_id' => $row->user_id])->save();
+                        }
+                    }
                 }
-                if ($hasReservedColumn) {
-                    $payload['reserved'] = 0;
-                }
-                $row->update($payload);
-            }
+            });
+        }
+
+        // A warehouse with stock movements is history: deleting it would cascade-delete (or orphan)
+        // its ledger rows. Archive it like the FK fallback below, keeping every movement.
+        if (InventoryTransaction::query()->withoutGlobalScopes()->where('location_id', $location->id)->exists()) {
+            $location->update(['is_active' => false, 'is_main' => false]);
+
+            return response()->json([
+                'message' => 'Location has stock movement history and cannot be hard deleted. It was archived instead.',
+                'archived' => true,
+                'id' => $location->id,
+            ]);
         }
 
         try {

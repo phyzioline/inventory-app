@@ -377,6 +377,77 @@ class StockRehomeTransferService
         ];
     }
 
+    /**
+     * Move a whole balance row — positive or negative — onto another SKU at the same location,
+     * with a TRANSFER/IN ledger pair, then remove the emptied source row. A negative row (a channel
+     * SKU that was over-deducted at a store location) is absorbed by the target SKU.
+     * Before this existed, SKU linking moved balances with no ledger rows, so the movements
+     * ledger and sku_inventory drifted apart (2026-11-23 audit: 2,068 units at المحل).
+     * Must be called inside an open DB transaction.
+     *
+     * @return int signed quantity moved onto $toSku (0 when the row was empty)
+     */
+    public function mergeInventoryRowIntoSku(SkuInventory $row, Sku $toSku, string $notes): int
+    {
+        $locationId = (int) $row->location_id;
+        $fromSku = Sku::query()->find((int) $row->sku_id);
+        if (! $fromSku || $locationId <= 0 || (int) $fromSku->id === (int) $toSku->id) {
+            return 0;
+        }
+
+        $source = $this->lockedInventoryRow((int) $fromSku->id, $locationId);
+        $qty = (int) $source->quantity;
+
+        if ($qty > 0) {
+            $this->transferWithLedger($fromSku, $locationId, $toSku, $locationId, $qty, $notes);
+        } elseif ($qty < 0) {
+            $n = -$qty;
+            $ownerUserId = (int) ($fromSku->user_id ?? $toSku->user_id ?? TenantContext::id() ?? 0);
+            $target = $this->lockedInventoryRow((int) $toSku->id, $locationId);
+            $target->decrement('quantity', $n);
+            $target->refresh();
+
+            $outTx = InventoryTransaction::create([
+                'sku_id' => (int) $toSku->id,
+                'location_id' => $locationId,
+                'type' => 'TRANSFER',
+                'quantity' => $n,
+                'balance_after' => (float) $target->quantity,
+                'notes' => 'Transfer OUT (absorb negative balance of SKU #'.$fromSku->id.'). '.trim($notes),
+                'reference_type' => 'transfer_out',
+                'reference_id' => null,
+            ]);
+            $this->ensureTransactionOwner($outTx, $ownerUserId);
+
+            $source->increment('quantity', $n);
+            $source->refresh();
+            $inTx = InventoryTransaction::create([
+                'sku_id' => (int) $fromSku->id,
+                'location_id' => $locationId,
+                'type' => 'IN',
+                'quantity' => $n,
+                'balance_after' => (float) $source->quantity,
+                'notes' => 'Transfer IN (negative balance absorbed by SKU #'.$toSku->id.'). '.trim($notes),
+                'reference_type' => 'transfer_in',
+                'reference_id' => (string) $outTx->id,
+            ]);
+            $this->ensureTransactionOwner($inTx, $ownerUserId);
+            $outTx->update(['reference_id' => (string) $inTx->id]);
+
+            $this->safeBroadcast([
+                ['sku_id' => (int) $toSku->id, 'location_id' => $locationId],
+                ['sku_id' => (int) $fromSku->id, 'location_id' => $locationId],
+            ]);
+        }
+
+        $source->refresh();
+        if ((int) $source->quantity === 0 && (int) ($source->reserved ?? 0) === 0) {
+            $source->delete();
+        }
+
+        return $qty;
+    }
+
     private function ensureTransactionOwner(InventoryTransaction $tx, int $ownerUserId): void
     {
         if ($ownerUserId <= 0 || (int) ($tx->user_id ?? 0) > 0) {
