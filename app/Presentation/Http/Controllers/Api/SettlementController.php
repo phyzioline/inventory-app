@@ -56,12 +56,13 @@ class SettlementController extends Controller
 
         $linesTotalSql = '(SELECT COALESCE(SUM(si.amount), 0) FROM settlement_items si WHERE si.settlement_id = settlements.id)';
         // Incomplete sheets across the whole filter, not just this page.
+        $startSql = '(SELECT c.stock_tracking_starts_at FROM channels c WHERE c.id = settlements.channel_id)';
         $completenessQuery = (clone $query)->reorder()->toBase()
-            ->selectRaw("settlements.total_amount AS t, {$linesTotalSql} AS l");
+            ->selectRaw("settlements.total_amount AS t, {$linesTotalSql} AS l, settlements.end_date AS e, {$startSql} AS cs");
 
         $settlements = $query->select('settlements.*')->selectRaw("{$linesTotalSql} AS lines_total")->paginate($perPage);
         $settlements->getCollection()->transform(function (Settlement $s) {
-            $c = $this->service->sheetCompleteness((float) $s->total_amount, (float) $s->lines_total);
+            $c = $this->service->sheetCompleteness((float) $s->total_amount, (float) $s->lines_total, $s->end_date, $s->channel?->stock_tracking_starts_at);
             $s->setAttribute('lines_total', round((float) $s->lines_total, 2));
             $s->setAttribute('total_gap', $c['gap']);
             $s->setAttribute('completeness', $c['status']);
@@ -71,7 +72,7 @@ class SettlementController extends Controller
 
         $incomplete = ['count' => 0, 'gap_total' => 0.0];
         foreach ($completenessQuery->get() as $row) {
-            $c = $this->service->sheetCompleteness((float) $row->t, (float) $row->l);
+            $c = $this->service->sheetCompleteness((float) $row->t, (float) $row->l, $row->e, $row->cs);
             if ($c['status'] === \App\Application\Services\SettlementService::SHEET_INCOMPLETE) {
                 $incomplete['count']++;
                 $incomplete['gap_total'] += $c['gap'];

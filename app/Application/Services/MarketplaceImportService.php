@@ -2456,7 +2456,18 @@ class MarketplaceImportService
         return $this->normalizeImportSheetScalar($value);
     }
 
+    /**
+     * Apr–May 2026: 153 orders were stored as 1970-01-01 from an unreadable date and fell out of every
+     * P&L period. A date before 2000 is never a real marketplace order — treat it as unreadable.
+     */
     private function parseMarketplaceDateTime(?string $raw): ?string
+    {
+        $parsed = $this->parseMarketplaceDateTimeRaw($raw);
+
+        return $parsed !== null && $parsed >= '2000-01-01' ? $parsed : null;
+    }
+
+    private function parseMarketplaceDateTimeRaw(?string $raw): ?string
     {
         $value = trim((string) ($raw ?? ''));
         if ($value === '') {

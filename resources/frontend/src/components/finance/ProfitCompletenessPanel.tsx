@@ -19,6 +19,7 @@ type Summary = {
   platform_account_scope?: string;
   orders_missing_from_system?: { orders: number; lines: number; net: number; sales: number };
   cash_transfers_excluded?: number;
+  orders_before_start_archived?: { orders: number; net: number };
   uncosted_lines?: number;
   uncosted_revenue?: number;
   awaiting_platform_payment_orders?: number;
@@ -113,6 +114,12 @@ export function ProfitCompletenessPanel({ summary, t }: { summary: Summary | und
               </li>
             ))}
           </ul>
+        )}
+        {toNumber(summary.orders_before_start_archived?.orders) > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t('profit.complete.archived').replace(':n', money(summary.orders_before_start_archived?.orders))}{' '}
+            <span dir="ltr">{money(summary.orders_before_start_archived?.net)}</span>
+          </p>
         )}
         {sheetsError && <p className="text-xs text-destructive">{t('profit.complete.sheetsError')}</p>}
         <p className="text-xs text-muted-foreground">{t('profit.complete.gapsNote')}</p>

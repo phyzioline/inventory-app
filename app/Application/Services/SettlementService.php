@@ -828,6 +828,9 @@ class SettlementService
 
     public const SHEET_INCOMPLETE = 'incomplete';
 
+    /** Ends before its channel's start date (stock_tracking_starts_at): history, kept but not a live gap. */
+    public const SHEET_ARCHIVED = 'archived';
+
     /**
      * Transfer total vs what the stored lines add up to. Beyond 5 EGP and 1% of the transfer, rows of the
      * file were not read (Jan–Mar 2026: five Amazon sheets kept 6 lines of a 58k transfer) — the sheet's
@@ -835,9 +838,12 @@ class SettlementService
      *
      * @return array{status: string, gap: float}
      */
-    public function sheetCompleteness(float $sheetTotal, float $linesTotal): array
+    public function sheetCompleteness(float $sheetTotal, float $linesTotal, mixed $sheetEnd = null, mixed $channelStart = null): array
     {
         $gap = round($sheetTotal - $linesTotal, 2);
+        if ($sheetEnd && $channelStart && Carbon::parse($sheetEnd)->lt(Carbon::parse($channelStart)->startOfDay())) {
+            return ['status' => self::SHEET_ARCHIVED, 'gap' => $gap];
+        }
         if (abs($gap) < 1) {
             return ['status' => self::SHEET_COMPLETE, 'gap' => $gap];
         }
@@ -900,7 +906,12 @@ class SettlementService
         // Transfer total (sheet header) vs what the stored lines add up to. A gap means lines are missing,
         // a reserve was held/released, or a line was double-posted — show it, never force it to zero.
         $linesTotal = round((float) SettlementItem::query()->where('settlement_id', $settlementId)->sum('amount'), 2);
-        $completeness = $this->sheetCompleteness((float) $settlement->total_amount, $linesTotal);
+        $completeness = $this->sheetCompleteness(
+            (float) $settlement->total_amount,
+            $linesTotal,
+            $settlement->end_date,
+            $settlement->channel?->stock_tracking_starts_at
+        );
         $totalGap = $completeness['gap'];
         if ($completeness['status'] === self::SHEET_INCOMPLETE) {
             $summaryAr .= " | ⚠️ الشيت ناقص: إجمالي التحويل {$settlement->total_amount} ومجموع السطور {$linesTotal} (فرق {$totalGap}). فيه سطور ماتقرتش — ابعت الملف للمراجعة.";

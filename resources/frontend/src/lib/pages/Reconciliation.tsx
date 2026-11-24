@@ -885,6 +885,11 @@ export default function Reconciliation() {
                     </TableCell>
                     <TableCell className="font-bold text-foreground">
                       {formatCurrency(s.total_amount, s.currency || 'EGP')}
+                      {s.completeness === 'archived' && (
+                        <Badge variant="outline" className="mt-1 flex w-fit border-border text-muted-foreground font-medium">
+                          {t('settlements.archived.badge')}
+                        </Badge>
+                      )}
                       {s.completeness === 'incomplete' && (
                         <Badge variant="outline" className="mt-1 flex w-fit gap-1 border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium">
                           <AlertTriangle size={12} />

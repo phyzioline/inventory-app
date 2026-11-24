@@ -1194,6 +1194,8 @@ class ProfitEngineService
             'platform_account_net' => 0.0,
             'platform_account' => [],
             'orders_missing_from_system' => ['orders' => 0, 'lines' => 0, 'net' => 0.0, 'sales' => 0.0],
+            // Order lines dated before the channel's start date (stock_tracking_starts_at): archived, not a gap.
+            'orders_before_start_archived' => ['orders' => 0, 'net' => 0.0],
             'cash_transfers_excluded' => 0.0,
             'platform_account_scope' => 'all',
         ];
@@ -1216,6 +1218,7 @@ class ProfitEngineService
         $query = SettlementItem::query()
             ->from('settlement_items as si')
             ->join('settlements as s', 's.id', '=', 'si.settlement_id')
+            ->join('channels as ch', 'ch.id', '=', 's.channel_id')
             ->whereIn('si.settlement_id', $settlementIdsSub)
             ->whereRaw('COALESCE(si.transaction_date, s.end_date) BETWEEN ? AND ?', [$startAt, $endAt])
             ->whereNull('si.inventory_order_id')
@@ -1226,16 +1229,18 @@ class ProfitEngineService
 
         $rows = $query
             ->selectRaw('si.transaction_type AS t, si.description AS d, ('.$keySql('si.platform_order_id')." <> '') AS has_oid")
+            ->selectRaw('(ch.stock_tracking_starts_at IS NOT NULL AND COALESCE(si.transaction_date, s.end_date) < ch.stock_tracking_starts_at) AS before_start')
             ->selectRaw('COUNT(*) AS n, SUM(si.amount) AS amt')
             ->selectRaw("SUM(CASE WHEN LOWER(COALESCE(si.description, '')) LIKE '%principal%' AND si.amount > 0 THEN si.amount ELSE 0 END) AS sales")
             ->selectRaw('ARRAY_AGG(DISTINCT NULLIF('.$keySql('si.platform_order_id').", '')) AS oids")
-            ->groupBy('si.transaction_type', 'si.description', DB::raw('('.$keySql('si.platform_order_id')." <> '')"))
+            ->groupBy('si.transaction_type', 'si.description', DB::raw('('.$keySql('si.platform_order_id')." <> '')"), DB::raw('(ch.stock_tracking_starts_at IS NOT NULL AND COALESCE(si.transaction_date, s.end_date) < ch.stock_tracking_starts_at)'))
             ->toBase()
             ->get();
 
         $classifier = app(SettlementLineClassifier::class);
         $out = $empty;
         $missingOrderKeys = [];
+        $archivedOrderKeys = [];
         foreach ($rows as $row) {
             $amount = (float) $row->amt;
             $lines = (int) $row->n;
@@ -1243,6 +1248,16 @@ class ProfitEngineService
 
             if ($category === SettlementLineClassifier::ACCOUNT_CASH_TRANSFER) {
                 $out['cash_transfers_excluded'] += $amount;
+
+                continue;
+            }
+            if ($category === SettlementLineClassifier::ACCOUNT_ORDER_LINE && $row->before_start) {
+                $out['orders_before_start_archived']['net'] += $amount;
+                foreach (explode(',', trim((string) $row->oids, '{}')) as $k) {
+                    if ($k !== '' && $k !== 'NULL') {
+                        $archivedOrderKeys[$k] = true;
+                    }
+                }
 
                 continue;
             }
@@ -1269,6 +1284,8 @@ class ProfitEngineService
         $out['platform_account_net'] = round($out['platform_account_net'], 2);
         $out['cash_transfers_excluded'] = round($out['cash_transfers_excluded'], 2);
         $out['orders_missing_from_system']['orders'] = count($missingOrderKeys);
+        $out['orders_before_start_archived']['orders'] = count($archivedOrderKeys);
+        $out['orders_before_start_archived']['net'] = round($out['orders_before_start_archived']['net'], 2);
         $out['orders_missing_from_system']['net'] = round($out['orders_missing_from_system']['net'], 2);
         $out['orders_missing_from_system']['sales'] = round($out['orders_missing_from_system']['sales'], 2);
 
