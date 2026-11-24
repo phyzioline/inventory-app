@@ -262,6 +262,7 @@ Route::prefix('api/inventory')->middleware(['web'])->group(function (): void {
         Route::post('returns/import-inventory-ledger', [ReturnController::class, 'importInventoryLedger'])->middleware('throttle:inventory-imports');
         Route::post('returns/{id}/process', [ReturnController::class, 'process']);
         Route::post('returns/{id}/receive', [ReturnController::class, 'receive']);
+        Route::get('returns/awaiting-receipt', [ReturnController::class, 'awaitingReceipt']);
         Route::apiResource('returns', ReturnController::class);
 
         // ── Amazon Removal Orders ─────────────────────────────────────

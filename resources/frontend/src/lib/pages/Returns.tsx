@@ -70,6 +70,7 @@ import {
   rowReimbursementCategory,
 } from '@/components/returns/returnReimbursementUtils';
 import { AmazonClaimsHub } from '@/components/returns/AmazonClaimsHub';
+import { AwaitingReceiptPanel } from '@/components/returns/AwaitingReceiptPanel';
 import { ReturnStatusBadges, ReturnStatusBadgeGroup } from '@/components/returns/ReturnStatusBadges';
 import { ReimbursementBadge } from '@/components/returns/ReimbursementBadge';
 import { ReturnGroupActionsMenu } from '@/components/returns/ReturnGroupActionsMenu';
@@ -229,7 +230,7 @@ export default function Returns() {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [reimbursementFilter, setReimbursementFilter] = useState<'all' | 'ready' | 'pending' | 'paid'>('all');
-  const [activeTab, setActiveTab] = useState<'returns' | 'claims' | 'removals'>('returns');
+  const [activeTab, setActiveTab] = useState<'returns' | 'awaiting' | 'claims' | 'removals'>('returns');
   const [removalsSearchTerm, setRemovalsSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -712,7 +713,7 @@ export default function Returns() {
       <FbaReturnsSheetDialog open={isFbaSheetOpen} onOpenChange={setIsFbaSheetOpen} />
       <InventoryLedgerSheetDialog open={isLedgerSheetOpen} onOpenChange={setIsLedgerSheetOpen} />
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'returns' | 'claims' | 'removals')}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'returns' | 'awaiting' | 'claims' | 'removals')}>
         <TabsList className="w-full justify-start flex-wrap h-auto gap-1.5 p-1.5 bg-muted/40 border border-border rounded-xl">
           <TabsTrigger
             value="returns"
@@ -723,6 +724,16 @@ export default function Returns() {
             )}
           >
             {t('nav.returns') || 'Returns'}
+          </TabsTrigger>
+          <TabsTrigger
+            value="awaiting"
+            className={cn(
+              'rounded-lg px-4 py-2 text-sm font-semibold border border-transparent transition-colors',
+              'data-[state=active]:bg-orange-500/15 data-[state=active]:text-orange-900 data-[state=active]:border-orange-500/50',
+              'dark:data-[state=active]:text-orange-200',
+            )}
+          >
+            {t('returns.awaiting.tab')}
           </TabsTrigger>
           <TabsTrigger
             value="claims"
@@ -1363,6 +1374,10 @@ export default function Returns() {
         open={isScannerDialogOpen}
         onOpenChange={setIsScannerDialogOpen}
       />
+        </TabsContent>
+
+        <TabsContent value="awaiting" className="mt-4 focus-visible:outline-none">
+          {activeTab === 'awaiting' && <AwaitingReceiptPanel t={t} />}
         </TabsContent>
 
         <TabsContent value="claims" className="mt-4 focus-visible:outline-none">

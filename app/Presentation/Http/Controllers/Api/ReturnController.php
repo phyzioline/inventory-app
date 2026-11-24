@@ -22,6 +22,39 @@ class ReturnController extends Controller
         return response()->json($this->listing->paginate($request));
     }
 
+    /**
+     * Refunded by the platform, not yet received into stock — oldest first, with server totals.
+     */
+    public function awaitingReceipt(Request $request, \App\Application\Services\PendingReturnReceiptService $pending)
+    {
+        $userId = (int) $request->user()->id;
+        $perPage = max(1, min((int) $request->input('per_page', 50), 200));
+
+        $page = $pending->awaitingQuery($userId)
+            ->with(['inventoryOrder:id,platform_order_id,order_date,channel_id', 'inventoryOrder.channel:id,name'])
+            ->orderByRaw('COALESCE(return_date, created_at) ASC')
+            ->paginate($perPage, ['id', 'inventory_order_id', 'platform_return_id', 'sku_code', 'return_quantity', 'refund_amount', 'return_date', 'created_at', 'status', 'metadata']);
+
+        $page->getCollection()->transform(function ($r) {
+            $since = $r->return_date ?? $r->created_at;
+            $meta = is_array($r->metadata) ? $r->metadata : [];
+
+            return [
+                'id' => $r->id,
+                'order_number' => $r->inventoryOrder?->platform_order_id,
+                'channel' => $r->inventoryOrder?->channel?->name,
+                'sku_code' => $r->sku_code,
+                'quantity' => (int) $r->return_quantity,
+                'refund_amount' => (float) $r->refund_amount,
+                'refunded_at' => $since?->toDateString(),
+                'days_waiting' => $since ? (int) $since->diffInDays(now()) : null,
+                'settlement_report_id' => $meta['settlement_report_id'] ?? null,
+            ];
+        });
+
+        return response()->json(array_merge($page->toArray(), ['summary' => $pending->summary($userId)]));
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([

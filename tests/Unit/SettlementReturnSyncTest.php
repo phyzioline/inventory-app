@@ -136,3 +136,17 @@ it('assigns distinct platform_return_id per product line on the same order', fun
 
     expect($idA)->not->toBe($idB);
 });
+
+it('rejects the COD refund line: it is a fee refunded with the order, not a unit coming back', function () {
+    $service = app(SettlementService::class);
+
+    expect($service->settlementLineQualifiesForInventoryReturn(
+        settlementItem(['description' => 'RefundPrice: COD', 'sku' => 'PHYZ-1352', 'amount' => -6])
+    ))->toBeFalse()
+        ->and($service->settlementLineQualifiesForInventoryReturn(
+            settlementItem(['description' => 'COD', 'sku' => 'PHYZ-1352', 'amount' => -6])
+        ))->toBeFalse()
+        ->and($service->settlementLineQualifiesForInventoryReturn(
+            settlementItem(['description' => 'RefundPrice: Principal', 'sku' => 'PHYZ-1352', 'amount' => -1199])
+        ))->toBeTrue();
+});

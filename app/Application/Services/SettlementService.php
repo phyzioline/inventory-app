@@ -1123,6 +1123,9 @@ class SettlementService
             }
 
             if (! $dryRun) {
+                app(InventoryAuditLogService::class)->record('return.void_non_product_settlement_return', InventoryReturn::class, (int) $return->id, [
+                    'original' => $return->getAttributes(),
+                ]);
                 $meta = is_array($return->metadata) ? $return->metadata : [];
                 $meta['void_reason'] = 'shipping_only_or_non_return';
                 $meta['voided_at'] = now()->toIso8601String();
@@ -1200,7 +1203,9 @@ class SettlementService
 
     private function isNonProductRefundSettlementDescription(string $rawDesc, string $descLower): bool
     {
-        if (preg_match('/refundprice:\s*(shipping|tax|giftwrap|gift\s*wrap|shippingtax|shipping\s*tax)\b/i', $rawDesc)) {
+        // COD = the cash-on-delivery charge refunded with the order, not a unit coming back. It created a
+        // second "return" next to the real Principal one (same order, same SKU).
+        if (preg_match('/refundprice:\s*(shipping|tax|giftwrap|gift\s*wrap|shippingtax|shipping\s*tax|cod|codfee|cod\s*fee)\b/i', $rawDesc)) {
             return true;
         }
 
@@ -1212,7 +1217,7 @@ class SettlementService
             return true;
         }
 
-        if (preg_match('/^(shipping|tax|giftwrap|gift\s*wrap|shippingtax|shipping\s*tax)$/i', trim($rawDesc))) {
+        if (preg_match('/^(shipping|tax|giftwrap|gift\s*wrap|shippingtax|shipping\s*tax|cod|codfee|cod\s*fee)$/i', trim($rawDesc))) {
             return true;
         }
 
@@ -1662,6 +1667,11 @@ class SettlementService
         }
         if (! $return) {
             $return = InventoryReturn::query()->where('platform_return_id', $platformReturnId)->first();
+        }
+        // A void is an explicit, audited correction (merged into a received return, non-product line…).
+        // Re-importing the same sheet must not bring it back as "pending".
+        if ($return && (string) ($return->status ?? '') === 'void') {
+            return;
         }
         $isCompleted = $return && (string) ($return->status ?? '') === 'completed';
 
