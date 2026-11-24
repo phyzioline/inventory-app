@@ -18,6 +18,7 @@ import {
   Truck,
   Wallet,
   Store,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -237,6 +238,21 @@ export default function Reconciliation() {
     enabled: selectedChannelIds.length > 0,
   });
 
+  // Sheets whose stored lines do not add up to the transfer — counted by the server over the whole filter.
+  const { data: incompleteSheets } = useQuery({
+    queryKey: ['settlements', 'incomplete', selectedChannelIds, search, fromDate, toDate],
+    queryFn: async () =>
+      ((await api.get('/settlements', {
+        params: {
+          channel_ids: selectedChannelIds.length ? selectedChannelIds.join(',') : undefined,
+          search: search || undefined,
+          ...periodParams,
+          per_page: 1,
+        },
+      })) as any)?.incomplete_sheets as { count: number; gap_total: number } | undefined,
+    enabled: selectedChannelIds.length > 0,
+  });
+
   const { data: summary } = useQuery({
     queryKey: ['settlements-summary', selectedChannelIds, search, fromDate, toDate],
     queryFn: () => api.get('/settlements/summary', {
@@ -338,6 +354,12 @@ export default function Reconciliation() {
           ? `تم رفع الشيت: جديد ${created} | تم تحديثه ${updated} | مكرر متجاهل ${duplicates}`
           : `Sheet imported: New ${created} | Updated ${updated} | Duplicates ignored ${duplicates}`
       );
+      if (res?.completeness === 'incomplete') {
+        toast.error(t('settlements.incomplete.importWarning'), {
+          description: (isAr ? res?.summary_message_ar : res?.summary_message_en) || undefined,
+          duration: 20000,
+        });
+      }
       setIsImportOpen(false);
       setSelectedImportFile(null);
       queryClient.invalidateQueries({ queryKey: ['settlements'] });
@@ -797,6 +819,19 @@ export default function Reconciliation() {
         </div>
       </div>
 
+      {incompleteSheets && incompleteSheets.count > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 text-sm">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+          <div className="space-y-1">
+            <p className="font-semibold">
+              {t('settlements.incomplete.banner').replace(':n', String(incompleteSheets.count))}{' '}
+              <span dir="ltr">{formatCurrency(incompleteSheets.gap_total, 'EGP')}</span>
+            </p>
+            <p className="text-muted-foreground">{t('settlements.incomplete.help')}</p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <Table>
           <TableHeader className="bg-muted/40 border-b border-border">
@@ -850,6 +885,12 @@ export default function Reconciliation() {
                     </TableCell>
                     <TableCell className="font-bold text-foreground">
                       {formatCurrency(s.total_amount, s.currency || 'EGP')}
+                      {s.completeness === 'incomplete' && (
+                        <Badge variant="outline" className="mt-1 flex w-fit gap-1 border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium">
+                          <AlertTriangle size={12} />
+                          {t('settlements.incomplete.badge')} <span dir="ltr">{formatCurrency(s.total_gap, s.currency || 'EGP')}</span>
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge

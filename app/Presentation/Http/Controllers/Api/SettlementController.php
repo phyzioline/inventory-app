@@ -54,9 +54,32 @@ class SettlementController extends Controller
 
         $perPage = min(500, max(1, (int) request()->input('per_page', 50)));
 
-        $settlements = $query->paginate($perPage);
+        $linesTotalSql = '(SELECT COALESCE(SUM(si.amount), 0) FROM settlement_items si WHERE si.settlement_id = settlements.id)';
+        // Incomplete sheets across the whole filter, not just this page.
+        $completenessQuery = (clone $query)->reorder()->toBase()
+            ->selectRaw("settlements.total_amount AS t, {$linesTotalSql} AS l");
 
-        return response()->json($settlements);
+        $settlements = $query->select('settlements.*')->selectRaw("{$linesTotalSql} AS lines_total")->paginate($perPage);
+        $settlements->getCollection()->transform(function (Settlement $s) {
+            $c = $this->service->sheetCompleteness((float) $s->total_amount, (float) $s->lines_total);
+            $s->setAttribute('lines_total', round((float) $s->lines_total, 2));
+            $s->setAttribute('total_gap', $c['gap']);
+            $s->setAttribute('completeness', $c['status']);
+
+            return $s;
+        });
+
+        $incomplete = ['count' => 0, 'gap_total' => 0.0];
+        foreach ($completenessQuery->get() as $row) {
+            $c = $this->service->sheetCompleteness((float) $row->t, (float) $row->l);
+            if ($c['status'] === \App\Application\Services\SettlementService::SHEET_INCOMPLETE) {
+                $incomplete['count']++;
+                $incomplete['gap_total'] += $c['gap'];
+            }
+        }
+        $incomplete['gap_total'] = round($incomplete['gap_total'], 2);
+
+        return response()->json(array_merge($settlements->toArray(), ['incomplete_sheets' => $incomplete]));
     }
 
     /**
@@ -494,6 +517,7 @@ class SettlementController extends Controller
                     'skipped_duplicates' => (int) ($stats['skipped_duplicates'] ?? 0),
                     'matched_orders' => $matchedOrders,
                     'reconciliation' => $reconciliation ?? null,
+                    'completeness' => $reconciliation['completeness'] ?? null,
                     'summary_message_ar' => $reconciliation['summary_message_ar'] ?? null,
                     'summary_message_en' => $reconciliation['summary_message_en'] ?? null,
                 ];

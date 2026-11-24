@@ -151,4 +151,58 @@ class SettlementLineClassifier
             default => 'other',
         };
     }
+
+    public const ACCOUNT_SELLER_REWARDS = 'seller_rewards';
+
+    public const ACCOUNT_ADVERTISING = 'advertising';
+
+    public const ACCOUNT_REIMBURSEMENTS = 'reimbursements';
+
+    public const ACCOUNT_SHIPPING_CREDITS = 'shipping_credits';
+
+    public const ACCOUNT_PLATFORM_FEES = 'platform_fees';
+
+    /** Not income or cost: money moving between Amazon and the bank (failed transfer, disbursal). */
+    public const ACCOUNT_CASH_TRANSFER = 'cash_transfer';
+
+    /** A sale/refund/fee line with no order we can find — belongs to an order, not to the account. */
+    public const ACCOUNT_ORDER_LINE = 'order_line';
+
+    /**
+     * Where a payment-sheet line that matches no order in the system belongs. Lines that name an order
+     * but are not account-wide items (seller rewards, ads, reimbursements) are that order's money.
+     */
+    public function accountCategory(?string $transactionType, ?string $description, bool $hasOrderId): string
+    {
+        $type = strtolower(trim((string) $transactionType));
+        $desc = strtolower(trim((string) $description));
+        $text = $type.' '.$desc;
+
+        // Reserve held / released: Amazon keeping part of the payout, not income or cost.
+        if (str_contains($text, 'transfer of funds') || str_contains($text, 'disburs') || str_contains($text, 'reserve amount')
+            || str_contains($text, 'balance_transfer') || str_contains($text, 'balance transfer')
+            || in_array($type, ['payment', 'bank transfer'], true)) {
+            return self::ACCOUNT_CASH_TRANSFER;
+        }
+        if (str_contains($text, 'seller reward') || str_contains($text, 'مكاف')) {
+            return self::ACCOUNT_SELLER_REWARDS;
+        }
+        if (str_contains($text, 'advertis') || str_contains($text, 'إعلان') || str_contains($text, 'اعلان')) {
+            return self::ACCOUNT_ADVERTISING;
+        }
+        if (str_contains($text, 'reimburse') || str_contains($text, 'تعويض')) {
+            return self::ACCOUNT_REIMBURSEMENTS;
+        }
+        if ($hasOrderId) {
+            return self::ACCOUNT_ORDER_LINE;
+        }
+        if (in_array($type, ['order', 'refund'], true)) {
+            return self::ACCOUNT_ORDER_LINE;
+        }
+        if (str_contains($text, 'easy ship shipping fee')) {
+            return self::ACCOUNT_SHIPPING_CREDITS;
+        }
+
+        return self::ACCOUNT_PLATFORM_FEES;
+    }
 }

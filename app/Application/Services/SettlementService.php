@@ -822,6 +822,32 @@ class SettlementService
      *   summary_message_en:string
      * }
      */
+    public const SHEET_COMPLETE = 'complete';
+
+    public const SHEET_GAP = 'gap';
+
+    public const SHEET_INCOMPLETE = 'incomplete';
+
+    /**
+     * Transfer total vs what the stored lines add up to. Beyond 5 EGP and 1% of the transfer, rows of the
+     * file were not read (Jan–Mar 2026: five Amazon sheets kept 6 lines of a 58k transfer) — the sheet's
+     * orders then look unpaid and its fees/rewards are missing from P&L.
+     *
+     * @return array{status: string, gap: float}
+     */
+    public function sheetCompleteness(float $sheetTotal, float $linesTotal): array
+    {
+        $gap = round($sheetTotal - $linesTotal, 2);
+        if (abs($gap) < 1) {
+            return ['status' => self::SHEET_COMPLETE, 'gap' => $gap];
+        }
+
+        return [
+            'status' => abs($gap) > max(5.0, 0.01 * abs($sheetTotal)) ? self::SHEET_INCOMPLETE : self::SHEET_GAP,
+            'gap' => $gap,
+        ];
+    }
+
     public function buildReconciliationSummary(Settlement $settlement): array
     {
         $settlementId = (int) $settlement->id;
@@ -874,8 +900,12 @@ class SettlementService
         // Transfer total (sheet header) vs what the stored lines add up to. A gap means lines are missing,
         // a reserve was held/released, or a line was double-posted — show it, never force it to zero.
         $linesTotal = round((float) SettlementItem::query()->where('settlement_id', $settlementId)->sum('amount'), 2);
-        $totalGap = round((float) $settlement->total_amount - $linesTotal, 2);
-        if (abs($totalGap) >= 1) {
+        $completeness = $this->sheetCompleteness((float) $settlement->total_amount, $linesTotal);
+        $totalGap = $completeness['gap'];
+        if ($completeness['status'] === self::SHEET_INCOMPLETE) {
+            $summaryAr .= " | ⚠️ الشيت ناقص: إجمالي التحويل {$settlement->total_amount} ومجموع السطور {$linesTotal} (فرق {$totalGap}). فيه سطور ماتقرتش — ابعت الملف للمراجعة.";
+            $summaryEn .= " | ⚠️ Sheet incomplete: transfer {$settlement->total_amount} vs lines {$linesTotal} (gap {$totalGap}). Some rows were not read — send the file for review.";
+        } elseif (abs($totalGap) >= 1) {
             $summaryAr .= " | فرق بين إجمالي الشيت ومجموع السطور: {$totalGap}";
             $summaryEn .= " | Sheet total vs lines gap: {$totalGap}";
         }
@@ -883,6 +913,7 @@ class SettlementService
         return [
             'lines_total' => $linesTotal,
             'total_gap' => $totalGap,
+            'completeness' => $completeness['status'],
             'matched_lines' => $matchedLines,
             'unmatched_lines' => $unmatchedLines,
             'unmatched_orders' => $unmatchedOrders,

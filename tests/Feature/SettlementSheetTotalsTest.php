@@ -152,3 +152,45 @@ it('re-uploading a sheet whose receipt has the legacy monolith class name does n
     expect(\App\Domain\Models\Wms\Receipt::where('reference_id', $settlement->id)->count())->toBe(1)
         ->and((float) \App\Domain\Models\Wms\Receipt::where('reference_id', $settlement->id)->sum('amount'))->toBe(3668.89);
 });
+
+it('flags a sheet whose lines do not add up to its transfer, and re-uploading the full file completes the same sheet', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+    $channel = amazonChannelFor($user);
+    $head = ['S-INC-1', '2026-03-11', '2026-03-12', '2026-03-14', '1000.00', 'EGP', '', '', '', '', '', '', '', '', ''];
+    $fee = ['S-INC-1', '', '', '', '', 'EGP', 'Order', '111-0000009-0000009', 'Z1', 'SKU-Z', '1', 'ItemFees', 'Commission', '-50.00', '2026-03-11'];
+    $sale = ['S-INC-1', '', '', '', '', 'EGP', 'Order', '111-0000009-0000009', 'Z1', 'SKU-Z', '1', 'ItemPrice', 'Principal', '1050.00', '2026-03-11'];
+
+    importSheetRows($channel->id, [V1_HEADER, $head, $fee]);
+    $settlement = Settlement::where('report_id', 'S-INC-1')->firstOrFail();
+    $svc = app(SettlementService::class);
+    expect($svc->buildReconciliationSummary($settlement)['completeness'])->toBe(SettlementService::SHEET_INCOMPLETE);
+
+    $list = $this->getJson('/api/inventory/settlements')->assertOk();
+    expect($list->json('incomplete_sheets.count'))->toBe(1)
+        ->and(collect($list->json('data'))->firstWhere('report_id', 'S-INC-1')['completeness'])->toBe('incomplete');
+
+    importSheetRows($channel->id, [V1_HEADER, $head, $fee, $sale]);
+    expect(Settlement::where('report_id', 'S-INC-1')->count())->toBe(1)
+        ->and(SettlementItem::where('settlement_id', $settlement->id)->count())->toBe(2)
+        ->and($svc->buildReconciliationSummary($settlement->fresh())['completeness'])->toBe(SettlementService::SHEET_COMPLETE);
+    expect($this->getJson('/api/inventory/settlements')->json('incomplete_sheets.count'))->toBe(0);
+});
+
+it('reads Amazon reserve rows so a held reserve does not show as missing lines', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+    $channel = amazonChannelFor($user);
+
+    importSheetRows($channel->id, [
+        V1_HEADER,
+        ['S-RES-1', '2026-03-11', '2026-03-12', '2026-03-14', '700.00', 'EGP', '', '', '', '', '', '', '', '', ''],
+        ['S-RES-1', '', '', '', '', 'EGP', 'Previous Reserve Amount Balance', '', '', '', '', 'Other', 'Previous Reserve Amount Balance', '300.00', '2026-03-11'],
+        ['S-RES-1', '', '', '', '', 'EGP', 'Order', '111-0000010-0000010', 'R1', 'SKU-R', '1', 'ItemPrice', 'Principal', '800.00', '2026-03-11'],
+        ['S-RES-1', '', '', '', '', 'EGP', 'Current Reserve Amount', '', '', '', '', 'Other', 'Current Reserve Amount', '-400.00', '2026-03-12'],
+    ]);
+
+    $settlement = Settlement::where('report_id', 'S-RES-1')->firstOrFail();
+    expect(SettlementItem::where('settlement_id', $settlement->id)->count())->toBe(3)
+        ->and(app(SettlementService::class)->buildReconciliationSummary($settlement)['completeness'])->toBe(SettlementService::SHEET_COMPLETE);
+});

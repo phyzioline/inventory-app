@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { ProfitCompletenessPanel } from '@/components/finance/ProfitCompletenessPanel';
 import {
   TrendingUp,
   TrendingDown,
@@ -1356,6 +1357,8 @@ export default function ProfitEngine() {
       {view === 'by-period' && isPeriodValid && (
         <PeriodActualProfitKpis startDate={startDate} endDate={endDate} />
       )}
+
+      {needsProfitSummary && summary && <ProfitCompletenessPanel summary={summary as any} t={t} />}
 
       {/* Summary Stats */}
       {view !== 'roi' && view !== 'by-period' && (

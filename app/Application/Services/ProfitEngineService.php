@@ -1016,11 +1016,12 @@ class ProfitEngineService
         $ordersCollection = $ordersQuery->get();
 
         $expenses = (float) Expense::whereBetween('expense_date', [$startAt, $endAt])->sum('amount');
+        $platformLines = $this->platformLinesOutsideOrders($startAt, $endAt, $filters);
 
         if ($ordersCollection->isEmpty()) {
-            $netProfit = -$expenses;
+            $netProfit = $platformLines['platform_account_net'] - $expenses;
 
-            return [
+            return array_merge([
                 'period_start' => $startDate,
                 'period_end' => $endDate,
                 'revenue' => 0.0,
@@ -1028,12 +1029,13 @@ class ProfitEngineService
                 'order_costs' => 0.0,
                 'expenses' => $expenses,
                 'refunds' => 0.0,
-                'net_profit' => $netProfit,
+                'orders_profit' => 0.0,
+                'net_profit' => round($netProfit, 2),
                 'margin' => 0.0,
                 'total_revenue' => 0.0,
                 'total_cogs' => 0.0,
                 'total_expenses' => $expenses,
-            ];
+            ], $platformLines);
         }
 
         $this->attachCostingSkusToUnlinkedLines($ordersCollection->flatMap(fn ($order) => $order->items));
@@ -1138,9 +1140,10 @@ class ProfitEngineService
             $totalCogs += $orderCogs;
         }
 
-        $netProfit = $orderProfitSum - $expenses;
+        // Seller rewards, ads, reimbursements and platform fees that no order carries are the period's own.
+        $netProfit = $orderProfitSum + $platformLines['platform_account_net'] - $expenses;
 
-        return [
+        return array_merge([
             'period_start' => $startDate,
             'period_end' => $endDate,
             'revenue' => round($displayRevenue, 2),
@@ -1165,7 +1168,111 @@ class ProfitEngineService
             // Older than AWAITING_PLATFORM_PAYMENT_DAYS with fees only and no return: never paid — investigate.
             'unpaid_platform_orders' => $unpaidOrders,
             'unpaid_platform_order_value' => round($unpaidListValue, 2),
+            'orders_profit' => round((float) $orderProfitSum, 2),
+        ], $platformLines);
+    }
+
+    /**
+     * Payment-sheet lines that belong to no order in the system, booked by their own date (they have no
+     * order to follow). Order-cohort P&L never sees them, yet the cash is in the transfer:
+     *  - account lines (seller rewards, ads, reimbursements, platform fees) are income/cost of the period;
+     *  - order lines (sale, refund, fee) of orders never imported are real but have no cost on file, so
+     *    they are reported, never added to profit (missing is not zero);
+     *  - cash transfers (failed bank transfer, disbursal) are neither.
+     *
+     * @return array{
+     *   platform_account_net: float,
+     *   platform_account: array<string, array{amount: float, lines: int}>,
+     *   orders_missing_from_system: array{orders: int, lines: int, net: float, sales: float},
+     *   cash_transfers_excluded: float,
+     *   platform_account_scope: string
+     * }
+     */
+    private function platformLinesOutsideOrders(string $startAt, string $endAt, array $filters): array
+    {
+        $empty = [
+            'platform_account_net' => 0.0,
+            'platform_account' => [],
+            'orders_missing_from_system' => ['orders' => 0, 'lines' => 0, 'net' => 0.0, 'sales' => 0.0],
+            'cash_transfers_excluded' => 0.0,
+            'platform_account_scope' => 'all',
         ];
+        // Account lines are not tied to an Amazon login, so an account-filtered P&L cannot carry them.
+        if (! empty($filters['account_email'])) {
+            return array_merge($empty, ['platform_account_scope' => 'excluded_by_account_filter']);
+        }
+
+        $settlementIdsSub = Settlement::query()->select('id');
+        if (! empty($filters['channel'])) {
+            $channelIds = ChannelQuery::idsMatchingFilter((string) $filters['channel']);
+            if ($channelIds === []) {
+                return $empty;
+            }
+            $settlementIdsSub->whereIn('channel_id', $channelIds);
+        }
+
+        $keySql = static fn (string $col) => "REPLACE(REGEXP_REPLACE(TRIM(COALESCE({$col}, '')), '[[:space:]\"'']', '', 'g'), '-', '')";
+
+        $query = SettlementItem::query()
+            ->from('settlement_items as si')
+            ->join('settlements as s', 's.id', '=', 'si.settlement_id')
+            ->whereIn('si.settlement_id', $settlementIdsSub)
+            ->whereRaw('COALESCE(si.transaction_date, s.end_date) BETWEEN ? AND ?', [$startAt, $endAt])
+            ->whereNull('si.inventory_order_id')
+            ->whereRaw('NOT EXISTS (SELECT 1 FROM inventory_orders o WHERE o.user_id = s.user_id AND '
+                .$keySql('si.platform_order_id')." <> '' AND ".$keySql('o.platform_order_id').' = '.$keySql('si.platform_order_id').')');
+        // Same "released" rule as the order net (transaction_status exists only on settlement_items).
+        $this->applyReleasedSettlementItemScope($query);
+
+        $rows = $query
+            ->selectRaw('si.transaction_type AS t, si.description AS d, ('.$keySql('si.platform_order_id')." <> '') AS has_oid")
+            ->selectRaw('COUNT(*) AS n, SUM(si.amount) AS amt')
+            ->selectRaw("SUM(CASE WHEN LOWER(COALESCE(si.description, '')) LIKE '%principal%' AND si.amount > 0 THEN si.amount ELSE 0 END) AS sales")
+            ->selectRaw('ARRAY_AGG(DISTINCT NULLIF('.$keySql('si.platform_order_id').", '')) AS oids")
+            ->groupBy('si.transaction_type', 'si.description', DB::raw('('.$keySql('si.platform_order_id')." <> '')"))
+            ->toBase()
+            ->get();
+
+        $classifier = app(SettlementLineClassifier::class);
+        $out = $empty;
+        $missingOrderKeys = [];
+        foreach ($rows as $row) {
+            $amount = (float) $row->amt;
+            $lines = (int) $row->n;
+            $category = $classifier->accountCategory($row->t, $row->d, (bool) $row->has_oid);
+
+            if ($category === SettlementLineClassifier::ACCOUNT_CASH_TRANSFER) {
+                $out['cash_transfers_excluded'] += $amount;
+
+                continue;
+            }
+            if ($category === SettlementLineClassifier::ACCOUNT_ORDER_LINE) {
+                $out['orders_missing_from_system']['lines'] += $lines;
+                $out['orders_missing_from_system']['net'] += $amount;
+                $out['orders_missing_from_system']['sales'] += (float) $row->sales;
+                foreach (explode(',', trim((string) $row->oids, '{}')) as $k) {
+                    if ($k !== '' && $k !== 'NULL') {
+                        $missingOrderKeys[$k] = true;
+                    }
+                }
+
+                continue;
+            }
+            $out['platform_account'][$category]['amount'] = ($out['platform_account'][$category]['amount'] ?? 0.0) + $amount;
+            $out['platform_account'][$category]['lines'] = ($out['platform_account'][$category]['lines'] ?? 0) + $lines;
+            $out['platform_account_net'] += $amount;
+        }
+
+        foreach ($out['platform_account'] as $k => $v) {
+            $out['platform_account'][$k]['amount'] = round($v['amount'], 2);
+        }
+        $out['platform_account_net'] = round($out['platform_account_net'], 2);
+        $out['cash_transfers_excluded'] = round($out['cash_transfers_excluded'], 2);
+        $out['orders_missing_from_system']['orders'] = count($missingOrderKeys);
+        $out['orders_missing_from_system']['net'] = round($out['orders_missing_from_system']['net'], 2);
+        $out['orders_missing_from_system']['sales'] = round($out['orders_missing_from_system']['sales'], 2);
+
+        return $out;
     }
 
     /**
