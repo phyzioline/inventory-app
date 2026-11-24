@@ -140,6 +140,7 @@ class AppServiceProvider extends ServiceProvider
                 \App\Presentation\Console\Commands\LinkPendingReturnsCommand::class,
                 \App\Presentation\Console\Commands\RepairEpochOrderDatesCommand::class,
                 \App\Presentation\Console\Commands\CreateOrdersFromSettlementsCommand::class,
+                \App\Presentation\Console\Commands\RecategorizeExpensesCommand::class,
                 \App\Presentation\Console\Commands\ReverseExcessReturnStockCommand::class,
                 \App\Presentation\Console\Commands\VoidAssumedPurchasePaymentsCommand::class,
                 \App\Presentation\Console\Commands\ReconcileSupplierStatementCommand::class,
