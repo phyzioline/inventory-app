@@ -105,3 +105,16 @@ it('does not bring a linked (voided) claim marker back to pending when the same 
     expect($marker->fresh()->status)->toBe('void')
         ->and($pending->summary($user->id)['count'])->toBe(0);
 });
+
+it('gives the received unit to the full refund, not to a small partial refund on the same order', function () {
+    [$user, $sku, $order] = pendingFixture();
+
+    $partial = claimMarker($user, $order, $sku->sku, '2026-09-02');
+    $partial->update(['refund_amount' => 12]);
+    $full = claimMarker($user, $order, $sku->sku, '2026-09-04');
+    receivedReturn($user, $order, $sku->sku, $sku->id);
+
+    $links = app(PendingReturnReceiptService::class)->findLinkable($user->id);
+    expect($links)->toHaveCount(1)
+        ->and((int) $links->first()['pending']->id)->toBe((int) $full->id);
+});

@@ -108,7 +108,13 @@ class PendingReturnReceiptService
                 $capacity[$key][] = ['id' => (int) $r->id, 'left' => max(0, (int) $r->units - (int) $r->already_linked)];
             }
 
-            foreach ($rows as $p) {
+            // Largest refund first: a received unit belongs to the full-price refund, not to a small partial
+            // refund (price adjustment) on the same order — otherwise the real refund stays "awaiting".
+            $ordered = $rows->sortBy([
+                fn ($a, $b) => (float) $b->refund_amount <=> (float) $a->refund_amount,
+                fn ($a, $b) => (int) $a->id <=> (int) $b->id,
+            ]);
+            foreach ($ordered as $p) {
                 $key = $singleLine ? '*' : $this->skuKey($p->sku_code);
                 foreach ($capacity[$key] ?? [] as $i => $slot) {
                     $need = max(1, (int) $p->return_quantity);
